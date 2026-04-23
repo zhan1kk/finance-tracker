@@ -13,7 +13,7 @@ const TRANSACTION_CATEGORY = [
   'Income',
   'Expenses',
   'Bills',
-  'Subscription',
+  'Subscriptions',
   'Debts',
   'Savings',
 ] as const;

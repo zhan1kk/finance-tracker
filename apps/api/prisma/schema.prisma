@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum AccountType {
+  checking
+  savings
+  cash
+  credit
+  investment
+  crypto
+}
+
+enum TransactionCategory {
+  Income
+  Expenses
+  Bills
+  Subscriptions
+  Debts
+  Savings
+}
+
+model Account {
+  id        String      @id @default(uuid())
+  name      String
+  type      AccountType
+  currency  String
+  balance   Float       @default(0)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  transactions Transaction[]
+}
+
+model Transaction {
+  id          String              @id @default(uuid())
+  date        DateTime
+  amount      Float
+  subcategory String
+  category    TransactionCategory
+  description String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id])
+}
