@@ -1,70 +1,70 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma.service';
 import type {
-  Account,
   CreateAccountInput,
   UpdateAccountInput,
 } from './types/account.types';
 
 @Injectable()
 export class AccountService {
-  private readonly accounts: Account[] = [];
+  constructor(private readonly prisma: PrismaService) {}
 
-  listAccounts(): Account[] {
-    return this.accounts;
+  listAccounts() {
+    return this.prisma.account.findMany();
   }
 
-  getAccountById(id: string): Account {
-    const account = this.accounts.find((item) => item.id === id);
+  async getAccountById(id: string) {
+    const account = await this.prisma.account.findUnique({ where: { id } });
 
     if (!account) {
-      throw new NotFoundException('Account with id ${id} was not found');
-    }
-
-    return account;
-  }
-
-  createAccount(input: CreateAccountInput): Account {
-    const now = new Date().toISOString();
-    const account: Account = {
-      id: crypto.randomUUID(),
-      name: input.name,
-      type: input.type,
-      currency: input.currency,
-      balance: input.initialBalance ?? 0,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    this.accounts.push(account);
-    return account;
-  }
-
-  updateAccount(id: string, input: UpdateAccountInput): Account {
-    const account = this.getAccountById(id);
-
-    if (input.name !== undefined) {
-      account.name = input.name;
-    }
-
-    if (input.type !== undefined) {
-      account.type = input.type;
-    }
-
-    if (input.currency !== undefined) {
-      account.currency = input.currency;
-    }
-
-    account.updatedAt = new Date().toISOString();
-    return account;
-  }
-
-  deleteAccount(id: string): void {
-    const index = this.accounts.findIndex((item) => item.id === id);
-
-    if (index === -1) {
       throw new NotFoundException(`Account with id ${id} was not found`);
     }
 
-    this.accounts.splice(index, 1);
+    return account;
+  }
+
+  createAccount(input: CreateAccountInput) {
+    return this.prisma.account.create({
+      data: {
+        name: input.name,
+        type: input.type,
+        currency: input.currency,
+        balance: input.initialBalance,
+      },
+    });
+  }
+
+  async updateAccount(id: string, input: UpdateAccountInput) {
+    await this.getAccountById(id);
+
+    return this.prisma.account.update({
+      where: { id },
+      data: {
+        name: input.name,
+        type: input.type,
+        currency: input.currency,
+        balance: input.initialBalance ?? 0,
+      },
+    });
+  }
+
+  async deleteAccount(id: string) {
+    await this.getAccountById(id);
+
+    const transactionCount = await this.prisma.transaction.count({
+      where: { accountId: id },
+    });
+
+    if (transactionCount > 0) {
+      throw new ConflictException(
+        `Cannot delete account: it has ${transactionCount} transaction(s). Delete them first.`,
+      );
+    }
+
+    await this.prisma.account.delete({ where: { id } });
   }
 }

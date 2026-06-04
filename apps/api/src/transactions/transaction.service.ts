@@ -1,95 +1,156 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma.service';
+import type { TransactionCategory } from '../subcategories/types/subcategory.types';
 import type {
-  Transaction,
   CreateTransactionInput,
   UpdateTransactionInput,
-  TransactionCategory,
 } from './types/transaction.types';
 
 @Injectable()
 export class TransactionService {
-  private readonly transactions: Transaction[] = [];
-  private subcategoryPairs: Record<string, TransactionCategory> = {
-    Salary: 'Income',
-    Groceries: 'Expenses',
-    Clothes: 'Expenses',
-    Rent: 'Bills',
-    Insurance: 'Bills',
-    YouTube: 'Subscriptions',
-    SavingsAccount: 'Savings',
-    CreditCardAllowance: 'Debts',
-  };
+  constructor(private readonly prisma: PrismaService) {}
 
-  listTransactions(): Transaction[] {
-    return this.transactions;
+  listTransactions() {
+    return this.prisma.transaction.findMany({ include: { subcategory: true } });
   }
 
-  getTransactionById(id: string): Transaction {
-    const transaction = this.transactions.find((item) => item.id === id);
+  async getTransactionById(id: string) {
+    const transaction = await this.prisma.transaction.findUnique({
+      where: { id },
+      include: { subcategory: true },
+    });
 
     if (!transaction) {
-      throw new NotFoundException('Transaction was not found');
+      throw new NotFoundException(`Transaction with id ${id} was not found`);
     }
 
     return transaction;
   }
 
-  createTransaction(input: CreateTransactionInput): Transaction {
-    const now = new Date().toISOString();
-    const transaction: Transaction = {
-      id: crypto.randomUUID(),
-      date: input.date,
-      amount: input.amount,
-      subcategory: input.subcategory,
-      category: input.category,
-      description: input.description ?? '',
-      createdAt: now,
-      updatedAt: now,
-    };
+  async createTransaction(input: CreateTransactionInput) {
+    const subcategory = await this.prisma.subcategory.findUnique({
+      where: { id: input.subcategoryId },
+    });
 
-    this.transactions.push(transaction);
-    return transaction;
-  }
-
-  updateTransaction(id: string, input: UpdateTransactionInput): Transaction {
-    const transaction = this.getTransactionById(id);
-    transaction.updatedAt = new Date().toISOString();
-
-    if (input.date !== undefined) transaction.date = input.date;
-    if (input.amount !== undefined) transaction.amount = input.amount;
-    if (input.subcategory !== undefined) {
-      transaction.subcategory = input.subcategory;
-      transaction.category = this.updateCategory(transaction.subcategory);
-    }
-    if (input.description !== undefined)
-      transaction.description = input.description;
-
-    return transaction;
-  }
-
-  private updateCategory(subcategory: string): TransactionCategory {
-    const capitalized = (value: string) =>
-      value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
-
-    const normalizedSubcategory = capitalized(subcategory);
-    const category = this.subcategoryPairs[normalizedSubcategory];
-
-    if (!category) {
+    if (!subcategory) {
       throw new NotFoundException(
-        `Category mapping was not found for subcategory: ${subcategory}`,
+        `Subcategory with id ${input.subcategoryId} was not found`,
       );
     }
 
-    return category;
+    const delta = this.getBalanceDelta(subcategory.category, input.amount);
+
+    const [transaction] = await this.prisma.$transaction([
+      this.prisma.transaction.create({
+        data: {
+          date: new Date(input.date),
+          amount: input.amount,
+          description: input.description,
+          accountId: input.accountId,
+          subcategoryId: input.subcategoryId,
+        },
+        include: { subcategory: true },
+      }),
+      this.prisma.account.update({
+        where: { id: input.accountId },
+        data: { balance: { increment: delta } },
+      }),
+    ]);
+
+    return transaction;
   }
 
-  deleteTransaction(id: string): void {
-    const index = this.transactions.findIndex((item) => item.id === id);
+  async updateTransaction(id: string, input: UpdateTransactionInput) {
+    const existing = await this.prisma.transaction.findUnique({
+      where: { id },
+      include: { subcategory: true },
+    });
 
-    if (index === -1) {
-      throw new Error(`Transaction with ${id} was not found`);
+    if (!existing) {
+      throw new NotFoundException(`Transaction with id ${id} was not found`);
     }
 
-    this.transactions.splice(index, 1);
+    let newSubcategory = existing.subcategory;
+    if (input.subcategoryId && input.subcategoryId !== existing.subcategoryId) {
+      const found = await this.prisma.subcategory.findUnique({
+        where: { id: input.subcategoryId },
+      });
+      if (!found) {
+        throw new NotFoundException(
+          `Subcategory with id ${input.subcategoryId} was not found`,
+        );
+      }
+      newSubcategory = found;
+    }
+
+    const oldDelta = this.getBalanceDelta(
+      existing.subcategory.category,
+      existing.amount,
+    );
+    const newDelta = this.getBalanceDelta(
+      newSubcategory.category,
+      input.amount ?? existing.amount,
+    );
+    const netDelta = newDelta - oldDelta;
+
+    const [transaction] = await this.prisma.$transaction([
+      this.prisma.transaction.update({
+        where: { id },
+        data: {
+          date: input.date ? new Date(input.date) : undefined,
+          amount: input.amount,
+          description: input.description,
+          subcategoryId: input.subcategoryId,
+        },
+        include: { subcategory: true },
+      }),
+      this.prisma.account.update({
+        where: { id: existing.accountId },
+        data: { balance: { increment: netDelta } },
+      }),
+    ]);
+
+    return transaction;
+  }
+
+  async deleteTransaction(id: string) {
+    const transaction = await this.prisma.transaction.findUnique({
+      where: { id },
+      include: { subcategory: true },
+    });
+
+    if (!transaction) {
+      throw new NotFoundException(`Transaction with id ${id} was not found`);
+    }
+
+    const delta = this.getBalanceDelta(
+      transaction.subcategory.category,
+      transaction.amount,
+    );
+
+    await this.prisma.$transaction([
+      this.prisma.transaction.delete({ where: { id } }),
+      this.prisma.account.update({
+        where: { id: transaction.accountId },
+        data: { balance: { increment: -delta } },
+      }),
+    ]);
+  }
+
+  private getBalanceDelta(
+    category: TransactionCategory,
+    amount: number,
+  ): number {
+    switch (category) {
+      case 'Income':
+        return amount;
+      case 'Expenses':
+      case 'Bills':
+      case 'Subscriptions':
+        return -amount;
+      case 'Debts':
+      case 'Savings':
+        return 0;
+    }
   }
 }

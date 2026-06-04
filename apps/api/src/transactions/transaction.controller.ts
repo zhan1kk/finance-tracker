@@ -38,8 +38,8 @@ export class TransactionController {
   }
 
   @Delete(':id')
-  deleteTransaction(@Param('id') id: string) {
-    this.transactionService.deleteTransaction(id);
+  async deleteTransaction(@Param('id') id: string) {
+    await this.transactionService.deleteTransaction(id);
     return { deleted: true };
   }
 }

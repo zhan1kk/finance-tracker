@@ -19,7 +19,7 @@ const ACCOUNT_TYPES = [
   'crypto',
 ] as const;
 
-export class CreateAccountDto {
+export class CreateAccountDTO {
   @IsString()
   @IsNotEmpty()
   public readonly name!: string;

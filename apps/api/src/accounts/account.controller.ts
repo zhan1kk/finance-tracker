@@ -8,7 +8,7 @@ import {
   Post,
 } from '@nestjs/common';
 import { AccountService } from './account.service';
-import { CreateAccountDto } from './dtos/create-account.dto';
+import { CreateAccountDTO } from './dtos/create-account.dto';
 
 @Controller('accounts')
 export class AccountController {
@@ -25,22 +25,21 @@ export class AccountController {
   }
 
   @Post()
-  createAccount(@Body() body: CreateAccountDto) {
+  createAccount(@Body() body: CreateAccountDTO) {
     return this.accountService.createAccount(body);
   }
 
   @Patch(':id')
   updateAccount(
     @Param('id') id: string,
-    @Body() body: Partial<CreateAccountDto>,
+    @Body() body: Partial<CreateAccountDTO>,
   ) {
     return this.accountService.updateAccount(id, body);
   }
 
   @Delete(':id')
-  deleteAccount(@Param('id') id: string) {
-    this.accountService.deleteAccount(id);
-
+  async deleteAccount(@Param('id') id: string) {
+    await this.accountService.deleteAccount(id);
     return { deleted: true };
   }
 }

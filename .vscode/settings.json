@@ -13,5 +13,6 @@
   "eslint.validate": ["javascript", "typescript"],
   "editor.codeActionsOnSave": {
     "source.fixAll.eslint": true
-  }
+  },
+  "prisma.pinToPrisma6": true
 }
