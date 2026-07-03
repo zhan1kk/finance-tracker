@@ -37,8 +37,21 @@ pnpm dev
 
 Interactive API docs (Swagger) are served at <http://localhost:3000/docs>.
 
-The API reads `DATABASE_URL` from `apps/api/.env` (see `apps/api/.env.example`;
-the compose database listens on host port **5433**).
+The API reads `DATABASE_URL` and `JWT_SECRET` from `apps/api/.env`
+(see `apps/api/.env.example`; the compose database listens on host port **5433**).
+
+## Authentication
+
+All endpoints except `/health` and `/auth/*` require a Bearer access token.
+
+- `POST /auth/register` — `{ email, password, baseCurrency? }`; seeds default
+  subcategories and returns `{ accessToken, user }` plus an httpOnly refresh cookie.
+- `POST /auth/login` — same response shape.
+- `POST /auth/refresh` — rotates the refresh cookie, returns a fresh access token.
+- `POST /auth/logout` — revokes the refresh token.
+- `GET /auth/me` — current profile.
+
+The seed script creates a demo login: `demo@local.test` / `changeme123`.
 
 ## Testing
 

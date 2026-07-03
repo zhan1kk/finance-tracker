@@ -13,12 +13,14 @@ import type {
 export class AccountService {
   constructor(private readonly prisma: PrismaService) {}
 
-  listAccounts() {
-    return this.prisma.account.findMany();
+  listAccounts(userId: string) {
+    return this.prisma.account.findMany({ where: { userId } });
   }
 
-  async getAccountById(id: string) {
-    const account = await this.prisma.account.findUnique({ where: { id } });
+  async getAccountById(userId: string, id: string) {
+    const account = await this.prisma.account.findFirst({
+      where: { id, userId },
+    });
 
     if (!account) {
       throw new NotFoundException(`Account with id ${id} was not found`);
@@ -27,19 +29,20 @@ export class AccountService {
     return account;
   }
 
-  createAccount(input: CreateAccountInput) {
+  createAccount(userId: string, input: CreateAccountInput) {
     return this.prisma.account.create({
       data: {
         name: input.name,
         type: input.type,
         currency: input.currency,
         balance: input.initialBalance,
+        userId,
       },
     });
   }
 
-  async updateAccount(id: string, input: UpdateAccountInput) {
-    await this.getAccountById(id);
+  async updateAccount(userId: string, id: string, input: UpdateAccountInput) {
+    await this.getAccountById(userId, id);
 
     // Balance is derived from transactions and is intentionally not updatable.
     return this.prisma.account.update({
@@ -52,8 +55,8 @@ export class AccountService {
     });
   }
 
-  async deleteAccount(id: string) {
-    await this.getAccountById(id);
+  async deleteAccount(userId: string, id: string) {
+    await this.getAccountById(userId, id);
 
     const transactionCount = await this.prisma.transaction.count({
       where: { accountId: id },

@@ -25,6 +25,31 @@ enum TransactionCategory {
   Savings
 }
 
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  baseCurrency String   @default("EUR")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  accounts      Account[]
+  subcategories Subcategory[]
+  refreshTokens RefreshToken[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
 model Account {
   id        String      @id @default(uuid())
   name      String
@@ -35,15 +60,25 @@ model Account {
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
   transactions Transaction[]
+
+  @@index([userId])
 }
 
 model Subcategory {
   id       String              @id @default(uuid())
-  name     String              @unique
+  name     String
   category TransactionCategory
 
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
   transactions Transaction[]
+
+  @@unique([userId, name])
 }
 
 model Transaction {
@@ -60,4 +95,7 @@ model Transaction {
 
   subcategoryId String
   subcategory   Subcategory @relation(fields: [subcategoryId], references: [id])
+
+  @@index([accountId])
+  @@index([subcategoryId])
 }

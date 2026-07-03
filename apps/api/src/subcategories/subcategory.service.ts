@@ -13,13 +13,13 @@ import type {
 export class SubcategoryService {
   constructor(private readonly prisma: PrismaService) {}
 
-  listSubcategories() {
-    return this.prisma.subcategory.findMany();
+  listSubcategories(userId: string) {
+    return this.prisma.subcategory.findMany({ where: { userId } });
   }
 
-  async getSubcategoryById(id: string) {
-    const subcategory = await this.prisma.subcategory.findUnique({
-      where: { id },
+  async getSubcategoryById(userId: string, id: string) {
+    const subcategory = await this.prisma.subcategory.findFirst({
+      where: { id, userId },
     });
 
     if (!subcategory) {
@@ -29,31 +29,20 @@ export class SubcategoryService {
     return subcategory;
   }
 
-  async createSubcategory(input: CreateSubcategoryInput) {
-    const duplicate = await this.prisma.subcategory.findUnique({
-      where: { name: input.name },
-    });
-
-    if (duplicate) {
-      throw new ConflictException(
-        `Subcategory with a name ${input.name} already exists`,
-      );
-    }
-    return this.prisma.subcategory.create({ data: input });
+  async createSubcategory(userId: string, input: CreateSubcategoryInput) {
+    await this.ensureNameIsFree(userId, input.name);
+    return this.prisma.subcategory.create({ data: { ...input, userId } });
   }
 
-  async updateSubcategory(id: string, input: UpdateSubcategoryInput) {
-    const existing = await this.getSubcategoryById(id);
+  async updateSubcategory(
+    userId: string,
+    id: string,
+    input: UpdateSubcategoryInput,
+  ) {
+    const existing = await this.getSubcategoryById(userId, id);
 
     if (input.name && input.name !== existing.name) {
-      const duplicate = await this.prisma.subcategory.findUnique({
-        where: { name: input.name },
-      });
-      if (duplicate) {
-        throw new ConflictException(
-          `Subcategory with a name ${input.name} already exists`,
-        );
-      }
+      await this.ensureNameIsFree(userId, input.name);
     }
 
     if (input.category && input.category !== existing.category) {
@@ -72,8 +61,8 @@ export class SubcategoryService {
     return this.prisma.subcategory.update({ where: { id }, data: input });
   }
 
-  async deleteSubcategory(id: string) {
-    await this.getSubcategoryById(id);
+  async deleteSubcategory(userId: string, id: string) {
+    await this.getSubcategoryById(userId, id);
 
     const transactionCount = await this.prisma.transaction.count({
       where: { subcategoryId: id },
@@ -86,5 +75,16 @@ export class SubcategoryService {
     }
 
     await this.prisma.subcategory.delete({ where: { id } });
+  }
+
+  private async ensureNameIsFree(userId: string, name: string) {
+    const duplicate = await this.prisma.subcategory.findUnique({
+      where: { userId_name: { userId, name } },
+    });
+    if (duplicate) {
+      throw new ConflictException(
+        `Subcategory with a name ${name} already exists`,
+      );
+    }
   }
 }

@@ -10,13 +10,16 @@ import type {
 export class TransactionService {
   constructor(private readonly prisma: PrismaService) {}
 
-  listTransactions() {
-    return this.prisma.transaction.findMany({ include: { subcategory: true } });
+  listTransactions(userId: string) {
+    return this.prisma.transaction.findMany({
+      where: { account: { userId } },
+      include: { subcategory: true },
+    });
   }
 
-  async getTransactionById(id: string) {
-    const transaction = await this.prisma.transaction.findUnique({
-      where: { id },
+  async getTransactionById(userId: string, id: string) {
+    const transaction = await this.prisma.transaction.findFirst({
+      where: { id, account: { userId } },
       include: { subcategory: true },
     });
 
@@ -27,11 +30,19 @@ export class TransactionService {
     return transaction;
   }
 
-  async createTransaction(input: CreateTransactionInput) {
-    const subcategory = await this.prisma.subcategory.findUnique({
-      where: { id: input.subcategoryId },
+  async createTransaction(userId: string, input: CreateTransactionInput) {
+    const account = await this.prisma.account.findFirst({
+      where: { id: input.accountId, userId },
     });
+    if (!account) {
+      throw new NotFoundException(
+        `Account with id ${input.accountId} was not found`,
+      );
+    }
 
+    const subcategory = await this.prisma.subcategory.findFirst({
+      where: { id: input.subcategoryId, userId },
+    });
     if (!subcategory) {
       throw new NotFoundException(
         `Subcategory with id ${input.subcategoryId} was not found`,
@@ -60,9 +71,13 @@ export class TransactionService {
     return transaction;
   }
 
-  async updateTransaction(id: string, input: UpdateTransactionInput) {
-    const existing = await this.prisma.transaction.findUnique({
-      where: { id },
+  async updateTransaction(
+    userId: string,
+    id: string,
+    input: UpdateTransactionInput,
+  ) {
+    const existing = await this.prisma.transaction.findFirst({
+      where: { id, account: { userId } },
       include: { subcategory: true },
     });
 
@@ -72,8 +87,8 @@ export class TransactionService {
 
     let newSubcategory = existing.subcategory;
     if (input.subcategoryId && input.subcategoryId !== existing.subcategoryId) {
-      const found = await this.prisma.subcategory.findUnique({
-        where: { id: input.subcategoryId },
+      const found = await this.prisma.subcategory.findFirst({
+        where: { id: input.subcategoryId, userId },
       });
       if (!found) {
         throw new NotFoundException(
@@ -113,9 +128,9 @@ export class TransactionService {
     return transaction;
   }
 
-  async deleteTransaction(id: string) {
-    const transaction = await this.prisma.transaction.findUnique({
-      where: { id },
+  async deleteTransaction(userId: string, id: string) {
+    const transaction = await this.prisma.transaction.findFirst({
+      where: { id, account: { userId } },
       include: { subcategory: true },
     });
 

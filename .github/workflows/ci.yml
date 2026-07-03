@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: finance_tracker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/finance_tracker
+      DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/finance_tracker_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter api exec prisma generate
+
+      - name: Validate migrations apply cleanly
+        run: pnpm --filter api exec prisma migrate deploy
+
+      - name: Lint
+        run: pnpm --filter api lint:check
+
+      - name: Build
+        run: pnpm --filter api build
+
+      - name: Unit tests
+        run: pnpm --filter api test
+
+      - name: E2E tests
+        run: pnpm --filter api test:e2e

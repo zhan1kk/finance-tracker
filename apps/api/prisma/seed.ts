@@ -1,36 +1,34 @@
-import { PrismaClient, TransactionCategory } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
+import * as argon2 from 'argon2';
+import { DEFAULT_SUBCATEGORIES } from '../src/subcategories/default-subcategories';
 
 const prisma = new PrismaClient();
 
-const DEFAULT_SUBCATEGORIES: { name: string; category: TransactionCategory }[] =
-  [
-    { name: 'Salary', category: 'Income' },
-    { name: 'Freelance', category: 'Income' },
-    { name: 'Other Income', category: 'Income' },
-    { name: 'Groceries', category: 'Expenses' },
-    { name: 'Dining Out', category: 'Expenses' },
-    { name: 'Transport', category: 'Expenses' },
-    { name: 'Shopping', category: 'Expenses' },
-    { name: 'Health', category: 'Expenses' },
-    { name: 'Entertainment', category: 'Expenses' },
-    { name: 'Rent', category: 'Bills' },
-    { name: 'Utilities', category: 'Bills' },
-    { name: 'Internet & Phone', category: 'Bills' },
-    { name: 'Streaming', category: 'Subscriptions' },
-    { name: 'Gym', category: 'Subscriptions' },
-    { name: 'Loan Payment', category: 'Debts' },
-    { name: 'Emergency Fund', category: 'Savings' },
-  ];
+const DEMO_EMAIL = 'demo@local.test';
+const DEMO_PASSWORD = 'changeme123';
 
 async function main() {
+  const user = await prisma.user.upsert({
+    where: { email: DEMO_EMAIL },
+    update: {},
+    create: {
+      email: DEMO_EMAIL,
+      passwordHash: await argon2.hash(DEMO_PASSWORD),
+      baseCurrency: 'EUR',
+    },
+  });
+
   for (const subcategory of DEFAULT_SUBCATEGORIES) {
     await prisma.subcategory.upsert({
-      where: { name: subcategory.name },
+      where: { userId_name: { userId: user.id, name: subcategory.name } },
       update: {},
-      create: subcategory,
+      create: { ...subcategory, userId: user.id },
     });
   }
-  console.log(`Seeded ${DEFAULT_SUBCATEGORIES.length} subcategories.`);
+
+  console.log(
+    `Seeded demo user ${DEMO_EMAIL} (password: ${DEMO_PASSWORD}) with ${DEFAULT_SUBCATEGORIES.length} subcategories.`,
+  );
 }
 
 main()

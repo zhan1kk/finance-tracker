@@ -1,0 +1,91 @@
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Req,
+  Res,
+} from '@nestjs/common';
+import type { Request, Response } from 'express';
+import { REFRESH_COOKIE, REFRESH_COOKIE_PATH } from './auth.constants';
+import { AuthService } from './auth.service';
+import { CurrentUser } from './decorators/current-user.decorator';
+import { Public } from './decorators/public.decorator';
+import { LoginDTO } from './dtos/login.dto';
+import { RegisterDTO } from './dtos/register.dto';
+import type { AuthTokens, AuthUser } from './types/auth.types';
+
+@Controller('auth')
+export class AuthController {
+  constructor(private readonly authService: AuthService) {}
+
+  @Public()
+  @Post('register')
+  async register(
+    @Body() body: RegisterDTO,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { user, tokens } = await this.authService.register(body);
+    this.setRefreshCookie(res, tokens);
+    return { accessToken: tokens.accessToken, user };
+  }
+
+  @Public()
+  @Post('login')
+  @HttpCode(HttpStatus.OK)
+  async login(
+    @Body() body: LoginDTO,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { user, tokens } = await this.authService.login(
+      body.email,
+      body.password,
+    );
+    this.setRefreshCookie(res, tokens);
+    return { accessToken: tokens.accessToken, user };
+  }
+
+  @Public()
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  async refresh(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { user, tokens } = await this.authService.refresh(
+      this.readRefreshCookie(req),
+    );
+    this.setRefreshCookie(res, tokens);
+    return { accessToken: tokens.accessToken, user };
+  }
+
+  @Public()
+  @Post('logout')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    await this.authService.logout(this.readRefreshCookie(req));
+    res.clearCookie(REFRESH_COOKIE, { path: REFRESH_COOKIE_PATH });
+  }
+
+  @Get('me')
+  getMe(@CurrentUser() user: AuthUser) {
+    return this.authService.getProfile(user.userId);
+  }
+
+  private readRefreshCookie(req: Request): string | undefined {
+    const cookies = req.cookies as Record<string, string | undefined>;
+    return cookies?.[REFRESH_COOKIE];
+  }
+
+  private setRefreshCookie(res: Response, tokens: AuthTokens): void {
+    res.cookie(REFRESH_COOKIE, tokens.refreshToken, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      path: REFRESH_COOKIE_PATH,
+      expires: tokens.refreshExpiresAt,
+    });
+  }
+}
