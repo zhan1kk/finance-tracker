@@ -41,13 +41,13 @@ export class AccountService {
   async updateAccount(id: string, input: UpdateAccountInput) {
     await this.getAccountById(id);
 
+    // Balance is derived from transactions and is intentionally not updatable.
     return this.prisma.account.update({
       where: { id },
       data: {
         name: input.name,
         type: input.type,
         currency: input.currency,
-        balance: input.initialBalance ?? 0,
       },
     });
   }

@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { AccountService } from './account.service';
 import { CreateAccountDTO } from './dtos/create-account.dto';
+import { UpdateAccountDTO } from './dtos/update-account.dto';
 
 @Controller('accounts')
 export class AccountController {
@@ -30,10 +31,7 @@ export class AccountController {
   }
 
   @Patch(':id')
-  updateAccount(
-    @Param('id') id: string,
-    @Body() body: Partial<CreateAccountDTO>,
-  ) {
+  updateAccount(@Param('id') id: string, @Body() body: UpdateAccountDTO) {
     return this.accountService.updateAccount(id, body);
   }
 

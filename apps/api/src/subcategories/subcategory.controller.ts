@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { SubcategoryService } from './subcategory.service';
 import { CreateSubcategoryDTO } from './dtos/create-subcategory.dto';
+import { UpdateSubcategoryDTO } from './dtos/update-subcategory.dto';
 
 @Controller('subcategories')
 export class SubcategoryController {
@@ -32,7 +33,7 @@ export class SubcategoryController {
   @Patch(':id')
   updateSubcategory(
     @Param('id') id: string,
-    @Body() body: Partial<CreateSubcategoryDTO>,
+    @Body() body: UpdateSubcategoryDTO,
   ) {
     return this.subcategoryService.updateSubcategory(id, body);
   }

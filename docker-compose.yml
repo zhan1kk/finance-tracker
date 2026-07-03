@@ -1,0 +1,24 @@
+services:
+  db:
+    # Plain (non-alpine) image: the existing finance-tracker-pgdata volume was
+    # created with it, and switching libc variants breaks text collations.
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: finance_tracker
+    ports:
+      # Host port 5433 to avoid clashing with a natively installed Postgres
+      - '5433:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d finance_tracker']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
+    name: finance-tracker-pgdata

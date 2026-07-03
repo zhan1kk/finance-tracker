@@ -1,8 +1,8 @@
 import { Type } from 'class-transformer';
 import {
   IsIn,
+  IsInt,
   IsNotEmpty,
-  IsNumber,
   IsOptional,
   IsString,
   Matches,
@@ -31,9 +31,10 @@ export class CreateAccountDTO {
   @Matches(/^[A-Z]{3}$/, { message: 'currency must be a 3-letter ISO code' })
   public readonly currency!: string;
 
+  /** Starting balance in minor currency units (cents). */
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsInt()
   @Min(0)
   public readonly initialBalance?: number;
 }

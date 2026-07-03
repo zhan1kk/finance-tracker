@@ -43,7 +43,32 @@ export class SubcategoryService {
   }
 
   async updateSubcategory(id: string, input: UpdateSubcategoryInput) {
-    await this.getSubcategoryById(id);
+    const existing = await this.getSubcategoryById(id);
+
+    if (input.name && input.name !== existing.name) {
+      const duplicate = await this.prisma.subcategory.findUnique({
+        where: { name: input.name },
+      });
+      if (duplicate) {
+        throw new ConflictException(
+          `Subcategory with a name ${input.name} already exists`,
+        );
+      }
+    }
+
+    if (input.category && input.category !== existing.category) {
+      // Account balances were adjusted based on the category at the time each
+      // transaction was created; changing it would make them inconsistent.
+      const transactionCount = await this.prisma.transaction.count({
+        where: { subcategoryId: id },
+      });
+      if (transactionCount > 0) {
+        throw new ConflictException(
+          `Cannot change category: subcategory has ${transactionCount} transaction(s).`,
+        );
+      }
+    }
+
     return this.prisma.subcategory.update({ where: { id }, data: input });
   }
 

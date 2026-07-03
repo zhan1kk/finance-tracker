@@ -30,7 +30,8 @@ model Account {
   name      String
   type      AccountType
   currency  String
-  balance   Float       @default(0)
+  /// Balance in minor currency units (cents)
+  balance   Int         @default(0)
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 
@@ -48,7 +49,8 @@ model Subcategory {
 model Transaction {
   id          String   @id @default(uuid())
   date        DateTime
-  amount      Float
+  /// Amount in minor currency units (cents), always positive
+  amount      Int
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

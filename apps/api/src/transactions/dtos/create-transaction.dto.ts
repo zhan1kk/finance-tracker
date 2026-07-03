@@ -1,21 +1,22 @@
 import { Type } from 'class-transformer';
 import {
-  IsString,
-  IsNumber,
+  IsDateString,
+  IsInt,
   IsOptional,
-  IsNotEmpty,
+  IsString,
   IsUUID,
   Min,
 } from 'class-validator';
 
 export class CreateTransactionDTO {
-  @IsString()
-  @IsNotEmpty()
+  /** ISO 8601 date, e.g. "2026-07-02". */
+  @IsDateString()
   public readonly date!: string;
 
+  /** Amount in minor currency units (cents), always positive. */
   @Type(() => Number)
-  @IsNumber()
-  @Min(0)
+  @IsInt()
+  @Min(1)
   public readonly amount!: number;
 
   @IsUUID()

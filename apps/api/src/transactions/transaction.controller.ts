@@ -8,6 +8,7 @@ import {
   Param,
 } from '@nestjs/common';
 import { CreateTransactionDTO } from './dtos/create-transaction.dto';
+import { UpdateTransactionDTO } from './dtos/update-transaction.dto';
 import { TransactionService } from './transaction.service';
 
 @Controller('transactions')
@@ -32,7 +33,7 @@ export class TransactionController {
   @Patch(':id')
   updateTransaction(
     @Param('id') id: string,
-    @Body() body: Partial<CreateTransactionDTO>,
+    @Body() body: UpdateTransactionDTO,
   ) {
     return this.transactionService.updateTransaction(id, body);
   }
