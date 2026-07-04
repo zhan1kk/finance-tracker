@@ -58,3 +58,9 @@ jobs:
 
       - name: E2E tests
         run: pnpm --filter api test:e2e
+
+      - name: Lint web
+        run: pnpm --filter web lint
+
+      - name: Build web
+        run: pnpm --filter web build

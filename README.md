@@ -6,8 +6,9 @@ statement imports, budgets, and reports. See [PLAN.md](PLAN.md) for the roadmap.
 ## Stack
 
 - **Monorepo:** pnpm workspaces + Turborepo
-- **API:** NestJS 11 + Prisma 6 + PostgreSQL (`apps/api`)
-- **Web:** planned (`apps/web`, Next.js)
+- **API:** NestJS 11 + Prisma 6 + PostgreSQL (`apps/api`, port 3000)
+- **Web:** Next.js + Tailwind + TanStack Query (`apps/web`, port 3001; proxies
+  the API under `/api/*` so auth cookies stay same-origin)
 
 All money values are stored and transferred as **integers in minor currency units**
 (cents), never floats.
@@ -31,7 +32,7 @@ pnpm --filter api exec prisma migrate dev
 # seed default subcategories
 pnpm --filter api exec prisma db seed
 
-# run the API in watch mode (http://localhost:3000)
+# run API (http://localhost:3000) and web app (http://localhost:3001)
 pnpm dev
 ```
 

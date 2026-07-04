@@ -6,10 +6,12 @@ import {
   Patch,
   Delete,
   Param,
+  Query,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/auth.types';
 import { CreateTransactionDTO } from './dtos/create-transaction.dto';
+import { ListTransactionsQueryDTO } from './dtos/list-transactions.query.dto';
 import { UpdateTransactionDTO } from './dtos/update-transaction.dto';
 import { TransactionService } from './transaction.service';
 
@@ -18,8 +20,11 @@ export class TransactionController {
   constructor(private readonly transactionService: TransactionService) {}
 
   @Get()
-  listTransactions(@CurrentUser() user: AuthUser) {
-    return this.transactionService.listTransactions(user.userId);
+  listTransactions(
+    @CurrentUser() user: AuthUser,
+    @Query() query: ListTransactionsQueryDTO,
+  ) {
+    return this.transactionService.listTransactions(user.userId, query);
   }
 
   @Get(':id')

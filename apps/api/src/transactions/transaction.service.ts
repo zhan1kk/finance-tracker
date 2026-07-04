@@ -4,11 +4,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { Account } from '@prisma/client';
+import type { Account, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import type { TransactionCategory } from '../subcategories/types/subcategory.types';
 import type {
   CreateTransactionInput,
+  ListTransactionsQuery,
   TransactionType,
   UpdateTransactionInput,
 } from './types/transaction.types';
@@ -22,11 +23,36 @@ const TRANSACTION_INCLUDE = {
 export class TransactionService {
   constructor(private readonly prisma: PrismaService) {}
 
-  listTransactions(userId: string) {
-    return this.prisma.transaction.findMany({
-      where: { account: { userId } },
-      include: TRANSACTION_INCLUDE,
-    });
+  async listTransactions(userId: string, query: ListTransactionsQuery) {
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+
+    const where: Prisma.TransactionWhereInput = {
+      account: { userId },
+      accountId: query.accountId,
+      subcategoryId: query.subcategoryId,
+      type: query.type,
+      date: {
+        gte: query.from ? new Date(query.from) : undefined,
+        lte: query.to ? new Date(query.to) : undefined,
+      },
+      description: query.search
+        ? { contains: query.search, mode: 'insensitive' }
+        : undefined,
+    };
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.transaction.findMany({
+        where,
+        include: TRANSACTION_INCLUDE,
+        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.transaction.count({ where }),
+    ]);
+
+    return { items, total, page, pageSize };
   }
 
   async getTransactionById(userId: string, id: string) {

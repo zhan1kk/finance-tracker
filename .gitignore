@@ -4,3 +4,9 @@ dist
 .next
 .expo
 coverage
+.turbo
+# claude-flow / ruflo tooling artifacts
+ruvector.db
+.swarm/
+.claude-flow/
+.hive-mind/

@@ -209,7 +209,7 @@ describe('API (e2e)', () => {
         .get('/transactions')
         .set('Authorization', bearer)
         .expect(200);
-      expect(transactions.body).toEqual([]);
+      expect(transactions.body).toMatchObject({ items: [], total: 0 });
     });
 
     it("cannot create a transaction against another user's account", async () => {
@@ -382,6 +382,39 @@ describe('API (e2e)', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({ category: 'Income' })
         .expect(409);
+    });
+
+    it('filters and paginates the transaction list', async () => {
+      await createTransaction('INCOME', incomeId, 50_000);
+      await createTransaction('EXPENSE', expenseId, 1_000, 201, {
+        date: '2026-06-15',
+        description: 'Morning espresso',
+      });
+      await createTransaction('EXPENSE', expenseId, 2_000, 201, {
+        date: '2026-07-02',
+      });
+
+      const list = (
+        filters: string,
+      ): Promise<{ body: { items: unknown[]; total: number } }> =>
+        request(http)
+          .get(`/transactions?${filters}`)
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200);
+
+      expect((await list('type=EXPENSE')).body.total).toBe(2);
+      expect((await list('from=2026-07-01')).body.total).toBe(2);
+      expect((await list('search=espresso')).body.total).toBe(1);
+      expect((await list(`subcategoryId=${incomeId}`)).body.total).toBe(1);
+
+      const page = (await list('page=2&pageSize=2')).body;
+      expect(page.total).toBe(3);
+      expect(page.items).toHaveLength(1);
+
+      await request(http)
+        .get('/transactions?pageSize=1000')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(400);
     });
 
     it('refuses to change the currency of an account with transactions', async () => {

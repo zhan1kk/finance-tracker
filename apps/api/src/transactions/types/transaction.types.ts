@@ -14,6 +14,17 @@ export type CreateTransactionInput = {
   description?: string;
 };
 
+export type ListTransactionsQuery = {
+  from?: string;
+  to?: string;
+  accountId?: string;
+  subcategoryId?: string;
+  type?: TransactionType;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+};
+
 export type UpdateTransactionInput = Partial<
   Omit<
     CreateTransactionInput,

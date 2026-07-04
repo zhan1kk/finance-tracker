@@ -1,0 +1,99 @@
+import type { User } from './types';
+
+let accessToken: string | null = null;
+
+export function setAccessToken(token: string | null): void {
+  accessToken = token;
+}
+
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+type AuthResponse = { accessToken: string; user: User };
+
+/** Exchanges the refresh cookie for a fresh access token. Null if not logged in. */
+export async function tryRefresh(): Promise<User | null> {
+  const res = await fetch('/api/auth/refresh', { method: 'POST' });
+  if (!res.ok) {
+    setAccessToken(null);
+    return null;
+  }
+  const data = (await res.json()) as AuthResponse;
+  setAccessToken(data.accessToken);
+  return data.user;
+}
+
+export async function api<T>(
+  path: string,
+  init: RequestInit = {},
+  allowRetry = true,
+): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    ...init,
+    headers: {
+      ...(init.body ? { 'content-type': 'application/json' } : {}),
+      ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+      ...init.headers,
+    },
+  });
+
+  // Access tokens are short-lived: on 401, refresh once and retry.
+  if (res.status === 401 && allowRetry && !path.startsWith('/auth/')) {
+    if (await tryRefresh()) {
+      return api<T>(path, init, false);
+    }
+  }
+
+  if (!res.ok) {
+    let message = res.statusText;
+    try {
+      const body = (await res.json()) as { message?: string | string[] };
+      message = Array.isArray(body.message)
+        ? body.message.join('; ')
+        : (body.message ?? message);
+    } catch {
+      // non-JSON error body; keep statusText
+    }
+    throw new ApiError(res.status, message);
+  }
+
+  if (res.status === 204) {
+    return undefined as T;
+  }
+  return (await res.json()) as T;
+}
+
+export async function loginRequest(
+  email: string,
+  password: string,
+): Promise<User> {
+  const data = await api<AuthResponse>('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+  setAccessToken(data.accessToken);
+  return data.user;
+}
+
+export async function registerRequest(
+  email: string,
+  password: string,
+): Promise<User> {
+  const data = await api<AuthResponse>('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+  setAccessToken(data.accessToken);
+  return data.user;
+}
+
+export async function logoutRequest(): Promise<void> {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  setAccessToken(null);
+}
