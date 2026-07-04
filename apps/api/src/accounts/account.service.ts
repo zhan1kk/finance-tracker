@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import type {
+  BalanceIntegrityEntry,
   CreateAccountInput,
   UpdateAccountInput,
 } from './types/account.types';
@@ -36,13 +37,27 @@ export class AccountService {
         type: input.type,
         currency: input.currency,
         balance: input.initialBalance,
+        initialBalance: input.initialBalance,
         userId,
       },
     });
   }
 
   async updateAccount(userId: string, id: string, input: UpdateAccountInput) {
-    await this.getAccountById(userId, id);
+    const existing = await this.getAccountById(userId, id);
+
+    if (input.currency && input.currency !== existing.currency) {
+      // Amounts are not converted, so past transactions (and same-currency
+      // transfers) would silently change meaning.
+      const transactionCount = await this.prisma.transaction.count({
+        where: { OR: [{ accountId: id }, { counterAccountId: id }] },
+      });
+      if (transactionCount > 0) {
+        throw new ConflictException(
+          `Cannot change currency: account is referenced by ${transactionCount} transaction(s).`,
+        );
+      }
+    }
 
     // Balance is derived from transactions and is intentionally not updatable.
     return this.prisma.account.update({
@@ -58,16 +73,79 @@ export class AccountService {
   async deleteAccount(userId: string, id: string) {
     await this.getAccountById(userId, id);
 
+    // Includes transfers into this account (counterAccountId), which would
+    // otherwise silently lose their destination.
     const transactionCount = await this.prisma.transaction.count({
-      where: { accountId: id },
+      where: { OR: [{ accountId: id }, { counterAccountId: id }] },
     });
 
     if (transactionCount > 0) {
       throw new ConflictException(
-        `Cannot delete account: it has ${transactionCount} transaction(s). Delete them first.`,
+        `Cannot delete account: it is referenced by ${transactionCount} transaction(s). Delete them first.`,
       );
     }
 
     await this.prisma.account.delete({ where: { id } });
+  }
+
+  /**
+   * Safety net: recomputes each account's balance from initialBalance plus the
+   * signed sum of its transactions and reports any drift from the stored value.
+   */
+  async checkBalanceIntegrity(
+    userId: string,
+  ): Promise<BalanceIntegrityEntry[]> {
+    const accounts = await this.prisma.account.findMany({ where: { userId } });
+
+    return Promise.all(
+      accounts.map(async (account) => {
+        const [byType, incoming] = await Promise.all([
+          this.prisma.transaction.groupBy({
+            by: ['type'],
+            where: { accountId: account.id },
+            _sum: { amount: true },
+          }),
+          this.prisma.transaction.aggregate({
+            where: { counterAccountId: account.id },
+            _sum: { amount: true },
+          }),
+        ]);
+
+        const sumOf = (type: string) =>
+          byType.find((g) => g.type === type)?._sum.amount ?? 0;
+
+        const expectedBalance =
+          account.initialBalance +
+          sumOf('INCOME') -
+          sumOf('EXPENSE') -
+          sumOf('TRANSFER') +
+          (incoming._sum.amount ?? 0);
+
+        return {
+          accountId: account.id,
+          name: account.name,
+          storedBalance: account.balance,
+          expectedBalance,
+          drift: account.balance - expectedBalance,
+        };
+      }),
+    );
+  }
+
+  /** Applies the recomputed balances wherever they drifted. */
+  async repairBalances(userId: string): Promise<BalanceIntegrityEntry[]> {
+    const report = await this.checkBalanceIntegrity(userId);
+    const drifted = report.filter((entry) => entry.drift !== 0);
+
+    await this.prisma.$transaction(
+      drifted.map((entry) =>
+        this.prisma.account.update({
+          where: { id: entry.accountId },
+          data: { balance: entry.expectedBalance },
+        }),
+      ),
+    );
+
+    return drifted;
   }
 }

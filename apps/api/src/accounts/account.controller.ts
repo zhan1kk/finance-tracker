@@ -22,6 +22,17 @@ export class AccountController {
     return this.accountService.listAccounts(user.userId);
   }
 
+  // Static routes must be declared before ':id' or they would match it.
+  @Get('integrity')
+  checkBalanceIntegrity(@CurrentUser() user: AuthUser) {
+    return this.accountService.checkBalanceIntegrity(user.userId);
+  }
+
+  @Post('integrity/repair')
+  repairBalances(@CurrentUser() user: AuthUser) {
+    return this.accountService.repairBalances(user.userId);
+  }
+
   @Get(':id')
   getAccountById(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.accountService.getAccountById(user.userId, id);

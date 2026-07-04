@@ -17,3 +17,12 @@ export type CreateAccountInput = {
 export type UpdateAccountInput = Partial<
   Omit<CreateAccountInput, 'initialBalance'>
 >;
+
+export type BalanceIntegrityEntry = {
+  accountId: string;
+  name: string;
+  storedBalance: number;
+  expectedBalance: number;
+  /** storedBalance - expectedBalance; 0 means consistent. */
+  drift: number;
+};

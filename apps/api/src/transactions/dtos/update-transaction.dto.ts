@@ -1,8 +1,15 @@
 import { OmitType, PartialType } from '@nestjs/swagger';
 import { CreateTransactionDTO } from './create-transaction.dto';
 
-// Moving a transaction between accounts is not supported (the balance math
-// only adjusts the original account), so accountId is not updatable.
+// Not updatable:
+// - accountId: the balance math only adjusts the original account
+// - type / counterAccountId / parentTransactionId: delete and recreate instead
+//   of mutating the transaction's nature
 export class UpdateTransactionDTO extends PartialType(
-  OmitType(CreateTransactionDTO, ['accountId'] as const),
+  OmitType(CreateTransactionDTO, [
+    'accountId',
+    'type',
+    'counterAccountId',
+    'parentTransactionId',
+  ] as const),
 ) {}

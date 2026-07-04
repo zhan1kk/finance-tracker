@@ -25,6 +25,12 @@ enum TransactionCategory {
   Savings
 }
 
+enum TransactionType {
+  INCOME
+  EXPENSE
+  TRANSFER
+}
+
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
@@ -57,13 +63,16 @@ model Account {
   currency  String
   /// Balance in minor currency units (cents)
   balance   Int         @default(0)
+  /// Starting balance in minor currency units (cents); balance = initialBalance + sum of transaction deltas
+  initialBalance Int    @default(0)
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 
   userId String
   user   User   @relation(fields: [userId], references: [id])
 
-  transactions Transaction[]
+  transactions      Transaction[] @relation("AccountTransactions")
+  incomingTransfers Transaction[] @relation("TransferCounterAccount")
 
   @@index([userId])
 }
@@ -82,20 +91,33 @@ model Subcategory {
 }
 
 model Transaction {
-  id          String   @id @default(uuid())
+  id          String          @id @default(uuid())
+  type        TransactionType
   date        DateTime
   /// Amount in minor currency units (cents), always positive
   amount      Int
   description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
 
   accountId String
-  account   Account @relation(fields: [accountId], references: [id])
+  account   Account @relation("AccountTransactions", fields: [accountId], references: [id])
 
-  subcategoryId String
-  subcategory   Subcategory @relation(fields: [subcategoryId], references: [id])
+  /// Null for transfers; required for income/expense
+  subcategoryId String?
+  subcategory   Subcategory? @relation(fields: [subcategoryId], references: [id])
+
+  /// Destination account; set only when type is TRANSFER
+  counterAccountId String?
+  counterAccount   Account? @relation("TransferCounterAccount", fields: [counterAccountId], references: [id])
+
+  /// Set on an INCOME that reimburses an EXPENSE (e.g. friends paying back a shared bill)
+  parentTransactionId String?
+  parentTransaction   Transaction?  @relation("Reimbursements", fields: [parentTransactionId], references: [id])
+  reimbursements      Transaction[] @relation("Reimbursements")
 
   @@index([accountId])
   @@index([subcategoryId])
+  @@index([counterAccountId])
+  @@index([parentTransactionId])
 }
