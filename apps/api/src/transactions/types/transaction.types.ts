@@ -31,3 +31,28 @@ export type UpdateTransactionInput = Partial<
     'accountId' | 'type' | 'counterAccountId' | 'parentTransactionId'
   >
 >;
+
+export type StatsQuery = {
+  from?: string;
+  to?: string;
+};
+
+/** Per-month totals in cents. Expense is net of reimbursements received that month. */
+export type MonthlyStat = {
+  month: string;
+  income: number;
+  expense: number;
+};
+
+/** Spending per subcategory in cents, net of reimbursements linked to its expenses. */
+export type CategoryStat = {
+  subcategoryId: string;
+  name: string;
+  category: string;
+  amount: number;
+};
+
+export type TransactionStats = {
+  monthly: MonthlyStat[];
+  byCategory: CategoryStat[];
+};

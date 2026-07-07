@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
+import { TelegramCard } from "@/components/telegram-card";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { formatCents, parseAmountToCents } from "@/lib/format";
@@ -141,6 +142,8 @@ export default function AccountsPage() {
           </Card>
         ))}
       </div>
+
+      <TelegramCard accounts={accounts.data ?? []} />
     </main>
   );
 }

@@ -54,6 +54,46 @@ All endpoints except `/health` and `/auth/*` require a Bearer access token.
 
 The seed script creates a demo login: `demo@local.test` / `changeme123`.
 
+## Telegram quick-capture (optional)
+
+Log cash spending by messaging a Telegram bot (`12.50 groceries lunch`, or
+`+2000 salary` for income). Setup:
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and put its token in
+   `apps/api/.env` as `TELEGRAM_BOT_TOKEN` (unset = bot disabled).
+2. Restart the API — it long-polls Telegram, so no public URL is needed.
+3. In the web app (Accounts page → Telegram): pick a default cash account,
+   generate a link code, and send `/link <code>` to your bot.
+
+Captured transactions land on the default account dated today; every
+confirmation message has an Undo button.
+
+## CSV import & categorization (optional LLM)
+
+Import a bank/card statement and have transactions categorized automatically.
+
+- `POST /imports/inspect` — `{ csv }`; returns detected headers + a sample so a
+  column mapping can be built.
+- `POST /imports` — `{ accountId, filename, csv, mapping?, threshold? }`; stages
+  and categorizes the rows into a review batch. The mapping (which columns are
+  date/amount/description, date format, decimal separator) is remembered per
+  account, so later imports can omit it.
+- `PATCH /imports/:id/rows/:rowId` — correct a row's category (the correction is
+  learned as a rule on commit).
+- `POST /imports/:id/commit` — atomically create transactions for the resolved
+  rows; `POST /imports/:id/undo` reverses the whole batch.
+- `GET /imports/stats/accuracy` — categorization accuracy over time.
+- `/rules` — CRUD for merchant → subcategory rules.
+
+**How categorization works:** a rules pre-pass (your own + auto-learned merchant
+rules) runs first, then the remaining rows go to the configured provider. Without
+`ANTHROPIC_API_KEY` the provider only matches a transaction to a subcategory whose
+name literally appears in the description; everything else is left for you to
+categorize in the review queue (and your choice becomes a rule). Set
+`ANTHROPIC_API_KEY` to enable the LLM for the rows rules don't cover — predictions
+at/above the confidence threshold are auto-applied, the rest land in review.
+Re-uploading the same statement is de-duplicated, not double-counted.
+
 ## Testing
 
 ```bash

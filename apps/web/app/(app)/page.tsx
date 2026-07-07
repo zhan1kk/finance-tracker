@@ -2,10 +2,21 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { CategoryBars, MonthlyTrendChart } from "@/components/charts";
 import { Card } from "@/components/ui";
 import { api } from "@/lib/api";
-import { formatCents, todayISO } from "@/lib/format";
-import type { Account, TransactionList } from "@/lib/types";
+import { formatCents } from "@/lib/format";
+import type { Account, MonthlyStat, TransactionStats } from "@/lib/types";
+
+/** "YYYY-MM" for the month `offset` months from now (0 = current). */
+function monthKey(offset: number): string {
+  const now = new Date();
+  return new Date(Date.UTC(now.getFullYear(), now.getMonth() + offset, 1))
+    .toISOString()
+    .slice(0, 7);
+}
+
+const TREND_MONTHS = 6;
 
 export default function OverviewPage() {
   const accounts = useQuery({
@@ -13,21 +24,32 @@ export default function OverviewPage() {
     queryFn: () => api<Account[]>("/accounts"),
   });
 
-  const monthStart = `${todayISO().slice(0, 7)}-01`;
-  const monthTransactions = useQuery({
-    queryKey: ["transactions", { from: monthStart }],
+  const monthStart = `${monthKey(0)}-01`;
+  const trendStart = `${monthKey(1 - TREND_MONTHS)}-01`;
+
+  const monthStats = useQuery({
+    queryKey: ["stats", { from: monthStart }],
     queryFn: () =>
-      api<TransactionList>(`/transactions?from=${monthStart}&pageSize=100`),
+      api<TransactionStats>(`/transactions/stats?from=${monthStart}`),
+  });
+  const trendStats = useQuery({
+    queryKey: ["stats", { from: trendStart }],
+    queryFn: () =>
+      api<TransactionStats>(`/transactions/stats?from=${trendStart}`),
   });
 
-  const items = monthTransactions.data?.items ?? [];
-  const income = items
-    .filter((t) => t.type === "INCOME")
-    .reduce((sum, t) => sum + t.amount, 0);
-  const expenses = items
-    .filter((t) => t.type === "EXPENSE")
-    .reduce((sum, t) => sum + t.amount, 0);
+  const income =
+    monthStats.data?.monthly.reduce((sum, m) => sum + m.income, 0) ?? 0;
+  const expenses =
+    monthStats.data?.monthly.reduce((sum, m) => sum + m.expense, 0) ?? 0;
   const currency = accounts.data?.[0]?.currency ?? "EUR";
+
+  // Fill months with no transactions so the trend always shows 6 columns.
+  const trend: MonthlyStat[] = Array.from({ length: TREND_MONTHS }, (_, i) => {
+    const month = monthKey(i + 1 - TREND_MONTHS);
+    const stat = trendStats.data?.monthly.find((m) => m.month === month);
+    return { month, income: stat?.income ?? 0, expense: stat?.expense ?? 0 };
+  });
 
   return (
     <main className="flex flex-col gap-6">
@@ -55,6 +77,31 @@ export default function OverviewPage() {
             </p>
           </Card>
         </div>
+      </section>
+
+      <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <Card>
+          <h2 className="mb-3 font-medium">
+            Spending by category
+            <span className="ml-2 text-sm font-normal text-zinc-500">
+              this month
+            </span>
+          </h2>
+          {monthStats.data && (
+            <CategoryBars data={monthStats.data.byCategory} currency={currency} />
+          )}
+        </Card>
+        <Card>
+          <h2 className="mb-3 font-medium">
+            Income vs spending
+            <span className="ml-2 text-sm font-normal text-zinc-500">
+              last 6 months
+            </span>
+          </h2>
+          {trendStats.data && (
+            <MonthlyTrendChart data={trend} currency={currency} />
+          )}
+        </Card>
       </section>
 
       <section>

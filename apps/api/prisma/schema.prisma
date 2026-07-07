@@ -39,9 +39,22 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  accounts      Account[]
-  subcategories Subcategory[]
-  refreshTokens RefreshToken[]
+  /// Telegram chat bound via the one-time /link code flow; null = not linked
+  telegramChatId            String?   @unique
+  /// sha256 hex of the pending one-time link code (single-use, short TTL)
+  telegramLinkCodeHash      String?   @unique
+  telegramLinkCodeExpiresAt DateTime?
+
+  /// Account the Telegram bot books captured transactions against
+  defaultAccountId String?
+  defaultAccount   Account? @relation("UserDefaultAccount", fields: [defaultAccountId], references: [id], onDelete: SetNull)
+
+  accounts            Account[]              @relation("AccountOwner")
+  subcategories       Subcategory[]
+  refreshTokens       RefreshToken[]
+  importBatches       ImportBatch[]
+  categorizationRules CategorizationRule[]
+  importMappings      AccountImportMapping[]
 }
 
 model RefreshToken {
@@ -57,22 +70,25 @@ model RefreshToken {
 }
 
 model Account {
-  id        String      @id @default(uuid())
-  name      String
-  type      AccountType
-  currency  String
+  id             String      @id @default(uuid())
+  name           String
+  type           AccountType
+  currency       String
   /// Balance in minor currency units (cents)
-  balance   Int         @default(0)
+  balance        Int         @default(0)
   /// Starting balance in minor currency units (cents); balance = initialBalance + sum of transaction deltas
-  initialBalance Int    @default(0)
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
+  initialBalance Int         @default(0)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
 
   userId String
-  user   User   @relation(fields: [userId], references: [id])
+  user   User   @relation("AccountOwner", fields: [userId], references: [id])
 
-  transactions      Transaction[] @relation("AccountTransactions")
-  incomingTransfers Transaction[] @relation("TransferCounterAccount")
+  transactions      Transaction[]         @relation("AccountTransactions")
+  incomingTransfers Transaction[]         @relation("TransferCounterAccount")
+  defaultForUsers   User[]                @relation("UserDefaultAccount")
+  importBatches     ImportBatch[]
+  importMapping     AccountImportMapping?
 
   @@index([userId])
 }
@@ -85,7 +101,10 @@ model Subcategory {
   userId String
   user   User   @relation(fields: [userId], references: [id])
 
-  transactions Transaction[]
+  transactions        Transaction[]
+  rules               CategorizationRule[]
+  predictedImportRows ImportRow[]          @relation("PredictedSubcategory")
+  chosenImportRows    ImportRow[]          @relation("ChosenSubcategory")
 
   @@unique([userId, name])
 }
@@ -116,8 +135,148 @@ model Transaction {
   parentTransaction   Transaction?  @relation("Reimbursements", fields: [parentTransactionId], references: [id])
   reimbursements      Transaction[] @relation("Reimbursements")
 
+  /// sha256 of account|date|type|amount|normalizedDescription; set on imported rows so a
+  /// re-uploaded statement is detected as a duplicate. Null for manually-entered rows.
+  dedupeHash String?
+  importRow  ImportRow?
+
   @@index([accountId])
   @@index([subcategoryId])
   @@index([counterAccountId])
   @@index([parentTransactionId])
+  @@index([accountId, dedupeHash])
+}
+
+enum ImportBatchStatus {
+  PENDING_REVIEW
+  COMMITTED
+  UNDONE
+}
+
+enum ImportRowStatus {
+  /// Same dedupe hash already exists (committed or earlier in the batch)
+  DUPLICATE
+  /// Auto-categorized with confidence at/above the batch threshold
+  READY
+  /// Needs a human decision (low confidence, no prediction, or a parse error)
+  NEEDS_REVIEW
+  /// A transaction was created for this row on commit
+  COMMITTED
+  /// Excluded from the commit (duplicate or unresolved)
+  SKIPPED
+}
+
+enum CategorizationSource {
+  RULE
+  LLM
+  MANUAL
+  NONE
+}
+
+/// One CSV upload. Rows are staged, categorized, reviewed, then committed as an
+/// atomic (undoable) batch of transactions.
+model ImportBatch {
+  id          String            @id @default(uuid())
+  filename    String
+  status      ImportBatchStatus @default(PENDING_REVIEW)
+  /// Confidence threshold used for this batch (0..1)
+  threshold   Float             @default(0.7)
+  /// Name of the categorization provider used (e.g. "heuristic", "anthropic")
+  provider    String
+  createdAt   DateTime          @default(now())
+  committedAt DateTime?
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id])
+
+  rows ImportRow[]
+
+  @@index([userId])
+  @@index([accountId])
+}
+
+model ImportRow {
+  id       String @id @default(uuid())
+  rowIndex Int
+  /// The raw parsed cells, keyed by header
+  raw      Json
+
+  date                  DateTime
+  /// Positive minor units (cents); sign is captured by `type`
+  amount                Int
+  type                  TransactionType
+  description           String
+  normalizedDescription String
+  dedupeHash            String
+
+  status ImportRowStatus
+
+  /// What the categorizer predicted — kept immutable for the accuracy metric
+  predictedSubcategoryId String?
+  predictedSubcategory   Subcategory?         @relation("PredictedSubcategory", fields: [predictedSubcategoryId], references: [id])
+  confidence             Float?
+  source                 CategorizationSource @default(NONE)
+
+  /// The effective choice (defaults to the prediction; changes when a human corrects it)
+  subcategoryId String?
+  subcategory   Subcategory? @relation("ChosenSubcategory", fields: [subcategoryId], references: [id])
+  corrected     Boolean      @default(false)
+
+  /// Parse errors or skip reasons, surfaced in the review UI
+  note String?
+
+  /// The transaction created on commit; nulled if the batch is undone
+  transactionId String?      @unique
+  transaction   Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  batchId String
+  batch   ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+  @@index([dedupeHash])
+}
+
+/// A learned or user-defined merchant → subcategory mapping applied before the LLM.
+model CategorizationRule {
+  id        String               @id @default(uuid())
+  /// Lowercased normalized substring matched against a row's normalized description
+  pattern   String
+  source    CategorizationSource @default(MANUAL)
+  hitCount  Int                  @default(0)
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  subcategoryId String
+  subcategory   Subcategory @relation(fields: [subcategoryId], references: [id])
+
+  @@unique([userId, pattern])
+  @@index([userId])
+}
+
+/// Per-account CSV column mapping, so a given bank's export format is remembered.
+model AccountImportMapping {
+  id                String   @id @default(uuid())
+  dateColumn        String
+  amountColumn      String
+  descriptionColumn String
+  /// e.g. "ISO", "DD.MM.YYYY", "MM/DD/YYYY", "DD/MM/YYYY"
+  dateFormat        String   @default("ISO")
+  decimalSeparator  String   @default(".")
+  /// When true, a negative amount is an expense (the common convention)
+  negativeIsExpense Boolean  @default(true)
+  hasHeader         Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  accountId String  @unique
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 }

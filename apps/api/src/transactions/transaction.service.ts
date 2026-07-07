@@ -4,12 +4,16 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { Account, Prisma } from '@prisma/client';
+import { type Account, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import type { TransactionCategory } from '../subcategories/types/subcategory.types';
 import type {
+  CategoryStat,
   CreateTransactionInput,
   ListTransactionsQuery,
+  MonthlyStat,
+  StatsQuery,
+  TransactionStats,
   TransactionType,
   UpdateTransactionInput,
 } from './types/transaction.types';
@@ -53,6 +57,69 @@ export class TransactionService {
     ]);
 
     return { items, total, page, pageSize };
+  }
+
+  /**
+   * Aggregates for dashboards, all in cents. Transfers are excluded.
+   * Reimbursements (INCOME linked to an EXPENSE) are not counted as income;
+   * they reduce expenses instead — monthly in the month received, per-category
+   * against the parent expense's subcategory.
+   */
+  async getStats(userId: string, query: StatsQuery): Promise<TransactionStats> {
+    const range = [
+      ...(query.from ? [Prisma.sql`t."date" >= ${new Date(query.from)}`] : []),
+      ...(query.to ? [Prisma.sql`t."date" <= ${new Date(query.to)}`] : []),
+    ];
+    const scope = (extra: Prisma.Sql) =>
+      Prisma.join(
+        [Prisma.sql`a."userId" = ${userId}`, extra, ...range],
+        ' AND ',
+      );
+
+    const [monthly, byCategory] = await this.prisma.$transaction([
+      this.prisma.$queryRaw<MonthlyStat[]>`
+        SELECT
+          to_char(date_trunc('month', t."date"), 'YYYY-MM') AS month,
+          COALESCE(SUM(t."amount") FILTER (
+            WHERE t."type" = 'INCOME' AND t."parentTransactionId" IS NULL
+          ), 0)::int AS income,
+          (COALESCE(SUM(t."amount") FILTER (WHERE t."type" = 'EXPENSE'), 0)
+           - COALESCE(SUM(t."amount") FILTER (
+               WHERE t."type" = 'INCOME' AND t."parentTransactionId" IS NOT NULL
+             ), 0))::int AS expense
+        FROM "Transaction" t
+        JOIN "Account" a ON a."id" = t."accountId"
+        WHERE ${scope(Prisma.sql`t."type" <> 'TRANSFER'`)}
+        GROUP BY 1
+        ORDER BY 1
+      `,
+      this.prisma.$queryRaw<CategoryStat[]>`
+        SELECT
+          s."id" AS "subcategoryId",
+          s."name",
+          s."category"::text AS category,
+          SUM(x.signed)::int AS amount
+        FROM (
+          SELECT t."subcategoryId" AS sid, t."amount" AS signed
+          FROM "Transaction" t
+          JOIN "Account" a ON a."id" = t."accountId"
+          WHERE ${scope(Prisma.sql`t."type" = 'EXPENSE'`)}
+          UNION ALL
+          SELECT p."subcategoryId" AS sid, -t."amount" AS signed
+          FROM "Transaction" t
+          JOIN "Account" a ON a."id" = t."accountId"
+          JOIN "Transaction" p ON p."id" = t."parentTransactionId"
+          WHERE ${scope(
+            Prisma.sql`t."type" = 'INCOME' AND t."parentTransactionId" IS NOT NULL`,
+          )}
+        ) x
+        JOIN "Subcategory" s ON s."id" = x.sid
+        GROUP BY s."id", s."name", s."category"
+        ORDER BY amount DESC
+      `,
+    ]);
+
+    return { monthly, byCategory };
   }
 
   async getTransactionById(userId: string, id: string) {

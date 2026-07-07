@@ -7,6 +7,8 @@ import { AuthModule } from './auth/auth.module';
 import { AccountModule } from './accounts/account.module';
 import { TransactionModule } from './transactions/transaction.module';
 import { SubcategoryModule } from './subcategories/subcategory.module';
+import { TelegramModule } from './telegram/telegram.module';
+import { ImportsModule } from './imports/imports.module';
 
 @Module({
   imports: [
@@ -16,6 +18,8 @@ import { SubcategoryModule } from './subcategories/subcategory.module';
     AccountModule,
     TransactionModule,
     SubcategoryModule,
+    TelegramModule,
+    ImportsModule,
   ],
   controllers: [AppController],
   providers: [

@@ -63,3 +63,35 @@ export type TransactionList = {
   page: number;
   pageSize: number;
 };
+
+/** Per-month totals in cents; expense is net of reimbursements received that month. */
+export type MonthlyStat = {
+  month: string;
+  income: number;
+  expense: number;
+};
+
+/** Spending per subcategory in cents, net of linked reimbursements. */
+export type CategoryStat = {
+  subcategoryId: string;
+  name: string;
+  category: TransactionCategory;
+  amount: number;
+};
+
+export type TransactionStats = {
+  monthly: MonthlyStat[];
+  byCategory: CategoryStat[];
+};
+
+export type TelegramSettings = {
+  linked: boolean;
+  defaultAccountId: string | null;
+  botUsername: string | null;
+};
+
+export type TelegramLinkCode = {
+  code: string;
+  expiresAt: string;
+  botUsername: string | null;
+};

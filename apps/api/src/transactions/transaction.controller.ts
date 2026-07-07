@@ -12,6 +12,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/auth.types';
 import { CreateTransactionDTO } from './dtos/create-transaction.dto';
 import { ListTransactionsQueryDTO } from './dtos/list-transactions.query.dto';
+import { StatsQueryDTO } from './dtos/stats.query.dto';
 import { UpdateTransactionDTO } from './dtos/update-transaction.dto';
 import { TransactionService } from './transaction.service';
 
@@ -25,6 +26,12 @@ export class TransactionController {
     @Query() query: ListTransactionsQueryDTO,
   ) {
     return this.transactionService.listTransactions(user.userId, query);
+  }
+
+  // Must be declared before @Get(':id') so 'stats' is not captured as an id.
+  @Get('stats')
+  getStats(@CurrentUser() user: AuthUser, @Query() query: StatsQueryDTO) {
+    return this.transactionService.getStats(user.userId, query);
   }
 
   @Get(':id')

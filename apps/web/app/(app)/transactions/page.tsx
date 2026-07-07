@@ -17,6 +17,8 @@ type Filters = {
   type: string;
   accountId: string;
   search: string;
+  from: string;
+  to: string;
   page: number;
 };
 
@@ -28,6 +30,8 @@ export default function TransactionsPage() {
     type: "",
     accountId: "",
     search: "",
+    from: "",
+    to: "",
     page: 1,
   });
 
@@ -47,6 +51,8 @@ export default function TransactionsPage() {
   if (filters.type) params.set("type", filters.type);
   if (filters.accountId) params.set("accountId", filters.accountId);
   if (filters.search) params.set("search", filters.search);
+  if (filters.from) params.set("from", filters.from);
+  if (filters.to) params.set("to", filters.to);
 
   const transactions = useQuery({
     queryKey: ["transactions", Object.fromEntries(params)],
@@ -56,6 +62,7 @@ export default function TransactionsPage() {
   const invalidateAll = () => {
     void queryClient.invalidateQueries({ queryKey: ["transactions"] });
     void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+    void queryClient.invalidateQueries({ queryKey: ["stats"] });
   };
 
   const remove = useMutation({
@@ -108,6 +115,24 @@ export default function TransactionsPage() {
                 </option>
               ))}
             </Select>
+          </Field>
+          <Field label="From">
+            <Input
+              type="date"
+              value={filters.from}
+              onChange={(e) =>
+                setFilters({ ...filters, from: e.target.value, page: 1 })
+              }
+            />
+          </Field>
+          <Field label="To">
+            <Input
+              type="date"
+              value={filters.to}
+              onChange={(e) =>
+                setFilters({ ...filters, to: e.target.value, page: 1 })
+              }
+            />
           </Field>
           <Field label="Search description">
             <Input
@@ -214,6 +239,18 @@ function TransactionRow({
         ) : (
           (t.subcategory?.name ?? "—")
         )}
+        {t.type === "INCOME" && t.parentTransactionId && (
+          <span className="ml-1.5 text-xs text-zinc-400">reimbursement</span>
+        )}
+        {t.type === "EXPENSE" && t.reimbursements.length > 0 && (
+          <span className="ml-1.5 text-xs text-zinc-400">
+            reimbursed{" "}
+            {formatCents(
+              t.reimbursements.reduce((sum, r) => sum + r.amount, 0),
+              currency,
+            )}
+          </span>
+        )}
       </td>
       <td className="py-2 pr-3">{t.description ?? ""}</td>
       <td className="py-2 pr-3 whitespace-nowrap">
@@ -253,6 +290,20 @@ function QuickAdd({
     type === "INCOME" ? s.category === "Income" : s.category !== "Income",
   );
 
+  // Candidate parents for a reimbursement (only relevant for INCOME).
+  const recentExpenses = useQuery({
+    queryKey: ["transactions", { recentExpenses: true }],
+    queryFn: () => api<TransactionList>("/transactions?type=EXPENSE&pageSize=15"),
+    enabled: type === "INCOME",
+  });
+
+  const expenseLabel = (t: Transaction) => {
+    const currency =
+      accounts.find((a) => a.id === t.accountId)?.currency ?? "EUR";
+    const what = t.description || t.subcategory?.name || "expense";
+    return `${t.date.slice(0, 10)} · ${what} · ${formatCents(t.amount, currency)}`;
+  };
+
   const create = useMutation({
     mutationFn: (body: Record<string, unknown>) =>
       api("/transactions", { method: "POST", body: JSON.stringify(body) }),
@@ -281,6 +332,10 @@ function QuickAdd({
       body.counterAccountId = String(form.get("counterAccountId"));
     } else {
       body.subcategoryId = String(form.get("subcategoryId"));
+    }
+    const parentId = String(form.get("parentTransactionId") || "");
+    if (type === "INCOME" && parentId) {
+      body.parentTransactionId = parentId;
     }
     create.mutate(body);
     e.currentTarget.reset();
@@ -335,6 +390,18 @@ function QuickAdd({
               {eligibleSubcategories.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name} ({s.category})
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+        {type === "INCOME" && (
+          <Field label="Reimburses">
+            <Select name="parentTransactionId" defaultValue="">
+              <option value="">—</option>
+              {recentExpenses.data?.items.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {expenseLabel(t)}
                 </option>
               ))}
             </Select>

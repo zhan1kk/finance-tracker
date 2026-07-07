@@ -19,6 +19,25 @@
   }
 }
 
+/* Chart tokens. Series colors are validated (dataviz six checks) against the
+   card surfaces: #ffffff light, #18181b dark. Light-mode series-2 sits below
+   3:1 contrast, so any chart using it must also offer a table view. */
+:root {
+  --chart-series-1: #2a78d6;
+  --chart-series-2: #1baf7a;
+  --chart-grid: #e4e4e7;
+  --chart-axis: #d4d4d8;
+  --chart-muted: #71717a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --chart-series-1: #3987e5;
+    --chart-series-2: #199e70;
+    --chart-grid: #27272a;
+    --chart-axis: #3f3f46;
+  }
+}
+
 body {
   background: var(--background);
   color: var(--foreground);

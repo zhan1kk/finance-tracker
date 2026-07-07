@@ -5,6 +5,7 @@ import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.setup';
 import { PrismaService } from '../src/prisma.service';
+import { TelegramService } from '../src/telegram/telegram.service';
 
 describe('API (e2e)', () => {
   let app: INestApplication<App>;
@@ -700,6 +701,498 @@ describe('API (e2e)', () => {
         .expect(201);
       expect(repaired.body as unknown[]).toHaveLength(1);
       expect(await getBalance(source.id)).toBe(75_000); // 100k - 5k - 20k
+    });
+  });
+
+  describe('stats', () => {
+    let accountId: string;
+    let salaryId: string;
+    let groceriesId: string;
+    let rentId: string;
+
+    type Stats = {
+      monthly: { month: string; income: number; expense: number }[];
+      byCategory: { subcategoryId: string; name: string; amount: number }[];
+    };
+
+    beforeEach(async () => {
+      accountId = (await createAccount(500_000)).id;
+      salaryId = (await createSubcategory('Paycheck', 'Income')).id;
+      groceriesId = (await createSubcategory('Food', 'Expenses')).id;
+      rentId = (await createSubcategory('Housing', 'Bills')).id;
+    });
+
+    const addTransaction = async (
+      body: Record<string, unknown>,
+      asToken = token,
+    ) => {
+      const res = await request(http)
+        .post('/transactions')
+        .set('Authorization', `Bearer ${asToken}`)
+        .send({ accountId, ...body })
+        .expect(201);
+      return res.body as { id: string };
+    };
+
+    const getStats = async (query = '') => {
+      const res = await request(http)
+        .get(`/transactions/stats${query}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      return res.body as Stats;
+    };
+
+    it('groups income and expenses by month and category', async () => {
+      await addTransaction({
+        type: 'INCOME',
+        subcategoryId: salaryId,
+        amount: 300_000,
+        date: '2026-05-25',
+      });
+      await addTransaction({
+        type: 'EXPENSE',
+        subcategoryId: rentId,
+        amount: 80_000,
+        date: '2026-05-28',
+      });
+      await addTransaction({
+        type: 'EXPENSE',
+        subcategoryId: groceriesId,
+        amount: 12_000,
+        date: '2026-06-02',
+      });
+
+      const stats = await getStats();
+      expect(stats.monthly).toEqual([
+        { month: '2026-05', income: 300_000, expense: 80_000 },
+        { month: '2026-06', income: 0, expense: 12_000 },
+      ]);
+      expect(stats.byCategory).toEqual([
+        expect.objectContaining({ subcategoryId: rentId, amount: 80_000 }),
+        expect.objectContaining({ subcategoryId: groceriesId, amount: 12_000 }),
+      ]);
+    });
+
+    it('excludes transfers', async () => {
+      const other = await createAccount(0);
+      await addTransaction({
+        type: 'TRANSFER',
+        counterAccountId: other.id,
+        amount: 50_000,
+        date: '2026-06-10',
+      });
+
+      const stats = await getStats();
+      expect(stats.monthly).toEqual([]);
+      expect(stats.byCategory).toEqual([]);
+    });
+
+    it('nets reimbursements against the parent expense category, not income', async () => {
+      const dinner = await addTransaction({
+        type: 'EXPENSE',
+        subcategoryId: groceriesId,
+        amount: 9_000,
+        date: '2026-06-05',
+      });
+      await addTransaction({
+        type: 'INCOME',
+        subcategoryId: salaryId,
+        amount: 3_000,
+        date: '2026-07-01',
+        parentTransactionId: dinner.id,
+      });
+
+      const stats = await getStats();
+      // The payback is not income; it reduces spending in the month received.
+      expect(stats.monthly).toEqual([
+        { month: '2026-06', income: 0, expense: 9_000 },
+        { month: '2026-07', income: 0, expense: -3_000 },
+      ]);
+      expect(stats.byCategory).toEqual([
+        expect.objectContaining({ subcategoryId: groceriesId, amount: 6_000 }),
+      ]);
+    });
+
+    it('respects the from/to range', async () => {
+      await addTransaction({
+        type: 'EXPENSE',
+        subcategoryId: groceriesId,
+        amount: 1_000,
+        date: '2026-05-15',
+      });
+      await addTransaction({
+        type: 'EXPENSE',
+        subcategoryId: groceriesId,
+        amount: 2_000,
+        date: '2026-06-15',
+      });
+
+      const stats = await getStats('?from=2026-06-01&to=2026-06-30');
+      expect(stats.monthly).toEqual([
+        { month: '2026-06', income: 0, expense: 2_000 },
+      ]);
+      expect(stats.byCategory).toEqual([
+        expect.objectContaining({ amount: 2_000 }),
+      ]);
+    });
+
+    it("only counts the requesting user's transactions", async () => {
+      const otherToken = await registerUser('stats-other@example.com');
+      const otherAccount = await createAccount(0, otherToken);
+      const otherSub = await createSubcategory(
+        'Their food',
+        'Expenses',
+        otherToken,
+      );
+      await addTransaction(
+        {
+          accountId: otherAccount.id,
+          type: 'EXPENSE',
+          subcategoryId: otherSub.id,
+          amount: 5_000,
+          date: '2026-06-01',
+        },
+        otherToken,
+      );
+
+      const stats = await getStats();
+      expect(stats.monthly).toEqual([]);
+      expect(stats.byCategory).toEqual([]);
+    });
+  });
+
+  describe('telegram', () => {
+    const CHAT = '424242';
+
+    const linkChat = async (chatId = CHAT) => {
+      const res = await request(http)
+        .post('/telegram/link-code')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      const { code } = res.body as { code: string };
+      expect(code).toMatch(/^[0-9a-f]{8}$/);
+      expect(await telegram().linkChat(code, chatId)).toBe(true);
+      return code;
+    };
+
+    const telegram = () => app.get(TelegramService);
+
+    it('links a chat with a one-time code (invalid and reused codes fail)', async () => {
+      expect(await telegram().linkChat('deadbeef', CHAT)).toBe(false);
+
+      const code = await linkChat();
+      // Single-use: the same code cannot link a second chat.
+      expect(await telegram().linkChat(code, '999')).toBe(false);
+
+      const settings = await request(http)
+        .get('/telegram/settings')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(settings.body).toMatchObject({ linked: true });
+    });
+
+    it('sets a default account but rejects a foreign one', async () => {
+      const account = await createAccount(10_000);
+      const updated = await request(http)
+        .patch('/telegram/settings')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ defaultAccountId: account.id })
+        .expect(200);
+      expect(updated.body).toMatchObject({ defaultAccountId: account.id });
+
+      const otherToken = await registerUser('tg-other@example.com');
+      const foreign = await createAccount(0, otherToken);
+      await request(http)
+        .patch('/telegram/settings')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ defaultAccountId: foreign.id })
+        .expect(404);
+    });
+
+    it('captures an expense from a linked chat and undoes it', async () => {
+      const account = await createAccount(10_000);
+      await linkChat();
+      await request(http)
+        .patch('/telegram/settings')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ defaultAccountId: account.id })
+        .expect(200);
+
+      const garbage = await telegram().capture(CHAT, 'what is my balance?');
+      expect(garbage.ok).toBe(false);
+
+      const noMatch = await telegram().capture(CHAT, '5 nonexistentcategory');
+      expect(noMatch.ok).toBe(false);
+
+      // "grocer" fuzzy-matches the seeded "Groceries" subcategory.
+      const result = await telegram().capture(
+        CHAT,
+        '12.50 grocer coffee beans',
+      );
+      expect(result.ok).toBe(true);
+      expect(await getBalance(account.id)).toBe(8_750);
+
+      if (result.ok) {
+        await telegram().undoCapture(CHAT, result.transactionId);
+      }
+      expect(await getBalance(account.id)).toBe(10_000);
+    });
+
+    it('rejects captures from unlinked chats and unlinks cleanly', async () => {
+      const unlinked = await telegram().capture('777', '5 groceries');
+      expect(unlinked.ok).toBe(false);
+
+      await linkChat();
+      await request(http)
+        .delete('/telegram/link')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const settings = await request(http)
+        .get('/telegram/settings')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(settings.body).toMatchObject({ linked: false });
+    });
+  });
+
+  describe('imports & categorization', () => {
+    let accountId: string;
+
+    const MAPPING = {
+      dateColumn: 'Date',
+      amountColumn: 'Amount',
+      descriptionColumn: 'Description',
+      dateFormat: 'ISO',
+      decimalSeparator: '.',
+      negativeIsExpense: true,
+      hasHeader: true,
+    };
+
+    // Rent + Salary name-match the seeded subcategories; the shop does not.
+    const CSV = [
+      'Date,Amount,Description',
+      '2026-07-01,-12.50,SPAR AMSTERDAM 4471',
+      '2026-07-02,-800.00,Monthly Rent',
+      '2026-07-03,2000.00,Salary payment ACME',
+    ].join('\n');
+
+    type Row = {
+      id: string;
+      status: string;
+      source: string;
+      description: string;
+      subcategory: { name: string } | null;
+    };
+    type Batch = { id: string; status: string; rows: Row[] };
+
+    beforeEach(async () => {
+      accountId = (await createAccount(500_000)).id;
+    });
+
+    const subId = async (name: string): Promise<string> => {
+      const res = await request(http)
+        .get('/subcategories')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const found = (res.body as { id: string; name: string }[]).find(
+        (s) => s.name === name,
+      );
+      if (!found) throw new Error(`subcategory ${name} not found`);
+      return found.id;
+    };
+
+    const doImport = async (csv = CSV, withMapping = true): Promise<Batch> => {
+      const res = await request(http)
+        .post('/imports')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          accountId,
+          filename: 'statement.csv',
+          csv,
+          ...(withMapping ? { mapping: MAPPING } : {}),
+        })
+        .expect(201);
+      return (res.body as { batch: Batch }).batch;
+    };
+
+    const rowFor = (batch: Batch, needle: string): Row => {
+      const row = batch.rows.find((r) => r.description.includes(needle));
+      if (!row) throw new Error(`row ${needle} not found`);
+      return row;
+    };
+
+    it('inspects a CSV, returning headers and a sample', async () => {
+      const res = await request(http)
+        .post('/imports/inspect')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ csv: CSV })
+        .expect(201);
+      expect(res.body).toMatchObject({
+        headers: ['Date', 'Amount', 'Description'],
+      });
+      expect((res.body as { sample: unknown[] }).sample).toHaveLength(3);
+    });
+
+    it('stages rows, name-matches known categories, flags unknowns for review', async () => {
+      const batch = await doImport();
+      expect(batch.rows).toHaveLength(3);
+
+      expect(rowFor(batch, 'Rent')).toMatchObject({
+        status: 'READY',
+        subcategory: { name: 'Rent' },
+      });
+      expect(rowFor(batch, 'Salary')).toMatchObject({
+        status: 'READY',
+        subcategory: { name: 'Salary' },
+      });
+      // No brand dictionary: an unknown shop is left for the human.
+      expect(rowFor(batch, 'SPAR')).toMatchObject({
+        status: 'NEEDS_REVIEW',
+        subcategory: null,
+      });
+    });
+
+    it('commits only resolved rows, creates transactions and moves the balance', async () => {
+      const batch = await doImport();
+      // Leave SPAR unreviewed: only the two READY rows should commit.
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      // 500000 + 200000 (salary) − 80000 (rent) = 620000
+      expect(await getBalance(accountId)).toBe(620_000);
+      const txns = await request(http)
+        .get('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(txns.body).toMatchObject({ total: 2 });
+    });
+
+    it('learns a rule from a correction and reuses it on later imports', async () => {
+      const batch = await doImport();
+      const spar = rowFor(batch, 'SPAR');
+      const groceriesId = await subId('Groceries');
+
+      await request(http)
+        .patch(`/imports/${batch.id}/rows/${spar.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId: groceriesId })
+        .expect(200);
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      // The correction is stored as a rule.
+      const rules = await request(http)
+        .get('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(rules.body).toEqual([
+        expect.objectContaining({ pattern: 'spar amsterdam' }),
+      ]);
+
+      // A later, non-duplicate SPAR purchase is now auto-categorized by the rule.
+      const next = await doImport(
+        'Date,Amount,Description\n2026-08-09,-9.00,SPAR AMSTERDAM 8899',
+      );
+      expect(rowFor(next, 'SPAR')).toMatchObject({
+        status: 'READY',
+        source: 'RULE',
+        subcategory: { name: 'Groceries' },
+      });
+    });
+
+    it('detects duplicates when the same statement is re-imported', async () => {
+      const first = await doImport();
+      // Review the unknown row so all three commit (dedupe is vs committed rows).
+      await request(http)
+        .patch(`/imports/${first.id}/rows/${rowFor(first, 'SPAR').id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId: await subId('Groceries') })
+        .expect(200);
+      await request(http)
+        .post(`/imports/${first.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      const balanceAfterFirst = await getBalance(accountId);
+
+      const second = await doImport();
+      expect(second.rows.every((r) => r.status === 'DUPLICATE')).toBe(true);
+      await request(http)
+        .post(`/imports/${second.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      expect(await getBalance(accountId)).toBe(balanceAfterFirst);
+    });
+
+    it('undoes a committed batch, restoring transactions and balance', async () => {
+      const batch = await doImport();
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      expect(await getBalance(accountId)).toBe(620_000);
+
+      await request(http)
+        .post(`/imports/${batch.id}/undo`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      expect(await getBalance(accountId)).toBe(500_000);
+      const txns = await request(http)
+        .get('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(txns.body).toMatchObject({ total: 0 });
+    });
+
+    it('remembers the column mapping per account', async () => {
+      await doImport();
+      const saved = await request(http)
+        .get(`/imports/mapping/${accountId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(saved.body).toMatchObject({ dateColumn: 'Date' });
+
+      // A second import without a mapping reuses the saved one.
+      const second = await doImport(
+        'Date,Amount,Description\n2026-09-01,-5.00,Some Shop',
+        false,
+      );
+      expect(second.rows).toHaveLength(1);
+    });
+
+    it('reports categorization accuracy for committed predictions', async () => {
+      const batch = await doImport();
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      const stats = await request(http)
+        .get('/imports/stats/accuracy')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      // Rent + Salary were predicted and kept → 2/2 correct.
+      expect(stats.body).toMatchObject({
+        overall: { predicted: 2, correct: 2, accuracy: 1 },
+      });
+    });
+
+    it('keeps imports isolated between users', async () => {
+      const batch = await doImport();
+      const otherToken = await registerUser('import-other@example.com');
+
+      await request(http)
+        .get(`/imports/${batch.id}`)
+        .set('Authorization', `Bearer ${otherToken}`)
+        .expect(404);
+      await request(http)
+        .post('/imports')
+        .set('Authorization', `Bearer ${otherToken}`)
+        .send({ accountId, filename: 'x.csv', csv: CSV, mapping: MAPPING })
+        .expect(404);
     });
   });
 });
