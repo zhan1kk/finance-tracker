@@ -1,0 +1,339 @@
+"use client";
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRef, useState, type FormEvent } from "react";
+import { AccuracyCard } from "@/components/accuracy-card";
+import { ImportReview } from "@/components/import-review";
+import { Button, Card, ErrorText, Field, Select } from "@/components/ui";
+import { api } from "@/lib/api";
+import {
+  type Account,
+  type ColumnMapping,
+  type CsvInspection,
+  DATE_FORMATS,
+  type ImportBatchSummary,
+  type ImportResult,
+} from "@/lib/types";
+
+/** First header matching any of the patterns (case-insensitive), else "". */
+function guessColumn(headers: string[], patterns: RegExp[]): string {
+  for (const pattern of patterns) {
+    const hit = headers.find((h) => pattern.test(h));
+    if (hit) return hit;
+  }
+  return "";
+}
+
+export default function ImportsPage() {
+  const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
+
+  if (activeBatchId) {
+    return (
+      <main className="flex flex-col gap-6">
+        <ImportReview
+          batchId={activeBatchId}
+          onDone={() => setActiveBatchId(null)}
+        />
+      </main>
+    );
+  }
+
+  return (
+    <main className="flex flex-col gap-6">
+      <NewImport onImported={setActiveBatchId} />
+      <AccuracyCard />
+      <History onOpen={setActiveBatchId} />
+    </main>
+  );
+}
+
+function NewImport({ onImported }: { onImported: (batchId: string) => void }) {
+  const queryClient = useQueryClient();
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [accountId, setAccountId] = useState("");
+  const [filename, setFilename] = useState("");
+  const [csv, setCsv] = useState("");
+  const [inspection, setInspection] = useState<CsvInspection | null>(null);
+  const [mapping, setMapping] = useState<ColumnMapping | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [skipped, setSkipped] = useState<number | null>(null);
+
+  const accounts = useQuery({
+    queryKey: ["accounts"],
+    queryFn: () => api<Account[]>("/accounts"),
+  });
+
+  const reset = () => {
+    setCsv("");
+    setFilename("");
+    setInspection(null);
+    setMapping(null);
+    if (fileInput.current) fileInput.current.value = "";
+  };
+
+  const onFile = async (file: File) => {
+    setError(null);
+    setSkipped(null);
+    const text = await file.text();
+    setCsv(text);
+    setFilename(file.name);
+    try {
+      const found = await api<CsvInspection>("/imports/inspect", {
+        method: "POST",
+        body: JSON.stringify({ csv: text }),
+      });
+      setInspection(found);
+      setMapping({
+        dateColumn: guessColumn(found.headers, [/date/i, /datum/i]),
+        amountColumn: guessColumn(found.headers, [
+          /amount/i,
+          /bedrag/i,
+          /sum/i,
+          /value/i,
+        ]),
+        descriptionColumn: guessColumn(found.headers, [
+          /desc/i,
+          /payee|merchant|name/i,
+          /memo|omschrijving|details/i,
+        ]),
+        dateFormat: "ISO",
+        decimalSeparator: ".",
+        negativeIsExpense: true,
+        hasHeader: true,
+      });
+    } catch (err) {
+      setError(err);
+    }
+  };
+
+  const create = useMutation({
+    mutationFn: () =>
+      api<ImportResult>("/imports", {
+        method: "POST",
+        body: JSON.stringify({ accountId, filename, csv, mapping }),
+      }),
+    onSuccess: (result) => {
+      void queryClient.invalidateQueries({ queryKey: ["import-batches"] });
+      setSkipped(result.skipped.length);
+      reset();
+      onImported(result.batch.id);
+    },
+    onError: setError,
+  });
+
+  const onSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!accountId) {
+      setError(new Error("Pick an account first"));
+      return;
+    }
+    create.mutate();
+  };
+
+  return (
+    <Card>
+      <h2 className="mb-1 font-medium">Import a statement</h2>
+      <p className="mb-3 text-sm text-zinc-500">
+        Upload a CSV export from your bank. Transactions are categorized
+        automatically where possible; you confirm the rest.
+      </p>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Account">
+          <Select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+            <option value="">Select…</option>
+            {accounts.data?.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="CSV file">
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".csv,text/csv"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void onFile(file);
+            }}
+            className="text-sm file:mr-3 file:rounded-md file:border file:border-zinc-300 file:bg-white file:px-3 file:py-1.5 file:text-sm dark:file:border-zinc-700 dark:file:bg-zinc-900"
+          />
+        </Field>
+      </div>
+
+      {inspection && mapping && (
+        <form
+          onSubmit={onSubmit}
+          className="mt-4 border-t border-zinc-200 pt-4 dark:border-zinc-800"
+        >
+          <p className="mb-3 text-sm text-zinc-500">
+            Map the columns from <span className="font-medium">{filename}</span>{" "}
+            ({inspection.headers.length} columns detected):
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <ColumnSelect
+              label="Date column"
+              headers={inspection.headers}
+              value={mapping.dateColumn}
+              onChange={(v) => setMapping({ ...mapping, dateColumn: v })}
+            />
+            <ColumnSelect
+              label="Amount column"
+              headers={inspection.headers}
+              value={mapping.amountColumn}
+              onChange={(v) => setMapping({ ...mapping, amountColumn: v })}
+            />
+            <ColumnSelect
+              label="Description column"
+              headers={inspection.headers}
+              value={mapping.descriptionColumn}
+              onChange={(v) => setMapping({ ...mapping, descriptionColumn: v })}
+            />
+            <Field label="Date format">
+              <Select
+                value={mapping.dateFormat}
+                onChange={(e) =>
+                  setMapping({
+                    ...mapping,
+                    dateFormat: e.target.value as ColumnMapping["dateFormat"],
+                  })
+                }
+              >
+                {DATE_FORMATS.map((f) => (
+                  <option key={f} value={f}>
+                    {f}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Decimals">
+              <Select
+                value={mapping.decimalSeparator}
+                onChange={(e) =>
+                  setMapping({
+                    ...mapping,
+                    decimalSeparator: e.target.value as "." | ",",
+                  })
+                }
+              >
+                <option value=".">1234.56</option>
+                <option value=",">1234,56</option>
+              </Select>
+            </Field>
+            <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
+              <input
+                type="checkbox"
+                checked={mapping.negativeIsExpense}
+                onChange={(e) =>
+                  setMapping({
+                    ...mapping,
+                    negativeIsExpense: e.target.checked,
+                  })
+                }
+              />
+              Negative = expense
+            </label>
+            <Button type="submit" disabled={create.isPending}>
+              {create.isPending ? "Importing…" : "Import"}
+            </Button>
+          </div>
+
+          {inspection.sample[0]?.[mapping.descriptionColumn] && (
+            <p className="mt-2 text-xs text-zinc-400">
+              e.g. {inspection.sample[0][mapping.dateColumn]} ·{" "}
+              {inspection.sample[0][mapping.descriptionColumn]} ·{" "}
+              {inspection.sample[0][mapping.amountColumn]}
+            </p>
+          )}
+        </form>
+      )}
+
+      {skipped !== null && skipped > 0 && (
+        <p className="mt-2 text-sm text-amber-600">
+          {skipped} row{skipped === 1 ? "" : "s"} were skipped (unparseable date
+          or amount).
+        </p>
+      )}
+      <ErrorText error={error} />
+    </Card>
+  );
+}
+
+function ColumnSelect({
+  label,
+  headers,
+  value,
+  onChange,
+}: {
+  label: string;
+  headers: string[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Field label={label}>
+      <Select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={value ? "" : "border-amber-400"}
+      >
+        <option value="">Select…</option>
+        {headers.map((h) => (
+          <option key={h} value={h}>
+            {h}
+          </option>
+        ))}
+      </Select>
+    </Field>
+  );
+}
+
+const BATCH_STATUS_LABEL: Record<string, string> = {
+  PENDING_REVIEW: "Needs review",
+  COMMITTED: "Imported",
+  UNDONE: "Undone",
+};
+
+function History({ onOpen }: { onOpen: (batchId: string) => void }) {
+  const batches = useQuery({
+    queryKey: ["import-batches"],
+    queryFn: () => api<ImportBatchSummary[]>("/imports"),
+  });
+
+  if (!batches.data || batches.data.length === 0) {
+    return null;
+  }
+
+  return (
+    <Card>
+      <h2 className="mb-3 font-medium">Import history</h2>
+      <ul className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-900">
+        {batches.data.map((batch) => {
+          const total = Object.values(batch.counts).reduce((a, b) => a + b, 0);
+          return (
+            <li key={batch.id}>
+              <button
+                onClick={() => onOpen(batch.id)}
+                className="flex w-full items-center gap-3 py-2 text-left hover:opacity-80"
+              >
+                <span className="font-medium">{batch.filename}</span>
+                <span className="text-sm text-zinc-500">
+                  {batch.account.name} · {total} rows
+                </span>
+                <span className="ml-auto text-xs text-zinc-500">
+                  {new Date(batch.createdAt).toLocaleDateString()}
+                </span>
+                <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs dark:bg-zinc-800">
+                  {BATCH_STATUS_LABEL[batch.status] ?? batch.status}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
+  );
+}

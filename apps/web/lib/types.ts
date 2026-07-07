@@ -95,3 +95,107 @@ export type TelegramLinkCode = {
   expiresAt: string;
   botUsername: string | null;
 };
+
+// ---- CSV import & categorization ----
+
+export const DATE_FORMATS = [
+  'ISO',
+  'DD.MM.YYYY',
+  'DD/MM/YYYY',
+  'MM/DD/YYYY',
+] as const;
+export type DateFormat = (typeof DATE_FORMATS)[number];
+
+export type ColumnMapping = {
+  dateColumn: string;
+  amountColumn: string;
+  descriptionColumn: string;
+  dateFormat?: DateFormat;
+  decimalSeparator?: '.' | ',';
+  negativeIsExpense?: boolean;
+  hasHeader?: boolean;
+};
+
+export type ImportBatchStatus = 'PENDING_REVIEW' | 'COMMITTED' | 'UNDONE';
+export type ImportRowStatus =
+  | 'DUPLICATE'
+  | 'READY'
+  | 'NEEDS_REVIEW'
+  | 'COMMITTED'
+  | 'SKIPPED';
+export type CategorizationSource = 'RULE' | 'LLM' | 'MANUAL' | 'NONE';
+
+export type ImportRow = {
+  id: string;
+  rowIndex: number;
+  date: string;
+  /** Positive minor units (cents); sign is in `type`. */
+  amount: number;
+  type: 'INCOME' | 'EXPENSE';
+  description: string;
+  status: ImportRowStatus;
+  confidence: number | null;
+  source: CategorizationSource;
+  corrected: boolean;
+  note: string | null;
+  subcategoryId: string | null;
+  subcategory: Subcategory | null;
+  predictedSubcategory: { id: string; name: string } | null;
+};
+
+export type ImportBatch = {
+  id: string;
+  filename: string;
+  status: ImportBatchStatus;
+  threshold: number;
+  provider: string;
+  createdAt: string;
+  committedAt: string | null;
+  accountId: string;
+  account: { id: string; name: string; currency: string };
+  rows: ImportRow[];
+};
+
+export type SkippedRow = { rowIndex: number; reason: string; raw: unknown };
+
+export type ImportResult = { batch: ImportBatch; skipped: SkippedRow[] };
+
+export type ImportBatchSummary = {
+  id: string;
+  filename: string;
+  status: ImportBatchStatus;
+  provider: string;
+  createdAt: string;
+  account: { name: string };
+  counts: Partial<Record<ImportRowStatus, number>>;
+};
+
+export type CsvInspection = {
+  headers: string[];
+  sample: Record<string, string>[];
+};
+
+export type CategorizationRule = {
+  id: string;
+  pattern: string;
+  source: CategorizationSource;
+  hitCount: number;
+  subcategoryId: string;
+  subcategory: { id: string; name: string };
+};
+
+export type AccuracyTally = {
+  predicted: number;
+  correct: number;
+  accuracy: number | null;
+};
+
+export type AccuracyStats = {
+  overall: AccuracyTally;
+  bySource: { RULE: AccuracyTally; LLM: AccuracyTally };
+  byBatch: (AccuracyTally & {
+    batchId: string;
+    filename: string;
+    committedAt: string | null;
+  })[];
+};

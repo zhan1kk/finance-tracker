@@ -1120,6 +1120,14 @@ describe('API (e2e)', () => {
 
       const second = await doImport();
       expect(second.rows.every((r) => r.status === 'DUPLICATE')).toBe(true);
+
+      // A duplicate cannot be reviewed into inclusion (no double-counting).
+      await request(http)
+        .patch(`/imports/${second.id}/rows/${second.rows[0].id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId: await subId('Groceries') })
+        .expect(409);
+
       await request(http)
         .post(`/imports/${second.id}/commit`)
         .set('Authorization', `Bearer ${token}`)

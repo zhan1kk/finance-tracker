@@ -172,6 +172,13 @@ export class ImportService {
     if (!row) {
       throw new NotFoundException(`Row with id ${rowId} was not found`);
     }
+    // A duplicate must not be reviewable into inclusion — that would let a
+    // re-imported statement double-count. Excluding duplicates is the point.
+    if (row.status === 'DUPLICATE') {
+      throw new ConflictException(
+        'This row duplicates an existing transaction and cannot be imported',
+      );
+    }
     await this.assertOwnSubcategory(userId, subcategoryId);
 
     return this.prisma.importRow.update({
@@ -451,15 +458,19 @@ export class ImportService {
       },
       select: { dedupeHash: true },
     });
-    const seen = new Set(
+    const committed = new Set(
       existing.map((t) => t.dedupeHash).filter((h): h is string => h !== null),
     );
+    const seenInBatch = new Set<string>();
     for (const row of staged) {
-      if (seen.has(row.dedupeHash)) {
+      if (committed.has(row.dedupeHash)) {
         row.status = 'DUPLICATE';
-        row.note = 'Already imported';
+        row.note = 'Already imported in a previous statement';
+      } else if (seenInBatch.has(row.dedupeHash)) {
+        row.status = 'DUPLICATE';
+        row.note = 'Repeated within this file';
       } else {
-        seen.add(row.dedupeHash);
+        seenInBatch.add(row.dedupeHash);
       }
     }
   }
