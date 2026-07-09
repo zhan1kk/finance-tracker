@@ -199,3 +199,59 @@ export type AccuracyStats = {
     committedAt: string | null;
   })[];
 };
+
+// ---- recurring transactions ----
+
+export const RECURRING_CADENCES = [
+  'DAILY',
+  'WEEKLY',
+  'MONTHLY',
+  'YEARLY',
+] as const;
+export type RecurringCadence = (typeof RECURRING_CADENCES)[number];
+
+// ---- budgets & reports ----
+
+export const BUDGETABLE_CATEGORIES = [
+  'Expenses',
+  'Bills',
+  'Subscriptions',
+  'Debts',
+  'Savings',
+] as const;
+
+export type Budget = {
+  id: string;
+  monthlyLimit: number;
+  subcategoryId: string | null;
+  category: TransactionCategory | null;
+  subcategory: { id: string; name: string; category: TransactionCategory } | null;
+  spentCents: number;
+  remainingCents: number;
+  percent: number;
+  overBudget: boolean;
+};
+
+export type NetWorthPoint = { month: string; netWorthCents: number };
+
+export type RecurringRule = {
+  id: string;
+  type: 'INCOME' | 'EXPENSE';
+  /** Positive minor units (cents). */
+  amount: number;
+  description: string | null;
+  cadence: RecurringCadence;
+  interval: number;
+  startDate: string;
+  nextRunAt: string;
+  endDate: string | null;
+  maxOccurrences: number | null;
+  occurrencesCreated: number;
+  active: boolean;
+  accountId: string;
+  subcategoryId: string;
+  account: { id: string; name: string; currency: string };
+  subcategory: { id: string; name: string; category: TransactionCategory };
+  annualizedCents: number;
+  progress: number | null;
+};

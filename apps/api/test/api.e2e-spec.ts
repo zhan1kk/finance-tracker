@@ -1203,4 +1203,416 @@ describe('API (e2e)', () => {
         .expect(404);
     });
   });
+
+  describe('recurring rules', () => {
+    let accountId: string;
+    let rentId: string;
+    let salaryId: string;
+
+    beforeEach(async () => {
+      accountId = (await createAccount(100_000)).id;
+      rentId = (await createSubcategory('Monthly Rent', 'Bills')).id;
+      salaryId = (await createSubcategory('Paycheck', 'Income')).id;
+    });
+
+    const createRule = async (
+      body: Record<string, unknown>,
+      asToken = token,
+      expected = 201,
+    ) => {
+      const res = await request(http)
+        .post('/recurring')
+        .set('Authorization', `Bearer ${asToken}`)
+        .send({ accountId, ...body })
+        .expect(expected);
+      return res.body as { id: string };
+    };
+
+    const run = async (asToken = token) => {
+      const res = await request(http)
+        .post('/recurring/run')
+        .set('Authorization', `Bearer ${asToken}`)
+        .expect(201);
+      return res.body as {
+        rulesProcessed: number;
+        transactionsCreated: number;
+      };
+    };
+
+    const listRules = async () => {
+      const res = await request(http)
+        .get('/recurring')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      return res.body as {
+        id: string;
+        active: boolean;
+        occurrencesCreated: number;
+        annualizedCents: number;
+        progress: number | null;
+      }[];
+    };
+
+    const txnCount = async (): Promise<number> => {
+      const res = await request(http)
+        .get('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      return (res.body as { total: number }).total;
+    };
+
+    it('creates a rule and reports its annualized cost', async () => {
+      await createRule({
+        type: 'EXPENSE',
+        amount: 5_000,
+        subcategoryId: rentId,
+        cadence: 'MONTHLY',
+        startDate: '2020-01-01',
+      });
+      const rules = await listRules();
+      expect(rules).toHaveLength(1);
+      expect(rules[0].annualizedCents).toBe(60_000);
+    });
+
+    it('rejects a type/category mismatch', async () => {
+      await createRule(
+        {
+          type: 'INCOME',
+          amount: 1_000,
+          subcategoryId: rentId, // a Bills subcategory
+          cadence: 'MONTHLY',
+          startDate: '2020-01-01',
+        },
+        token,
+        400,
+      );
+    });
+
+    it('posts due installments, moves the balance, then deactivates', async () => {
+      await createRule({
+        type: 'EXPENSE',
+        amount: 20_000,
+        subcategoryId: rentId,
+        cadence: 'MONTHLY',
+        startDate: '2020-01-01',
+        maxOccurrences: 3,
+      });
+
+      expect((await run()).transactionsCreated).toBe(3);
+      expect(await getBalance(accountId)).toBe(40_000); // 100k − 3×20k
+      expect(await txnCount()).toBe(3);
+
+      // Idempotent once complete.
+      expect((await run()).transactionsCreated).toBe(0);
+      const [rule] = await listRules();
+      expect(rule).toMatchObject({
+        active: false,
+        occurrencesCreated: 3,
+        progress: 1,
+      });
+    });
+
+    it('stops at the end date', async () => {
+      await createRule({
+        type: 'EXPENSE',
+        amount: 1_000,
+        subcategoryId: rentId,
+        cadence: 'MONTHLY',
+        startDate: '2020-01-01',
+        endDate: '2020-03-31',
+      });
+      expect((await run()).transactionsCreated).toBe(3); // Jan, Feb, Mar
+      const [rule] = await listRules();
+      expect(rule.active).toBe(false);
+    });
+
+    it('does not post a rule that starts in the future', async () => {
+      await createRule({
+        type: 'INCOME',
+        amount: 300_000,
+        subcategoryId: salaryId,
+        cadence: 'MONTHLY',
+        startDate: '2099-01-01',
+      });
+      expect((await run()).transactionsCreated).toBe(0);
+      expect(await getBalance(accountId)).toBe(100_000);
+    });
+
+    it('pauses and resumes posting', async () => {
+      const rule = await createRule({
+        type: 'EXPENSE',
+        amount: 1_000,
+        subcategoryId: rentId,
+        cadence: 'MONTHLY',
+        startDate: '2020-01-01',
+        maxOccurrences: 2,
+      });
+      await request(http)
+        .patch(`/recurring/${rule.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ active: false })
+        .expect(200);
+      expect((await run()).transactionsCreated).toBe(0);
+
+      await request(http)
+        .patch(`/recurring/${rule.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ active: true })
+        .expect(200);
+      expect((await run()).transactionsCreated).toBe(2);
+    });
+
+    it('keeps generated transactions when the rule is deleted', async () => {
+      const rule = await createRule({
+        type: 'EXPENSE',
+        amount: 1_000,
+        subcategoryId: rentId,
+        cadence: 'MONTHLY',
+        startDate: '2020-01-01',
+        maxOccurrences: 1,
+      });
+      await run();
+      expect(await txnCount()).toBe(1);
+      await request(http)
+        .delete(`/recurring/${rule.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(await txnCount()).toBe(1);
+    });
+
+    it('keeps rules isolated between users', async () => {
+      const rule = await createRule({
+        type: 'EXPENSE',
+        amount: 1_000,
+        subcategoryId: rentId,
+        cadence: 'MONTHLY',
+        startDate: '2020-01-01',
+      });
+      const otherToken = await registerUser('recurring-other@example.com');
+
+      const theirs = await request(http)
+        .get('/recurring')
+        .set('Authorization', `Bearer ${otherToken}`)
+        .expect(200);
+      expect(theirs.body).toEqual([]);
+
+      await request(http)
+        .patch(`/recurring/${rule.id}`)
+        .set('Authorization', `Bearer ${otherToken}`)
+        .send({ active: false })
+        .expect(404);
+
+      // Running as the other user must not post the main user's rule.
+      expect((await run(otherToken)).transactionsCreated).toBe(0);
+    });
+
+    it('does not double-post when run concurrently', async () => {
+      await createRule({
+        type: 'EXPENSE',
+        amount: 10_000,
+        subcategoryId: rentId,
+        cadence: 'MONTHLY',
+        startDate: '2020-01-01',
+        maxOccurrences: 1,
+      });
+      const [a, b] = await Promise.all([run(), run()]);
+      expect(a.transactionsCreated + b.transactionsCreated).toBe(1);
+      expect(await txnCount()).toBe(1);
+      expect(await getBalance(accountId)).toBe(90_000);
+    });
+
+    it('blocks deleting an account that still has a recurring rule', async () => {
+      await createRule({
+        type: 'EXPENSE',
+        amount: 1_000,
+        subcategoryId: rentId,
+        cadence: 'MONTHLY',
+        startDate: '2099-01-01', // future → no transactions, isolates the rule ref
+      });
+      await request(http)
+        .delete(`/accounts/${accountId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(409);
+    });
+  });
+
+  describe('budgets & reports', () => {
+    let accountId: string;
+    let groceriesId: string;
+    let incomeId: string;
+    const today = new Date().toISOString().slice(0, 10);
+
+    beforeEach(async () => {
+      accountId = (await createAccount(100_000)).id;
+      groceriesId = (await createSubcategory('Weekly Groceries', 'Expenses'))
+        .id;
+      incomeId = (await createSubcategory('Refunds', 'Income')).id;
+    });
+
+    const createTxn = async (body: Record<string, unknown>) => {
+      const res = await request(http)
+        .post('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ accountId, date: today, ...body })
+        .expect(201);
+      return res.body as { id: string };
+    };
+
+    const createBudget = async (
+      body: Record<string, unknown>,
+      expected = 201,
+      asToken = token,
+    ) => {
+      const res = await request(http)
+        .post('/budgets')
+        .set('Authorization', `Bearer ${asToken}`)
+        .send(body)
+        .expect(expected);
+      return res.body as { id: string };
+    };
+
+    const listBudgets = async (asToken = token) => {
+      const res = await request(http)
+        .get('/budgets')
+        .set('Authorization', `Bearer ${asToken}`)
+        .expect(200);
+      return res.body as {
+        id: string;
+        spentCents: number;
+        remainingCents: number;
+        overBudget: boolean;
+      }[];
+    };
+
+    it('creates subcategory and category budgets, rejecting bad scope', async () => {
+      await createBudget({ monthlyLimit: 10_000, subcategoryId: groceriesId });
+      await createBudget({ monthlyLimit: 50_000, category: 'Bills' });
+
+      await createBudget({ monthlyLimit: 1_000 }, 400); // neither scope
+      await createBudget(
+        { monthlyLimit: 1_000, subcategoryId: groceriesId, category: 'Bills' },
+        400, // both scopes
+      );
+      await createBudget(
+        { monthlyLimit: 1_000, subcategoryId: groceriesId },
+        409,
+      ); // dup
+
+      expect(await listBudgets()).toHaveLength(2);
+    });
+
+    it('rejects an Income-scoped budget', async () => {
+      await createBudget({ monthlyLimit: 1_000, subcategoryId: incomeId }, 400);
+    });
+
+    it('tracks monthly spending, nets reimbursements, and flags over-budget', async () => {
+      await createBudget({ monthlyLimit: 10_000, subcategoryId: groceriesId });
+
+      await createTxn({
+        type: 'EXPENSE',
+        amount: 6_000,
+        subcategoryId: groceriesId,
+      });
+      expect(await listBudgets()).toEqual([
+        expect.objectContaining({
+          spentCents: 6_000,
+          remainingCents: 4_000,
+          overBudget: false,
+        }),
+      ]);
+
+      const expense = await createTxn({
+        type: 'EXPENSE',
+        amount: 5_000,
+        subcategoryId: groceriesId,
+      });
+      expect((await listBudgets())[0]).toMatchObject({
+        spentCents: 11_000,
+        overBudget: true,
+      });
+
+      // A reimbursement of that expense reduces the spend.
+      await createTxn({
+        type: 'INCOME',
+        amount: 2_000,
+        subcategoryId: incomeId,
+        parentTransactionId: expense.id,
+      });
+      expect((await listBudgets())[0]).toMatchObject({
+        spentCents: 9_000,
+        overBudget: false,
+      });
+    });
+
+    it('updates a budget limit and isolates budgets between users', async () => {
+      const budget = await createBudget({
+        monthlyLimit: 10_000,
+        subcategoryId: groceriesId,
+      });
+      const updated = await request(http)
+        .patch(`/budgets/${budget.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ monthlyLimit: 20_000 })
+        .expect(200);
+      expect(updated.body).toMatchObject({ monthlyLimit: 20_000 });
+
+      const otherToken = await registerUser('budget-other@example.com');
+      expect(await listBudgets(otherToken)).toEqual([]);
+      await request(http)
+        .patch(`/budgets/${budget.id}`)
+        .set('Authorization', `Bearer ${otherToken}`)
+        .send({ monthlyLimit: 999 })
+        .expect(404);
+    });
+
+    it('reports net worth over time', async () => {
+      await createTxn({
+        type: 'INCOME',
+        amount: 50_000,
+        subcategoryId: incomeId,
+      });
+      await createTxn({
+        type: 'EXPENSE',
+        amount: 20_000,
+        subcategoryId: groceriesId,
+      });
+
+      const res = await request(http)
+        .get('/reports/net-worth?months=1')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const series = res.body as { month: string; netWorthCents: number }[];
+      // 100k start + 50k income − 20k expense
+      expect(series[series.length - 1].netWorthCents).toBe(130_000);
+    });
+
+    it('exports transactions as CSV with escaping', async () => {
+      await createTxn({
+        type: 'EXPENSE',
+        amount: 1_250,
+        subcategoryId: groceriesId,
+        description: 'Shop, the big one',
+      });
+      // Untrusted description (e.g. from an imported statement) must not become
+      // an executable spreadsheet formula.
+      await createTxn({
+        type: 'EXPENSE',
+        amount: 500,
+        subcategoryId: groceriesId,
+        description: '=HYPERLINK("http://evil")',
+      });
+      const res = await request(http)
+        .get('/reports/transactions.csv')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(res.headers['content-type']).toContain('text/csv');
+      expect(res.text).toContain(
+        'Date,Account,Type,Category,Description,Currency,Amount',
+      );
+      expect(res.text).toContain('"Shop, the big one"');
+      expect(res.text).toContain('-12.50');
+      expect(res.text).toContain(`"'=HYPERLINK`);
+      expect(res.text).not.toContain('"=HYPERLINK');
+    });
+  });
 });

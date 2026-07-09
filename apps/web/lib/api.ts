@@ -69,6 +69,33 @@ export async function api<T>(
   return (await res.json()) as T;
 }
 
+/** Downloads an authenticated file response (e.g. CSV export) as a browser download. */
+export async function downloadFile(
+  path: string,
+  filename: string,
+): Promise<void> {
+  let res = await fetch(`/api${path}`, {
+    headers: accessToken ? { authorization: `Bearer ${accessToken}` } : {},
+  });
+  if (res.status === 401 && (await tryRefresh())) {
+    res = await fetch(`/api${path}`, {
+      headers: accessToken ? { authorization: `Bearer ${accessToken}` } : {},
+    });
+  }
+  if (!res.ok) {
+    throw new ApiError(res.status, res.statusText);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function loginRequest(
   email: string,
   password: string,

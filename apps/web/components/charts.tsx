@@ -335,3 +335,152 @@ export function CategoryBars({
     </ul>
   );
 }
+
+/**
+ * Net worth over time: one series → a 2px line with a 10% area wash, no legend
+ * (the card title names it). The y-domain is always anchored to zero so the
+ * magnitude is honest, and it extends below zero when net worth is negative.
+ */
+export function NetWorthChart({
+  data,
+  currency,
+}: {
+  /** One point per month, oldest first. */
+  data: { month: string; netWorthCents: number }[];
+  currency: string;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+
+  if (data.length === 0) {
+    return (
+      <p className="py-8 text-center text-sm text-zinc-500">No data yet.</p>
+    );
+  }
+
+  const values = data.map((d) => d.netWorthCents);
+  const rawMin = Math.min(0, ...values);
+  const rawMax = Math.max(0, ...values);
+  const step = niceCeil(Math.max((rawMax - rawMin) / TICK_COUNT, 100));
+  let yMax = Math.ceil(rawMax / step) * step;
+  const yMin = Math.floor(rawMin / step) * step;
+  if (yMax === yMin) yMax = yMin + step;
+  const y = (v: number) =>
+    PAD_TOP + PLOT_H * (1 - (v - yMin) / (yMax - yMin));
+
+  const ticks: number[] = [];
+  for (let v = yMin; v <= yMax; v += step) ticks.push(v);
+
+  const band = PLOT_W / data.length;
+  const x = (i: number) => GUTTER + band * (i + 0.5);
+  const linePath = data
+    .map((d, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(d.netWorthCents)}`)
+    .join(" ");
+  const areaPath = `${linePath} L ${x(data.length - 1)} ${y(0)} L ${x(0)} ${y(0)} Z`;
+
+  const hovered = hover !== null ? data[hover] : null;
+  const last = data[data.length - 1];
+
+  return (
+    <div className="relative">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="w-full"
+        role="img"
+        aria-label="Net worth by month"
+      >
+        {ticks.map((value) => (
+          <g key={value}>
+            <line
+              x1={GUTTER}
+              x2={W - PAD_RIGHT}
+              y1={y(value)}
+              y2={y(value)}
+              stroke={value === 0 ? "var(--chart-axis)" : "var(--chart-grid)"}
+              strokeWidth={1}
+            />
+            {value !== 0 && (
+              <text
+                x={GUTTER - 6}
+                y={y(value) + 3}
+                textAnchor="end"
+                fontSize={10}
+                fill="var(--chart-muted)"
+                style={{ fontVariantNumeric: "tabular-nums" }}
+              >
+                {formatCentsCompact(value, currency)}
+              </text>
+            )}
+          </g>
+        ))}
+
+        <path d={areaPath} fill={SERIES_1} opacity={0.1} />
+        <path
+          d={linePath}
+          fill="none"
+          stroke={SERIES_1}
+          strokeWidth={2}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+        {/* end marker with a surface ring so it reads over the line */}
+        <circle
+          cx={x(data.length - 1)}
+          cy={y(last.netWorthCents)}
+          r={4}
+          fill={SERIES_1}
+          stroke="var(--chart-surface)"
+          strokeWidth={2}
+        />
+        {hovered && hover !== null && (
+          <circle
+            cx={x(hover)}
+            cy={y(hovered.netWorthCents)}
+            r={4}
+            fill={SERIES_1}
+            stroke="var(--chart-surface)"
+            strokeWidth={2}
+          />
+        )}
+
+        {data.map((d, i) => (
+          <g key={d.month}>
+            {(data.length <= 8 || i % 2 === 0) && (
+              <text
+                x={x(i)}
+                y={PAD_TOP + PLOT_H + 15}
+                textAnchor="middle"
+                fontSize={10}
+                fill="var(--chart-muted)"
+              >
+                {monthLabel(d.month)}
+              </text>
+            )}
+            <rect
+              x={GUTTER + band * i}
+              y={PAD_TOP}
+              width={band}
+              height={PLOT_H}
+              fill="transparent"
+              tabIndex={0}
+              aria-label={`${d.month}: ${formatCents(d.netWorthCents, currency)}`}
+              onMouseEnter={() => setHover(i)}
+              onMouseLeave={() => setHover(null)}
+              onFocus={() => setHover(i)}
+              onBlur={() => setHover(null)}
+            />
+          </g>
+        ))}
+      </svg>
+
+      {hovered && hover !== null && (
+        <div
+          className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 rounded-md bg-zinc-900 px-2.5 py-1.5 text-xs text-white shadow dark:bg-zinc-700"
+          style={{ left: `${((x(hover) / W) * 100).toFixed(2)}%` }}
+        >
+          <p className="mb-0.5 font-medium">{hovered.month}</p>
+          <p>{formatCents(hovered.netWorthCents, currency)}</p>
+        </div>
+      )}
+    </div>
+  );
+}

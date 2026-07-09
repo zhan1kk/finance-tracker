@@ -59,6 +59,7 @@ export function ImportReview({
     void queryClient.invalidateQueries({ queryKey: ["accounts"] });
     void queryClient.invalidateQueries({ queryKey: ["transactions"] });
     void queryClient.invalidateQueries({ queryKey: ["stats"] });
+    void queryClient.invalidateQueries({ queryKey: ["budgets"] });
   };
 
   const correct = useMutation({

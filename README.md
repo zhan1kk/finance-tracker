@@ -68,6 +68,28 @@ Log cash spending by messaging a Telegram bot (`12.50 groceries lunch`, or
 Captured transactions land on the default account dated today; every
 confirmation message has an Undo button.
 
+## Budgets & reports
+
+- `/budgets` — monthly spending limits per subcategory or whole category, with
+  live progress (spending is net of reimbursements) and over-budget flags.
+  Managed from the Budgets page; resets each calendar month.
+- `GET /reports/net-worth?months=N` — net worth by month (shown on the
+  overview); `GET /reports/transactions.csv` — full transaction export (also
+  available via the Export CSV button on the transactions page).
+
+## Recurring transactions
+
+Rent, salary, subscriptions and installments post themselves on a schedule.
+
+- `/recurring` — CRUD for recurring rules (type, amount, account, category,
+  cadence DAILY/WEEKLY/MONTHLY/YEARLY × an interval, start date, optional end
+  date, optional installment count). Rules can be paused/resumed.
+- A daily cron (`@nestjs/schedule`) posts every due occurrence; `POST
+  /recurring/run` triggers it on demand. Catch-up after downtime is handled, the
+  schedule is month-end-anchored (no drift), and rules deactivate automatically
+  at their end date or installment count. Generated transactions link back to
+  their rule and each run updates the account balance atomically.
+
 ## CSV import & categorization (optional LLM)
 
 Import a bank/card statement and have transactions categorized automatically.

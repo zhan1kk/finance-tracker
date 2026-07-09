@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
-import { api } from "@/lib/api";
+import { api, downloadFile } from "@/lib/api";
 import { formatCents, parseAmountToCents, todayISO } from "@/lib/format";
 import type {
   Account,
@@ -63,6 +63,7 @@ export default function TransactionsPage() {
     void queryClient.invalidateQueries({ queryKey: ["transactions"] });
     void queryClient.invalidateQueries({ queryKey: ["accounts"] });
     void queryClient.invalidateQueries({ queryKey: ["stats"] });
+    void queryClient.invalidateQueries({ queryKey: ["budgets"] });
   };
 
   const remove = useMutation({
@@ -143,8 +144,16 @@ export default function TransactionsPage() {
               placeholder="espresso…"
             />
           </Field>
-          <span className="ml-auto text-sm text-zinc-500">
+          <span className="ml-auto flex items-center gap-3 text-sm text-zinc-500">
             {total} transaction{total === 1 ? "" : "s"}
+            <button
+              className="underline decoration-zinc-300 underline-offset-2 hover:text-zinc-700 dark:decoration-zinc-700 dark:hover:text-zinc-300"
+              onClick={() =>
+                void downloadFile("/reports/transactions.csv", "transactions.csv")
+              }
+            >
+              Export CSV
+            </button>
           </span>
         </div>
 

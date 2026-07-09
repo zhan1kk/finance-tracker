@@ -85,6 +85,23 @@ export class AccountService {
       );
     }
 
+    // Recurring rules and import batches also reference the account (with no
+    // transactions yet), which would otherwise fail as a raw FK error.
+    const [recurringCount, importCount] = await Promise.all([
+      this.prisma.recurringRule.count({ where: { accountId: id } }),
+      this.prisma.importBatch.count({ where: { accountId: id } }),
+    ]);
+    if (recurringCount > 0) {
+      throw new ConflictException(
+        `Cannot delete account: it has ${recurringCount} recurring rule(s). Delete them first.`,
+      );
+    }
+    if (importCount > 0) {
+      throw new ConflictException(
+        `Cannot delete account: it has ${importCount} import batch(es). Delete them first.`,
+      );
+    }
+
     await this.prisma.account.delete({ where: { id } });
   }
 

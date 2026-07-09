@@ -2,11 +2,20 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { CategoryBars, MonthlyTrendChart } from "@/components/charts";
+import {
+  CategoryBars,
+  MonthlyTrendChart,
+  NetWorthChart,
+} from "@/components/charts";
 import { Card } from "@/components/ui";
 import { api } from "@/lib/api";
 import { formatCents } from "@/lib/format";
-import type { Account, MonthlyStat, TransactionStats } from "@/lib/types";
+import type {
+  Account,
+  MonthlyStat,
+  NetWorthPoint,
+  TransactionStats,
+} from "@/lib/types";
 
 /** "YYYY-MM" for the month `offset` months from now (0 = current). */
 function monthKey(offset: number): string {
@@ -36,6 +45,10 @@ export default function OverviewPage() {
     queryKey: ["stats", { from: trendStart }],
     queryFn: () =>
       api<TransactionStats>(`/transactions/stats?from=${trendStart}`),
+  });
+  const netWorth = useQuery({
+    queryKey: ["stats", "net-worth"],
+    queryFn: () => api<NetWorthPoint[]>("/reports/net-worth?months=12"),
   });
 
   const income =
@@ -100,6 +113,17 @@ export default function OverviewPage() {
           </h2>
           {trendStats.data && (
             <MonthlyTrendChart data={trend} currency={currency} />
+          )}
+        </Card>
+        <Card className="lg:col-span-2">
+          <h2 className="mb-3 font-medium">
+            Net worth
+            <span className="ml-2 text-sm font-normal text-zinc-500">
+              last 12 months
+            </span>
+          </h2>
+          {netWorth.data && (
+            <NetWorthChart data={netWorth.data} currency={currency} />
           )}
         </Card>
       </section>
