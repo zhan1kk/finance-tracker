@@ -294,6 +294,7 @@ function QuickAdd({
 }) {
   const [type, setType] = useState<TransactionType>("EXPENSE");
   const [error, setError] = useState<unknown>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const eligibleSubcategories = subcategories.filter((s) =>
     type === "INCOME" ? s.category === "Income" : s.category !== "Income",
@@ -315,14 +316,29 @@ function QuickAdd({
 
   const create = useMutation({
     mutationFn: (body: Record<string, unknown>) =>
-      api("/transactions", { method: "POST", body: JSON.stringify(body) }),
-    onSuccess: onCreated,
+      api<Transaction>("/transactions", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: (created, body) => {
+      onCreated();
+      if (created.outlier) {
+        const currency =
+          accounts.find((a) => a.id === body.accountId)?.currency ?? "EUR";
+        setNotice(
+          `Heads up: that's unusually ${created.outlier.direction} for ${
+            created.subcategory?.name ?? "this category"
+          } — typically around ${formatCents(created.outlier.medianCents, currency)}.`,
+        );
+      }
+    },
     onError: setError,
   });
 
   const onSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
+    setNotice(null);
     const form = new FormData(e.currentTarget);
     const amount = parseAmountToCents(String(form.get("amount")));
     if (amount === null) {
@@ -426,6 +442,7 @@ function QuickAdd({
           Add
         </Button>
       </form>
+      {notice && <p className="mt-2 text-sm text-amber-600">{notice}</p>}
       <ErrorText error={error} />
     </Card>
   );

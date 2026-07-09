@@ -55,6 +55,8 @@ export type Transaction = {
   counterAccountId: string | null;
   parentTransactionId: string | null;
   reimbursements: Omit<Transaction, 'subcategory' | 'reimbursements'>[];
+  /** Present on create responses: non-blocking "unusual amount" warning. */
+  outlier?: { direction: 'high' | 'low'; medianCents: number } | null;
 };
 
 export type TransactionList = {

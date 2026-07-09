@@ -22,4 +22,14 @@ export class ReportsController {
   exportCsv(@CurrentUser() user: AuthUser) {
     return this.reportsService.exportTransactionsCsv(user.userId);
   }
+
+  @Get('export.json')
+  @Header('Content-Type', 'application/json')
+  @Header(
+    'Content-Disposition',
+    'attachment; filename="finance-tracker-export.json"',
+  )
+  exportJson(@CurrentUser() user: AuthUser) {
+    return this.reportsService.exportJson(user.userId);
+  }
 }

@@ -55,6 +55,48 @@ export class ReportsService {
     return series;
   }
 
+  /**
+   * Everything the user owns as one JSON document (backup/portability).
+   * Read in a single transaction for a consistent snapshot; credentials and
+   * Telegram linkage are deliberately excluded.
+   */
+  async exportJson(userId: string) {
+    const [
+      user,
+      accounts,
+      subcategories,
+      transactions,
+      rules,
+      budgets,
+      recurring,
+    ] = await this.prisma.$transaction([
+      this.prisma.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { email: true, baseCurrency: true, createdAt: true },
+      }),
+      this.prisma.account.findMany({ where: { userId } }),
+      this.prisma.subcategory.findMany({ where: { userId } }),
+      this.prisma.transaction.findMany({
+        where: { account: { userId } },
+        orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
+      }),
+      this.prisma.categorizationRule.findMany({ where: { userId } }),
+      this.prisma.budget.findMany({ where: { userId } }),
+      this.prisma.recurringRule.findMany({ where: { userId } }),
+    ]);
+
+    return {
+      exportedAt: new Date().toISOString(),
+      user,
+      accounts,
+      subcategories,
+      transactions,
+      categorizationRules: rules,
+      budgets,
+      recurringRules: recurring,
+    };
+  }
+
   /** All of the user's transactions as a CSV string (newest first). */
   async exportTransactionsCsv(userId: string): Promise<string> {
     const transactions = await this.prisma.transaction.findMany({

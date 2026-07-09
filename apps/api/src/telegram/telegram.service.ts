@@ -169,12 +169,16 @@ export class TelegramService {
 
     const sign = parsed.type === 'INCOME' ? '+' : '−';
     const note = parsed.description ? ` · ${parsed.description}` : '';
+    const warning = transaction.outlier
+      ? `\n⚠ Unusually ${transaction.outlier.direction} for ${result.match.name} (typical ~${this.money(transaction.outlier.medianCents, account.currency)})`
+      : '';
     return {
       ok: true,
       transactionId: transaction.id,
       text:
         `Added ${sign}${this.money(parsed.amountCents, account.currency)} · ${result.match.name}${note}\n` +
-        `${account.name}: ${this.money(account.balance, account.currency)}`,
+        `${account.name}: ${this.money(account.balance, account.currency)}` +
+        warning,
     };
   }
 

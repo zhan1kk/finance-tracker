@@ -68,6 +68,13 @@ Log cash spending by messaging a Telegram bot (`12.50 groceries lunch`, or
 Captured transactions land on the default account dated today; every
 confirmation message has an Undo button.
 
+## Backups & data export
+
+- **In-app:** Accounts page → "Your data" → Download JSON (everything you own,
+  minus credentials) or the transactions CSV.
+- **Database:** `docker compose exec db pg_dump -U postgres finance_tracker > backup.sql`
+  (restore with `psql -U postgres finance_tracker < backup.sql`).
+
 ## Budgets & reports
 
 - `/budgets` — monthly spending limits per subcategory or whole category, with

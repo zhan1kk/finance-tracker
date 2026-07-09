@@ -1614,5 +1614,72 @@ describe('API (e2e)', () => {
       expect(res.text).toContain(`"'=HYPERLINK`);
       expect(res.text).not.toContain('"=HYPERLINK');
     });
+
+    it('exports everything as JSON without credentials', async () => {
+      await createTxn({
+        type: 'EXPENSE',
+        amount: 1_000,
+        subcategoryId: groceriesId,
+      });
+      await createBudget({ monthlyLimit: 10_000, subcategoryId: groceriesId });
+
+      const res = await request(http)
+        .get('/reports/export.json')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const body = res.body as Record<string, unknown[]> & {
+        user: Record<string, unknown>;
+      };
+      expect(body.user).toEqual({
+        email: 'main@example.com',
+        baseCurrency: 'EUR',
+        createdAt: expect.any(String) as unknown,
+      });
+      expect(body.accounts).toHaveLength(1);
+      expect(body.transactions).toHaveLength(1);
+      expect(body.budgets).toHaveLength(1);
+      expect(JSON.stringify(body)).not.toContain('passwordHash');
+    });
+
+    it('warns about outlier amounts on create (non-blocking)', async () => {
+      // Build up a typical-groceries history first.
+      for (const amount of [1200, 1300, 1250, 1400, 1350, 1100, 1450, 1500]) {
+        await createTxn({
+          type: 'EXPENSE',
+          amount,
+          subcategoryId: groceriesId,
+        });
+      }
+
+      const normal = await request(http)
+        .post('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'EXPENSE',
+          amount: 1_600,
+          date: today,
+          accountId,
+          subcategoryId: groceriesId,
+        })
+        .expect(201);
+      expect((normal.body as { outlier: unknown }).outlier).toBeNull();
+
+      const huge = await request(http)
+        .post('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'EXPENSE',
+          amount: 50_000,
+          date: today,
+          accountId,
+          subcategoryId: groceriesId,
+        })
+        .expect(201);
+      expect((huge.body as { outlier: unknown }).outlier).toMatchObject({
+        direction: 'high',
+      });
+      // Non-blocking: the transaction was still created.
+      expect(await getBalance(accountId)).toBeLessThan(100_000);
+    });
   });
 });

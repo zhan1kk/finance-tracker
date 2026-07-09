@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { TelegramCard } from "@/components/telegram-card";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
-import { api } from "@/lib/api";
+import { api, downloadFile } from "@/lib/api";
 import { formatCents, parseAmountToCents } from "@/lib/format";
 import { ACCOUNT_TYPES, type Account } from "@/lib/types";
 
@@ -144,6 +144,35 @@ export default function AccountsPage() {
       </div>
 
       <TelegramCard accounts={accounts.data ?? []} />
+
+      <Card>
+        <h2 className="mb-1 font-medium">Your data</h2>
+        <p className="mb-3 text-sm text-zinc-500">
+          Everything you own — accounts, transactions, categories, rules,
+          budgets, recurring — as one file. Your data is yours.
+        </p>
+        <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            onClick={() =>
+              void downloadFile(
+                "/reports/export.json",
+                "finance-tracker-export.json",
+              )
+            }
+          >
+            Download JSON
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() =>
+              void downloadFile("/reports/transactions.csv", "transactions.csv")
+            }
+          >
+            Transactions CSV
+          </Button>
+        </div>
+      </Card>
     </main>
   );
 }

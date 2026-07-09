@@ -7,6 +7,7 @@ import {
 import { type Account, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import type { TransactionCategory } from '../subcategories/types/subcategory.types';
+import { checkOutlier, type OutlierVerdict } from './outlier';
 import type {
   CategoryStat,
   CreateTransactionInput,
@@ -139,7 +140,10 @@ export class TransactionService {
     const account = await this.getOwnAccount(userId, input.accountId);
 
     if (input.type === 'TRANSFER') {
-      return this.createTransfer(userId, account, input);
+      return {
+        ...(await this.createTransfer(userId, account, input)),
+        outlier: null,
+      };
     }
 
     if (input.counterAccountId) {
@@ -164,6 +168,9 @@ export class TransactionService {
       input,
     );
 
+    // Judged against history *before* this transaction exists.
+    const outlier = await this.outlierVerdict(userId, input);
+
     const delta = this.signedDelta(input.type, input.amount);
 
     const [transaction] = await this.prisma.$transaction([
@@ -185,7 +192,31 @@ export class TransactionService {
       }),
     ]);
 
-    return transaction;
+    return { ...transaction, outlier };
+  }
+
+  /**
+   * Non-blocking sanity check: is this amount unusual for its subcategory?
+   * Based on the last 50 same-type transactions in that subcategory.
+   */
+  private async outlierVerdict(
+    userId: string,
+    input: CreateTransactionInput,
+  ): Promise<OutlierVerdict | null> {
+    const history = await this.prisma.transaction.findMany({
+      where: {
+        subcategoryId: input.subcategoryId,
+        type: input.type,
+        account: { userId },
+      },
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+      take: 50,
+      select: { amount: true },
+    });
+    return checkOutlier(
+      history.map((t) => t.amount),
+      input.amount,
+    );
   }
 
   async updateTransaction(
