@@ -1,4 +1,36 @@
+# `docker compose up -d db` — dev database only (the default workflow).
+# `docker compose --profile prod up -d --build` — full self-hosted stack:
+#   db + api (internal only) + web (the single exposed entrypoint, port
+#   ${WEB_PORT:-3001}; put your TLS reverse proxy in front of it).
 services:
+  api:
+    profiles: ['prod']
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/finance_tracker
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (openssl rand -hex 32)}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    # No ports: only reachable from the web container's proxy.
+
+  web:
+    profiles: ['prod']
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - '${WEB_PORT:-3001}:3000'
+    depends_on:
+      - api
+
   db:
     # Plain (non-alpine) image: the existing finance-tracker-pgdata volume was
     # created with it, and switching libc variants breaks text collations.

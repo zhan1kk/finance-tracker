@@ -921,13 +921,13 @@ describe('API (e2e)', () => {
       const garbage = await telegram().capture(CHAT, 'what is my balance?');
       expect(garbage.ok).toBe(false);
 
-      const noMatch = await telegram().capture(CHAT, '5 nonexistentcategory');
+      const noMatch = await telegram().capture(CHAT, '5 - nonexistentcategory');
       expect(noMatch.ok).toBe(false);
 
       // "grocer" fuzzy-matches the seeded "Groceries" subcategory.
       const result = await telegram().capture(
         CHAT,
-        '12.50 grocer coffee beans',
+        '12.50 - grocer - coffee beans',
       );
       expect(result.ok).toBe(true);
       expect(await getBalance(account.id)).toBe(8_750);
@@ -938,8 +938,71 @@ describe('API (e2e)', () => {
       expect(await getBalance(account.id)).toBe(10_000);
     });
 
+    it('captures multi-word categories and explicit dates', async () => {
+      const account = await createAccount(10_000);
+      await linkChat();
+      await request(http)
+        .patch('/telegram/settings')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ defaultAccountId: account.id })
+        .expect(200);
+
+      // "dining out" is a seeded default subcategory — the old whitespace
+      // format parsed this as category "dining" + description "out".
+      const multiWord = await telegram().capture(
+        CHAT,
+        '40 - dining out - lunch with friends',
+      );
+      expect(multiWord.ok).toBe(true);
+      expect(multiWord.ok && multiWord.text).toContain('Dining Out');
+
+      const dated = await telegram().capture(
+        CHAT,
+        '3 - grocer - snack - 2026-01-15',
+      );
+      expect(dated.ok).toBe(true);
+      const onDate = await request(http)
+        .get('/transactions?from=2026-01-15&to=2026-01-15')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(onDate.body).toMatchObject({ total: 1 });
+    });
+
+    it('switches the capture account via /account', async () => {
+      const first = await createAccount(10_000);
+      const second = await createAccount(0, token, { name: 'Cash' });
+      await linkChat();
+      await request(http)
+        .patch('/telegram/settings')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ defaultAccountId: first.id })
+        .expect(200);
+
+      const listed = await telegram().listAccounts(CHAT);
+      expect(listed?.accounts.map((a) => a.name).sort()).toEqual([
+        'Cash',
+        'Checking',
+      ]);
+      expect(listed?.defaultAccountId).toBe(first.id);
+
+      expect(await telegram().setDefaultAccount(CHAT, second.id)).toContain(
+        'Cash',
+      );
+      const capture = await telegram().capture(CHAT, '5 - grocer');
+      expect(capture.ok).toBe(true);
+      expect(await getBalance(second.id)).toBe(-500);
+      expect(await getBalance(first.id)).toBe(10_000);
+
+      // Another user's account cannot become the target.
+      const otherToken = await registerUser('acct-other@example.com');
+      const foreign = await createAccount(0, otherToken);
+      expect(await telegram().setDefaultAccount(CHAT, foreign.id)).toContain(
+        'not found',
+      );
+    });
+
     it('rejects captures from unlinked chats and unlinks cleanly', async () => {
-      const unlinked = await telegram().capture('777', '5 groceries');
+      const unlinked = await telegram().capture('777', '5 - groceries');
       expect(unlinked.ok).toBe(false);
 
       await linkChat();

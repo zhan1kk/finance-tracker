@@ -7,7 +7,7 @@ import { matchSubcategory, parseCapture } from './capture-parser';
 const LINK_CODE_TTL_MS = 10 * 60 * 1000;
 
 const CAPTURE_FORMAT_HINT =
-  'Format: "12.50 groceries lunch with friends" — amount, category, optional note. Prefix with + for income (e.g. "+2000 salary").';
+  'Format: "40 - dining out - lunch with friends - 09.07" — amount - category - note (optional) - date (optional DD.MM or YYYY-MM-DD, default today). Separate fields with " - ". Prefix + for income: "+2000 - salary".';
 
 export type CaptureResult =
   | { ok: true; text: string; transactionId: string }
@@ -155,7 +155,7 @@ export class TelegramService {
       user.id,
       {
         type: parsed.type,
-        date: new Date().toISOString().slice(0, 10),
+        date: parsed.date ?? new Date().toISOString().slice(0, 10),
         amount: parsed.amountCents,
         accountId: user.defaultAccountId,
         subcategoryId: result.match.id,
@@ -180,6 +180,39 @@ export class TelegramService {
         `${account.name}: ${this.money(account.balance, account.currency)}` +
         warning,
     };
+  }
+
+  /** The user's accounts + current default, for the /account picker. */
+  async listAccounts(chatId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { telegramChatId: chatId },
+      include: { accounts: { orderBy: { name: 'asc' } } },
+    });
+    if (!user) {
+      return null;
+    }
+    return { accounts: user.accounts, defaultAccountId: user.defaultAccountId };
+  }
+
+  /** Switches which account captures are booked to (the /account buttons). */
+  async setDefaultAccount(chatId: string, accountId: string): Promise<string> {
+    const user = await this.prisma.user.findUnique({
+      where: { telegramChatId: chatId },
+    });
+    if (!user) {
+      return 'This chat is not linked.';
+    }
+    const account = await this.prisma.account.findFirst({
+      where: { id: accountId, userId: user.id },
+    });
+    if (!account) {
+      return 'That account was not found.';
+    }
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { defaultAccountId: account.id },
+    });
+    return `New captures go to: ${account.name} (${this.money(account.balance, account.currency)})`;
   }
 
   /** Deletes a just-captured transaction (the Undo button). */

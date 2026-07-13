@@ -7,7 +7,9 @@ import {
   Post,
   Req,
   Res,
+  UseGuards,
 } from '@nestjs/common';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { REFRESH_COOKIE, REFRESH_COOKIE_PATH } from './auth.constants';
 import { AuthService } from './auth.service';
@@ -17,6 +19,9 @@ import { LoginDTO } from './dtos/login.dto';
 import { RegisterDTO } from './dtos/register.dto';
 import type { AuthTokens, AuthUser } from './types/auth.types';
 
+// Rate-limited per IP: these routes accept credentials, so they are the
+// brute-force surface. Limits come from ThrottlerModule in AppModule.
+@UseGuards(ThrottlerGuard)
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}

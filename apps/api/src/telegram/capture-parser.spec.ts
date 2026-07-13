@@ -1,38 +1,86 @@
-import { matchSubcategory, parseCapture } from './capture-parser';
+import {
+  matchSubcategory,
+  parseCapture,
+  parseCaptureDate,
+} from './capture-parser';
 
-describe('parseCapture', () => {
-  it('parses amount, category and description', () => {
-    expect(parseCapture('12.50 groceries lunch stuff')).toEqual({
+describe('parseCapture (dash format)', () => {
+  it('parses amount and a multi-word category', () => {
+    expect(parseCapture('40 - dining out')).toEqual({
       type: 'EXPENSE',
-      amountCents: 1250,
-      categoryQuery: 'groceries',
-      description: 'lunch stuff',
+      amountCents: 4000,
+      categoryQuery: 'dining out',
+      description: undefined,
+      date: undefined,
     });
   });
 
-  it('parses without a description and with a comma decimal', () => {
-    expect(parseCapture('7,99 transport')).toEqual({
+  it('parses an optional description and a comma decimal', () => {
+    expect(parseCapture('12,50 - groceries - lunch with friends')).toEqual({
       type: 'EXPENSE',
-      amountCents: 799,
-      categoryQuery: 'transport',
-      description: undefined,
+      amountCents: 1250,
+      categoryQuery: 'groceries',
+      description: 'lunch with friends',
+      date: undefined,
     });
   });
 
   it('treats a + prefix as income', () => {
-    expect(parseCapture('+2000 salary july')).toMatchObject({
+    expect(parseCapture('+2000 - salary - july')).toMatchObject({
       type: 'INCOME',
       amountCents: 200_000,
       categoryQuery: 'salary',
+      description: 'july',
+    });
+  });
+
+  it('takes a trailing date segment (DD.MM, DD.MM.YYYY, ISO)', () => {
+    const year = new Date().getUTCFullYear();
+    expect(parseCapture('40 - dining out - lunch - 09.07')).toMatchObject({
+      description: 'lunch',
+      date: `${year}-07-09`,
+    });
+    expect(parseCapture('40 - rent - 01.07.2026')).toMatchObject({
+      description: undefined,
+      date: '2026-07-01',
+    });
+    expect(parseCapture('40 - rent - deposit - 2026-07-03')).toMatchObject({
+      description: 'deposit',
+      date: '2026-07-03',
+    });
+  });
+
+  it('keeps an invalid date-like segment as description', () => {
+    expect(parseCapture('40 - rent - 31.02')).toMatchObject({
+      description: '31.02',
+      date: undefined,
+    });
+  });
+
+  it('keeps inner dashes of a description together', () => {
+    expect(
+      parseCapture('9 - transport - check-in shuttle - airport'),
+    ).toMatchObject({
+      description: 'check-in shuttle - airport',
     });
   });
 
   it('rejects garbage, missing category, zero and >2 decimals', () => {
-    expect(parseCapture('lunch 12.50')).toBeNull();
+    expect(parseCapture('lunch - 12.50')).toBeNull();
     expect(parseCapture('12.50')).toBeNull();
-    expect(parseCapture('0 groceries')).toBeNull();
-    expect(parseCapture('12.505 groceries')).toBeNull();
-    expect(parseCapture('-5 groceries')).toBeNull();
+    expect(parseCapture('what is my balance?')).toBeNull();
+    expect(parseCapture('0 - groceries')).toBeNull();
+    expect(parseCapture('12.505 - groceries')).toBeNull();
+    expect(parseCapture('-5 - groceries')).toBeNull();
+  });
+});
+
+describe('parseCaptureDate', () => {
+  it('parses supported formats and rejects invalid dates', () => {
+    expect(parseCaptureDate('2026-07-09')).toBe('2026-07-09');
+    expect(parseCaptureDate('09.07.2026')).toBe('2026-07-09');
+    expect(parseCaptureDate('31.02.2026')).toBeNull();
+    expect(parseCaptureDate('yesterday')).toBeNull();
   });
 });
 

@@ -56,8 +56,15 @@ The seed script creates a demo login: `demo@local.test` / `changeme123`.
 
 ## Telegram quick-capture (optional)
 
-Log cash spending by messaging a Telegram bot (`12.50 groceries lunch`, or
-`+2000 salary` for income). Setup:
+Log spending by messaging a Telegram bot. Fields are separated by ` - `:
+
+```
+40 - dining out - lunch with friends        expense, dated today
++2000 - salary - july                       income
+12.50 - groceries - snacks - 09.07          explicit date (DD.MM, DD.MM.YYYY or YYYY-MM-DD)
+```
+
+Setup:
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and put its token in
    `apps/api/.env` as `TELEGRAM_BOT_TOKEN` (unset = bot disabled).
@@ -65,8 +72,31 @@ Log cash spending by messaging a Telegram bot (`12.50 groceries lunch`, or
 3. In the web app (Accounts page → Telegram): pick a default cash account,
    generate a link code, and send `/link <code>` to your bot.
 
-Captured transactions land on the default account dated today; every
-confirmation message has an Undo button.
+Captures are booked to your default account — switch it anytime with
+`/account` in the chat. Every confirmation message has an Undo button.
+
+## Deploying (self-hosted)
+
+The repo ships production Dockerfiles and a compose profile. On any Docker
+host (small VPS is plenty):
+
+```bash
+# one-time: strong secret for signing tokens
+export JWT_SECRET="$(openssl rand -hex 32)"
+# optional: TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, WEB_PORT (default 3001)
+
+docker compose --profile prod up -d --build
+```
+
+That runs Postgres, the API (migrations apply automatically on start; **not**
+exposed to the host), and the web app — the single public entrypoint on
+`WEB_PORT`. Put a TLS reverse proxy (Caddy, Traefik, nginx) in front of the
+web port; the API already trusts `X-Forwarded-*` in production, cookies are
+`Secure`, security headers (helmet) are on, auth routes are rate-limited, and
+Swagger is disabled.
+
+The plain `docker compose up -d db` dev workflow is unchanged. For backups on
+a server, cron the `pg_dump` below.
 
 ## Backups & data export
 

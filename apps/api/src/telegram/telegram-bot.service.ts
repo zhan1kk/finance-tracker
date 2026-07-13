@@ -11,10 +11,14 @@ import { TelegramService } from './telegram.service';
 const HELP_TEXT = [
   'Quick-capture bot for your finance tracker.',
   '',
-  'Add an expense:  12.50 groceries lunch with friends',
-  'Add income:      +2000 salary july',
-  '(amount · category · optional note — booked to your default account, dated today)',
+  'Add an expense:  40 - dining out - lunch with friends',
+  'Add income:      +2000 - salary - july',
+  'With a date:     12.50 - groceries - snacks - 09.07',
   '',
+  'Fields are separated by " - ": amount - category - note (optional) - date',
+  '(optional, DD.MM / DD.MM.YYYY / YYYY-MM-DD; default today).',
+  '',
+  '/account — choose which account captures go to',
   '/link <code> — connect this chat (get the code from the web app, Accounts page)',
   '/help — this message',
 ].join('\n');
@@ -37,6 +41,12 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     const token = this.config.get<string>('TELEGRAM_BOT_TOKEN');
     if (!token) {
       this.logger.log('TELEGRAM_BOT_TOKEN not set — Telegram bot disabled');
+      return;
+    }
+    // Never long-poll the real bot from the test suite: it races app.close()
+    // (jest hook timeouts) and would process live messages against the test DB.
+    if (process.env.NODE_ENV === 'test') {
+      this.logger.log('NODE_ENV=test — Telegram bot disabled');
       return;
     }
 
@@ -63,6 +73,29 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       );
     });
 
+    bot.command('account', async (ctx) => {
+      if (ctx.chat.type !== 'private') return;
+      const result = await this.telegram.listAccounts(String(ctx.chat.id));
+      if (!result) {
+        await ctx.reply(
+          'This chat is not linked. Generate a code in the web app and send: /link <code>',
+        );
+        return;
+      }
+      if (result.accounts.length === 0) {
+        await ctx.reply('No accounts yet — create one in the web app first.');
+        return;
+      }
+      const keyboard = new InlineKeyboard();
+      for (const account of result.accounts) {
+        const mark = account.id === result.defaultAccountId ? '✓ ' : '';
+        keyboard.text(`${mark}${account.name}`, `acct:${account.id}`).row();
+      }
+      await ctx.reply('Pick the account new captures go to:', {
+        reply_markup: keyboard,
+      });
+    });
+
     bot.on('message:text', async (ctx) => {
       if (ctx.chat.type !== 'private') return;
       const result = await this.telegram.capture(
@@ -85,16 +118,29 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     bot.on('callback_query:data', async (ctx) => {
       const data = ctx.callbackQuery.data;
       const chatId = ctx.callbackQuery.message?.chat.id;
-      if (!data.startsWith('undo:') || chatId === undefined) {
+      if (chatId === undefined) {
         await ctx.answerCallbackQuery();
         return;
       }
-      const text = await this.telegram.undoCapture(
-        String(chatId),
-        data.slice('undo:'.length),
-      );
+      if (data.startsWith('undo:')) {
+        const text = await this.telegram.undoCapture(
+          String(chatId),
+          data.slice('undo:'.length),
+        );
+        await ctx.answerCallbackQuery();
+        await ctx.editMessageText(text);
+        return;
+      }
+      if (data.startsWith('acct:')) {
+        const text = await this.telegram.setDefaultAccount(
+          String(chatId),
+          data.slice('acct:'.length),
+        );
+        await ctx.answerCallbackQuery();
+        await ctx.editMessageText(text);
+        return;
+      }
       await ctx.answerCallbackQuery();
-      await ctx.editMessageText(text);
     });
 
     bot.catch((err) => {

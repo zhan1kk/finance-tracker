@@ -2,7 +2,9 @@ import { Module, ValidationPipe } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_PIPE } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
+import { validateEnv } from './config/env.validation';
 import { PrismaModule } from './prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { AccountModule } from './accounts/account.module';
@@ -16,7 +18,15 @@ import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
+    // Rate-limit budget; enforced only where a ThrottlerGuard is applied
+    // (the auth controller). Effectively unlimited under jest.
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60_000,
+        limit: process.env.NODE_ENV === 'test' ? 10_000 : 20,
+      },
+    ]),
     ScheduleModule.forRoot(),
     PrismaModule,
     AuthModule,
