@@ -58,8 +58,15 @@ describe('API (e2e)', () => {
         currency: 'EUR',
         initialBalance,
         ...extra,
-      })
-      .expect(201);
+      });
+    if (res.status !== 201) {
+      // Diagnostic for an intermittent failure: surface the real body/URL.
+      // eslint-disable-next-line no-console
+      console.error(
+        `createAccount got ${res.status}; text=${JSON.stringify(res.text)}; headers=${JSON.stringify(res.headers)}`,
+      );
+    }
+    expect(res.status).toBe(201);
     return res.body as { id: string; balance: number };
   };
 

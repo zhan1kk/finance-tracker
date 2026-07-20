@@ -1,0 +1,7 @@
+# Automatic HTTPS for your domain via Let's Encrypt. Caddy is the only public
+# entrypoint: it terminates TLS and proxies to the Next.js web app, which in
+# turn proxies /api/* to the API. Set DOMAIN in your .env (see README).
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy web:3000
+}

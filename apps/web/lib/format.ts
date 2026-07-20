@@ -26,6 +26,10 @@ export function parseAmountToCents(input: string): number | null {
   return cents > 0 ? cents : null;
 }
 
+/** Today's calendar date in the user's local timezone (UTC would date
+ *  late-evening entries "yesterday" for anyone east of Greenwich). */
 export function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }

@@ -1,8 +1,26 @@
-# `docker compose up -d db` — dev database only (the default workflow).
+# `docker compose up -d db` — dev database only (the default local workflow).
+#
 # `docker compose --profile prod up -d --build` — full self-hosted stack:
-#   db + api (internal only) + web (the single exposed entrypoint, port
-#   ${WEB_PORT:-3001}; put your TLS reverse proxy in front of it).
+#   caddy (public, auto-HTTPS) → web → api → db. Only caddy is exposed (80/443);
+#   web/api/db are internal. Requires JWT_SECRET and DOMAIN (see README).
 services:
+  caddy:
+    profiles: ['prod']
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      # Required in prod (Caddy needs it for the certificate). See README.
+      DOMAIN: ${DOMAIN:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
   api:
     profiles: ['prod']
     build:
@@ -11,14 +29,30 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/finance_tracker
-      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (openssl rand -hex 32)}
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/finance_tracker
+      # Required in prod; the API refuses to boot without a strong value.
+      JWT_SECRET: ${JWT_SECRET:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # "Today" for Telegram captures uses the server clock — set your timezone.
+      TZ: ${TZ:-UTC}
     depends_on:
       db:
         condition: service_healthy
-    # No ports: only reachable from the web container's proxy.
+    # Ready only once migrations ran and the app listens (web waits for this).
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:3000/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    # No published ports: only reachable from the web container.
 
   web:
     profiles: ['prod']
@@ -26,10 +60,10 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
     restart: unless-stopped
-    ports:
-      - '${WEB_PORT:-3001}:3000'
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    # No published ports: caddy is the public entrypoint.
 
   db:
     # Plain (non-alpine) image: the existing finance-tracker-pgdata volume was
@@ -38,11 +72,13 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: finance_tracker
     ports:
-      # Host port 5433 to avoid clashing with a natively installed Postgres
-      - '5433:5432'
+      # Bound to localhost only: never expose Postgres on a public server. The
+      # prod stack reaches it over the internal network (db:5432); this mapping
+      # is just for local dev tooling on host port 5433.
+      - '127.0.0.1:5433:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -54,3 +90,5 @@ services:
 volumes:
   pgdata:
     name: finance-tracker-pgdata
+  caddy_data:
+  caddy_config:

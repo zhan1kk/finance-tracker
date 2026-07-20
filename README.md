@@ -75,25 +75,40 @@ Setup:
 Captures are booked to your default account — switch it anytime with
 `/account` in the chat. Every confirmation message has an Undo button.
 
-## Deploying (self-hosted)
+## Deploying (self-hosted, 24/7)
 
-The repo ships production Dockerfiles and a compose profile. On any Docker
-host (small VPS is plenty):
+The repo ships everything for a turnkey deploy: production Dockerfiles, a
+compose `prod` profile, and Caddy for **automatic HTTPS**. You need a Docker
+host (a small VPS is plenty) and a domain pointed at it.
+
+**1. Point a domain at the server.** Add a DNS `A` record for your domain (or a
+free subdomain from e.g. [DuckDNS](https://www.duckdns.org)) to the server's IP.
+
+**2. Create a `.env` file** next to `docker-compose.yml`:
 
 ```bash
-# one-time: strong secret for signing tokens
-export JWT_SECRET="$(openssl rand -hex 32)"
-# optional: TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, WEB_PORT (default 3001)
+JWT_SECRET=<paste `openssl rand -hex 32`>   # signs login tokens (required)
+DOMAIN=finance.example.com                  # your domain (required)
+TZ=Asia/Almaty                              # your timezone (dates "today" correctly)
+POSTGRES_PASSWORD=<a strong password>       # recommended
+TELEGRAM_BOT_TOKEN=<from @BotFather>        # optional — enables the bot
+ANTHROPIC_API_KEY=<from console.anthropic.com>  # optional — enables LLM categorization
+```
 
+**3. Launch:**
+
+```bash
 docker compose --profile prod up -d --build
 ```
 
-That runs Postgres, the API (migrations apply automatically on start; **not**
-exposed to the host), and the web app — the single public entrypoint on
-`WEB_PORT`. Put a TLS reverse proxy (Caddy, Traefik, nginx) in front of the
-web port; the API already trusts `X-Forwarded-*` in production, cookies are
-`Secure`, security headers (helmet) are on, auth routes are rate-limited, and
-Swagger is disabled.
+Caddy fetches a TLS certificate automatically and your app is live at
+`https://<DOMAIN>`. The stack is Caddy → web → API → Postgres; **only Caddy is
+exposed** (ports 80/443), Postgres is bound to localhost, the API trusts
+`X-Forwarded-*`, cookies are `Secure`, helmet headers are on, auth routes are
+rate-limited, Swagger is off, and migrations apply automatically on start.
+
+> Telegram uses long polling, so run the bot in **one** place at a time — once
+> it's live on the server, stop the local instance (they'd otherwise conflict).
 
 The plain `docker compose up -d db` dev workflow is unchanged. For backups on
 a server, cron the `pg_dump` below.

@@ -13,6 +13,14 @@ export type CaptureResult =
   | { ok: true; text: string; transactionId: string }
   | { ok: false; text: string };
 
+/** Server-local calendar date. The server's TZ should match the user's (set
+ *  the TZ env in deployment); UTC would date late-evening captures "yesterday". */
+const localTodayISO = (): string => {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
 const sha256 = (value: string) =>
   createHash('sha256').update(value).digest('hex');
 
@@ -155,7 +163,7 @@ export class TelegramService {
       user.id,
       {
         type: parsed.type,
-        date: parsed.date ?? new Date().toISOString().slice(0, 10),
+        date: parsed.date ?? localTodayISO(),
         amount: parsed.amountCents,
         accountId: user.defaultAccountId,
         subcategoryId: result.match.id,

@@ -17,8 +17,22 @@ export class ApiError extends Error {
 
 type AuthResponse = { accessToken: string; user: User };
 
-/** Exchanges the refresh cookie for a fresh access token. Null if not logged in. */
-export async function tryRefresh(): Promise<User | null> {
+let refreshInFlight: Promise<User | null> | null = null;
+
+/**
+ * Exchanges the refresh cookie for a fresh access token. Null if not logged in.
+ * Single-flight: refresh tokens rotate on use, so concurrent 401s (parallel
+ * queries after token expiry) must share ONE request — a second one would use
+ * the consumed cookie, fail, and clobber the fresh token.
+ */
+export function tryRefresh(): Promise<User | null> {
+  refreshInFlight ??= doRefresh().finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+
+async function doRefresh(): Promise<User | null> {
   const res = await fetch('/api/auth/refresh', { method: 'POST' });
   if (!res.ok) {
     setAccessToken(null);

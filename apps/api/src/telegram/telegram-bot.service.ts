@@ -31,6 +31,7 @@ const HELP_TEXT = [
 export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TelegramBotService.name);
   private bot: Bot | null = null;
+  private stopping = false;
 
   constructor(
     private readonly config: ConfigService,
@@ -148,7 +149,13 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     });
 
     this.bot = bot;
-    // Long polling runs for the lifetime of the app; never awaited.
+    this.startPolling(bot);
+  }
+
+  /** Long polling for the lifetime of the app; a fatal crash (beyond grammY's
+   *  own transient-error retries) restarts polling after a backoff instead of
+   *  leaving the bot silently dead until the next deploy. */
+  private startPolling(bot: Bot) {
     void bot
       .start({
         onStart: (me) => {
@@ -157,11 +164,16 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         },
       })
       .catch((err: unknown) => {
-        this.logger.error(`Telegram polling stopped: ${String(err)}`);
+        if (this.stopping) return;
+        this.logger.error(
+          `Telegram polling crashed: ${String(err)} — restarting in 30s`,
+        );
+        setTimeout(() => this.startPolling(bot), 30_000);
       });
   }
 
   async onModuleDestroy() {
+    this.stopping = true;
     await this.bot?.stop();
   }
 }
