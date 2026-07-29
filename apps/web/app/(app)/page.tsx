@@ -2,14 +2,22 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { useState } from "react";
 import {
   CategoryBars,
   MonthlyTrendChart,
   NetWorthChart,
 } from "@/components/charts";
-import { Card } from "@/components/ui";
+import { Button, Card } from "@/components/ui";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { formatCents } from "@/lib/format";
+import {
+  formatPeriod,
+  periodOf,
+  periodRange,
+  shiftPeriod,
+} from "@/lib/period";
 import type {
   Account,
   MonthlyStat,
@@ -17,34 +25,40 @@ import type {
   TransactionStats,
 } from "@/lib/types";
 
-/** "YYYY-MM" for the month `offset` months from now (0 = current). */
-function monthKey(offset: number): string {
-  const now = new Date();
-  return new Date(Date.UTC(now.getFullYear(), now.getMonth() + offset, 1))
-    .toISOString()
-    .slice(0, 7);
-}
-
 const TREND_MONTHS = 6;
 
 export default function OverviewPage() {
+  const { user } = useAuth();
+  const monthStartDay = user?.monthStartDay ?? 1;
+  const currentPeriod = periodOf(new Date(), monthStartDay);
+  const [period, setPeriod] = useState<string | null>(null);
+  const shown = period ?? currentPeriod;
+
   const accounts = useQuery({
     queryKey: ["accounts"],
     queryFn: () => api<Account[]>("/accounts"),
   });
 
-  const monthStart = `${monthKey(0)}-01`;
-  const trendStart = `${monthKey(1 - TREND_MONTHS)}-01`;
+  // Ask for exactly the selected period, and a window ending with it for the trend.
+  const selected = periodRange(shown, monthStartDay);
+  const trendFrom = periodRange(
+    shiftPeriod(shown, 1 - TREND_MONTHS),
+    monthStartDay,
+  ).from;
 
   const monthStats = useQuery({
-    queryKey: ["stats", { from: monthStart }],
+    queryKey: ["stats", selected],
     queryFn: () =>
-      api<TransactionStats>(`/transactions/stats?from=${monthStart}`),
+      api<TransactionStats>(
+        `/transactions/stats?from=${selected.from}&to=${selected.to}`,
+      ),
   });
   const trendStats = useQuery({
-    queryKey: ["stats", { from: trendStart }],
+    queryKey: ["stats", { from: trendFrom, to: selected.to }],
     queryFn: () =>
-      api<TransactionStats>(`/transactions/stats?from=${trendStart}`),
+      api<TransactionStats>(
+        `/transactions/stats?from=${trendFrom}&to=${selected.to}`,
+      ),
   });
   const netWorth = useQuery({
     queryKey: ["stats", "net-worth"],
@@ -55,11 +69,13 @@ export default function OverviewPage() {
     monthStats.data?.monthly.reduce((sum, m) => sum + m.income, 0) ?? 0;
   const expenses =
     monthStats.data?.monthly.reduce((sum, m) => sum + m.expense, 0) ?? 0;
-  const currency = accounts.data?.[0]?.currency ?? "EUR";
+  // All cross-account aggregates are converted to the base currency server-side,
+  // so they are always formatted in it (not any single account's currency).
+  const currency = user?.baseCurrency ?? "EUR";
 
-  // Fill months with no transactions so the trend always shows 6 columns.
+  // Fill periods with no transactions so the trend always shows 6 columns.
   const trend: MonthlyStat[] = Array.from({ length: TREND_MONTHS }, (_, i) => {
-    const month = monthKey(i + 1 - TREND_MONTHS);
+    const month = shiftPeriod(shown, i + 1 - TREND_MONTHS);
     const stat = trendStats.data?.monthly.find((m) => m.month === month);
     return { month, income: stat?.income ?? 0, expense: stat?.expense ?? 0 };
   });
@@ -67,9 +83,30 @@ export default function OverviewPage() {
   return (
     <main className="flex flex-col gap-6">
       <section>
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-zinc-500">
-          This month
-        </h2>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <Button
+            variant="ghost"
+            aria-label="Previous month"
+            onClick={() => setPeriod(shiftPeriod(shown, -1))}
+          >
+            ‹
+          </Button>
+          <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-500">
+            {formatPeriod(shown, monthStartDay)}
+          </h2>
+          <Button
+            variant="ghost"
+            aria-label="Next month"
+            onClick={() => setPeriod(shiftPeriod(shown, 1))}
+          >
+            ›
+          </Button>
+          {shown !== currentPeriod && (
+            <Button variant="ghost" onClick={() => setPeriod(null)}>
+              Today
+            </Button>
+          )}
+        </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Card>
             <p className="text-sm text-zinc-500">Income</p>
@@ -97,7 +134,7 @@ export default function OverviewPage() {
           <h2 className="mb-3 font-medium">
             Spending by category
             <span className="ml-2 text-sm font-normal text-zinc-500">
-              this month
+              {formatPeriod(shown, monthStartDay)}
             </span>
           </h2>
           {monthStats.data && (

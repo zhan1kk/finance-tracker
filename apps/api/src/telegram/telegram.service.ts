@@ -1,8 +1,15 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { BASE_CURRENCY, SUPPORTED_CURRENCIES } from '../fx/fx';
+import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
 import { TransactionService } from '../transactions/transaction.service';
-import { matchSubcategory, parseCapture } from './capture-parser';
+import {
+  matchSubcategory,
+  parseCapture,
+  parseCaptureDate,
+} from './capture-parser';
+import { confirmationText, localTodayISO, money } from './format';
 
 const LINK_CODE_TTL_MS = 10 * 60 * 1000;
 
@@ -12,14 +19,6 @@ const CAPTURE_FORMAT_HINT =
 export type CaptureResult =
   | { ok: true; text: string; transactionId: string }
   | { ok: false; text: string };
-
-/** Server-local calendar date. The server's TZ should match the user's (set
- *  the TZ env in deployment); UTC would date late-evening captures "yesterday". */
-const localTodayISO = (): string => {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-};
 
 const sha256 = (value: string) =>
   createHash('sha256').update(value).digest('hex');
@@ -32,6 +31,7 @@ export class TelegramService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly transactionService: TransactionService,
+    private readonly fx: FxService,
   ) {}
 
   /** One-time code the user sends to the bot as `/link <code>`. */
@@ -172,21 +172,22 @@ export class TelegramService {
     );
     const account = await this.prisma.account.findUniqueOrThrow({
       where: { id: user.defaultAccountId },
-      select: { name: true, currency: true, balance: true },
+      select: { name: true, currency: true, balance: true, type: true },
     });
 
-    const sign = parsed.type === 'INCOME' ? '+' : '−';
-    const note = parsed.description ? ` · ${parsed.description}` : '';
-    const warning = transaction.outlier
-      ? `\n⚠ Unusually ${transaction.outlier.direction} for ${result.match.name} (typical ~${this.money(transaction.outlier.medianCents, account.currency)})`
-      : '';
     return {
       ok: true,
       transactionId: transaction.id,
-      text:
-        `Added ${sign}${this.money(parsed.amountCents, account.currency)} · ${result.match.name}${note}\n` +
-        `${account.name}: ${this.money(account.balance, account.currency)}` +
-        warning,
+      text: confirmationText({
+        type: parsed.type,
+        amountCents: parsed.amountCents,
+        amountBase: transaction.amountBase,
+        subcategoryName: result.match.name,
+        description: parsed.description,
+        account,
+        outlier: transaction.outlier,
+        baseCurrency: BASE_CURRENCY,
+      }),
     };
   }
 
@@ -220,7 +221,79 @@ export class TelegramService {
       where: { id: user.id },
       data: { defaultAccountId: account.id },
     });
-    return `New captures go to: ${account.name} (${this.money(account.balance, account.currency)})`;
+    return `New captures go to: ${account.name} (${money(account.balance, account.currency)})`;
+  }
+
+  /**
+   * `/rate` — view or set the foreign→base conversion rate. With no arguments it
+   * reports the effective rate; otherwise it accepts a rate, an optional date
+   * (default today) and an optional currency (default the one foreign currency):
+   *   /rate 540            → 1 EUR = 540 KZT from today
+   *   /rate 545 01.07      → from 1 July (current year)
+   *   /rate KZT 550 2026-07-01
+   */
+  async handleRate(chatId: string, argsText: string): Promise<string> {
+    const user = await this.prisma.user.findUnique({
+      where: { telegramChatId: chatId },
+    });
+    if (!user) return 'This chat is not linked.';
+
+    const foreignDefault =
+      SUPPORTED_CURRENCIES.find((c) => c !== BASE_CURRENCY) ?? 'KZT';
+    const tokens = argsText.trim().split(/\s+/).filter(Boolean);
+
+    if (tokens.length === 0) {
+      const info = await this.fx.listRates(user.id, foreignDefault);
+      const lines = [
+        `1 ${BASE_CURRENCY} = ${info.effectiveRate} ${foreignDefault} (in effect today)`,
+      ];
+      if (info.rates.length > 0) {
+        lines.push('', 'Your overrides:');
+        for (const rate of info.rates.slice(0, 5)) {
+          lines.push(
+            `• ${rate.date.toISOString().slice(0, 10)}: 1 ${BASE_CURRENCY} = ${rate.rate} ${rate.currency}`,
+          );
+        }
+      }
+      lines.push(
+        '',
+        `Set:  /rate 540   ·   /rate 545 01.07   ·   /rate ${foreignDefault} 550 2026-07-01`,
+      );
+      return lines.join('\n');
+    }
+
+    let currency = foreignDefault;
+    let dateISO = localTodayISO();
+    let rate: number | undefined;
+    for (const token of tokens) {
+      if (/^[A-Za-z]{3}$/.test(token)) {
+        const code = token.toUpperCase();
+        if (code === BASE_CURRENCY) {
+          return `${BASE_CURRENCY} is the base currency — set a foreign currency's rate, e.g. ${foreignDefault}.`;
+        }
+        if (!SUPPORTED_CURRENCIES.includes(code)) {
+          return `Unsupported currency "${code}". Supported: ${SUPPORTED_CURRENCIES.join(', ')}.`;
+        }
+        currency = code;
+      } else if (parseCaptureDate(token)) {
+        dateISO = parseCaptureDate(token) as string;
+      } else if (/^\d+(?:[.,]\d+)?$/.test(token)) {
+        rate = parseFloat(token.replace(',', '.'));
+      } else {
+        return `Didn't understand "${token}". Try:  /rate 540   or   /rate 545 01.07`;
+      }
+    }
+
+    if (rate === undefined || !(rate > 0)) {
+      return `Give a positive rate, e.g. /rate 540 (means 1 ${BASE_CURRENCY} = 540 ${foreignDefault}).`;
+    }
+
+    const result = await this.fx.setRate(user.id, currency, dateISO, rate);
+    const recomputed =
+      result.recomputed > 0
+        ? ` Updated ${result.recomputed} existing ${currency} transaction(s).`
+        : '';
+    return `Set 1 ${BASE_CURRENCY} = ${rate} ${currency} from ${dateISO}.${recomputed}`;
   }
 
   /** Deletes a just-captured transaction (the Undo button). */
@@ -237,11 +310,5 @@ export class TelegramService {
     } catch {
       return 'Could not undo (already removed?).';
     }
-  }
-
-  private money(cents: number, currency: string): string {
-    return new Intl.NumberFormat('en', { style: 'currency', currency }).format(
-      cents / 100,
-    );
   }
 }

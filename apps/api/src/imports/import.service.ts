@@ -11,6 +11,7 @@ import {
   Prisma,
   type TransactionType,
 } from '@prisma/client';
+import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
 import { CategorizationService } from './categorization/categorization.service';
 import { CsvParserService } from './csv-parser.service';
@@ -36,7 +37,11 @@ type StagedRow = {
   predictedSubcategoryId: string | null;
   confidence: number | null;
   source: CategorizationSource;
+  /** Who made the prediction — frozen; `source` is overwritten on review. */
+  predictionSource: CategorizationSource | null;
   subcategoryId: string | null;
+  /** Set instead of subcategoryId when the row is a transfer between own accounts. */
+  counterAccountId: string | null;
   note: string | null;
 };
 
@@ -46,6 +51,7 @@ const BATCH_INCLUDE = {
     include: {
       subcategory: { select: { id: true, name: true, category: true } },
       predictedSubcategory: { select: { id: true, name: true } },
+      counterAccount: { select: { id: true, name: true } },
     },
   },
   account: { select: { id: true, name: true, currency: true } },
@@ -60,6 +66,7 @@ export class ImportService {
     private readonly mapping: MappingService,
     private readonly rules: RulesService,
     private readonly categorization: CategorizationService,
+    private readonly fx: FxService,
   ) {}
 
   /** Returns detected headers + a few sample rows so a UI can build a mapping. */
@@ -118,7 +125,9 @@ export class ImportService {
             predictedSubcategoryId: row.predictedSubcategoryId,
             confidence: row.confidence,
             source: row.source,
+            predictionSource: row.predictionSource,
             subcategoryId: row.subcategoryId,
+            counterAccountId: row.counterAccountId,
             note: row.note,
           })),
         },
@@ -161,11 +170,12 @@ export class ImportService {
     return batch;
   }
 
+  /** Assigns a row either a subcategory or a transfer counter account. */
   async reviewRow(
     userId: string,
     batchId: string,
     rowId: string,
-    subcategoryId: string,
+    choice: { subcategoryId?: string | null; counterAccountId?: string | null },
   ) {
     const batch = await this.getPendingBatch(userId, batchId);
     const row = batch.rows.find((r) => r.id === rowId);
@@ -179,62 +189,178 @@ export class ImportService {
         'This row duplicates an existing transaction and cannot be imported',
       );
     }
-    await this.assertOwnSubcategory(userId, subcategoryId);
+
+    const asTransfer = Boolean(choice.counterAccountId);
+    if (asTransfer === Boolean(choice.subcategoryId)) {
+      throw new BadRequestException(
+        'Choose exactly one of a category or a transfer account',
+      );
+    }
+    if (asTransfer) {
+      await this.assertTransferTarget(
+        userId,
+        batch.accountId,
+        batch.account.currency,
+        choice.counterAccountId as string,
+      );
+    } else {
+      await this.assertOwnSubcategory(userId, choice.subcategoryId as string);
+    }
 
     return this.prisma.importRow.update({
       where: { id: rowId },
       data: {
-        subcategoryId,
-        corrected: row.predictedSubcategoryId !== subcategoryId,
-        source: 'MANUAL',
+        subcategoryId: asTransfer ? null : (choice.subcategoryId as string),
+        counterAccountId: asTransfer
+          ? (choice.counterAccountId as string)
+          : null,
+        // `corrected` gates rule-learning on commit. A transfer picked on a row
+        // no rule had already routed there is worth learning, too — so future
+        // statements auto-route it without another manual pick.
+        corrected: asTransfer
+          ? row.counterAccountId !== (choice.counterAccountId as string)
+          : row.predictedSubcategoryId !== choice.subcategoryId,
+        // Accepting the suggestion as-is keeps the categorizer as the deciding
+        // source — the human co-signed, the prediction stood. Anything else is
+        // a manual decision.
+        source:
+          !asTransfer &&
+          row.predictedSubcategoryId !== null &&
+          choice.subcategoryId === row.predictedSubcategoryId
+            ? row.source
+            : 'MANUAL',
         status: 'READY',
         note: null,
       },
       include: {
         subcategory: { select: { id: true, name: true, category: true } },
+        counterAccount: { select: { id: true, name: true } },
       },
     });
+  }
+
+  /**
+   * A transfer target must be another of the user's accounts in the same
+   * currency — the ledger has no cross-currency transfer.
+   */
+  private async assertTransferTarget(
+    userId: string,
+    accountId: string,
+    currency: string,
+    counterAccountId: string,
+  ) {
+    if (counterAccountId === accountId) {
+      throw new BadRequestException(
+        'A transfer needs a different account on the other side',
+      );
+    }
+    const account = await this.prisma.account.findFirst({
+      where: { id: counterAccountId, userId },
+      select: { currency: true, name: true },
+    });
+    if (!account) {
+      throw new NotFoundException(
+        `Account with id ${counterAccountId} was not found`,
+      );
+    }
+    if (account.currency !== currency) {
+      throw new BadRequestException(
+        `Cannot transfer to ${account.name}: it is in ${account.currency}, not ${currency}`,
+      );
+    }
   }
 
   async commit(userId: string, batchId: string) {
     const batch = await this.getPendingBatch(userId, batchId);
     const committable = batch.rows.filter(
-      (r) => r.status === 'READY' && r.subcategoryId !== null,
+      (r) =>
+        r.status === 'READY' &&
+        (r.subcategoryId !== null || r.counterAccountId !== null),
     );
+    const convert = await this.fx.converterFor(userId, batch.account.currency);
 
     await this.prisma.$transaction(
       async (tx) => {
-        let delta = 0;
-        for (const row of committable) {
-          const transaction = await tx.transaction.create({
-            data: {
-              type: row.type,
-              date: row.date,
-              amount: row.amount,
-              description: row.description,
-              accountId: batch.accountId,
-              subcategoryId: row.subcategoryId,
-              dedupeHash: row.dedupeHash,
-            },
-          });
-          await tx.importRow.update({
-            where: { id: row.id },
-            data: { transactionId: transaction.id, status: 'COMMITTED' },
-          });
-          delta += row.type === 'INCOME' ? row.amount : -row.amount;
+        // Staging marks duplicates against transactions that existed *then*.
+        // Rows staged before an earlier batch of the same statement was
+        // committed carry no mark (e.g. the same file imported twice while both
+        // sat in review) — so re-check at commit, or the second batch would
+        // double-count. Hash lookup is global on purpose: a committed incoming
+        // transfer lives on the counter account, not the batch's.
+        const alreadyCommitted = new Set(
+          (
+            await tx.transaction.findMany({
+              where: { dedupeHash: { in: committable.map((r) => r.dedupeHash) } },
+              select: { dedupeHash: true },
+            })
+          ).map((t) => t.dedupeHash),
+        );
 
-          if (row.corrected && row.subcategoryId) {
-            await this.rules.learnFromCorrection(
-              tx,
-              userId,
-              row.normalizedDescription,
-              row.subcategoryId,
-            );
+        // Transfers move money between two accounts, so balance changes are
+        // accumulated per account rather than only against the statement's.
+        const deltas = new Map<string, number>();
+        const bump = (accountId: string, amount: number) =>
+          deltas.set(accountId, (deltas.get(accountId) ?? 0) + amount);
+
+        for (const row of committable) {
+          if (alreadyCommitted.has(row.dedupeHash)) {
+            await tx.importRow.update({
+              where: { id: row.id },
+              data: {
+                status: 'SKIPPED',
+                note: 'Already imported by an earlier batch',
+              },
+            });
+            continue;
+          }
+          if (row.counterAccountId) {
+            const posted = await this.commitTransferRow(tx, batch, row, convert);
+            if (posted) {
+              bump(posted.from, -row.amount);
+              bump(posted.to, row.amount);
+            }
+          } else {
+            const transaction = await tx.transaction.create({
+              data: {
+                type: row.type,
+                date: row.date,
+                amount: row.amount,
+                amountBase: convert(row.date, row.amount),
+                description: row.description,
+                accountId: batch.accountId,
+                subcategoryId: row.subcategoryId,
+                dedupeHash: row.dedupeHash,
+              },
+            });
+            await tx.importRow.update({
+              where: { id: row.id },
+              data: { transactionId: transaction.id, status: 'COMMITTED' },
+            });
+            bump(batch.accountId, row.type === 'INCOME' ? row.amount : -row.amount);
+          }
+
+          if (row.corrected) {
+            const target = row.counterAccountId
+              ? { counterAccountId: row.counterAccountId }
+              : row.subcategoryId
+                ? { subcategoryId: row.subcategoryId }
+                : null;
+            if (target) {
+              await this.rules.learnFromCorrection(
+                tx,
+                userId,
+                row.normalizedDescription,
+                target,
+                row.type,
+              );
+            }
           }
         }
-        if (delta !== 0) {
+
+        for (const [accountId, delta] of deltas) {
+          if (delta === 0) continue;
           await tx.account.update({
-            where: { id: batch.accountId },
+            where: { id: accountId },
             data: { balance: { increment: delta } },
           });
         }
@@ -247,6 +373,78 @@ export class ImportService {
     );
 
     return this.getBatch(userId, batchId);
+  }
+
+  /**
+   * Posts one transfer row. Direction follows the statement: money leaving the
+   * imported account moves out of it, money arriving moves into it.
+   *
+   * Both sides of a transfer are usually tracked here, so the same movement also
+   * appears in the other account's statement with the opposite sign. Committing
+   * both would double it, and the per-account dedupe hash cannot see across
+   * accounts — hence the explicit check for an equivalent transfer.
+   *
+   * Returns the two account ids whose balances moved, or null when skipped.
+   */
+  private async commitTransferRow(
+    tx: Prisma.TransactionClient,
+    batch: { accountId: string },
+    row: {
+      id: string;
+      date: Date;
+      amount: number;
+      type: TransactionType;
+      description: string;
+      dedupeHash: string;
+      counterAccountId: string | null;
+    },
+    convert: (date: Date, amount: number) => number,
+  ): Promise<{ from: string; to: string } | null> {
+    const counterAccountId = row.counterAccountId as string;
+    const movingOut = row.type === 'EXPENSE';
+    const from = movingOut ? batch.accountId : counterAccountId;
+    const to = movingOut ? counterAccountId : batch.accountId;
+
+    const mirrored = await tx.transaction.findFirst({
+      where: {
+        type: 'TRANSFER',
+        amount: row.amount,
+        date: row.date,
+        OR: [
+          { accountId: from, counterAccountId: to },
+          { accountId: to, counterAccountId: from },
+        ],
+      },
+      select: { id: true },
+    });
+    if (mirrored) {
+      await tx.importRow.update({
+        where: { id: row.id },
+        data: {
+          status: 'SKIPPED',
+          note: 'This transfer is already recorded from the other account',
+        },
+      });
+      return null;
+    }
+
+    const transaction = await tx.transaction.create({
+      data: {
+        type: 'TRANSFER',
+        date: row.date,
+        amount: row.amount,
+        amountBase: convert(row.date, row.amount),
+        description: row.description,
+        accountId: from,
+        counterAccountId: to,
+        dedupeHash: row.dedupeHash,
+      },
+    });
+    await tx.importRow.update({
+      where: { id: row.id },
+      data: { transactionId: transaction.id, status: 'COMMITTED' },
+    });
+    return { from, to };
   }
 
   async undo(userId: string, batchId: string) {
@@ -278,10 +476,19 @@ export class ImportService {
       );
     }
 
-    const delta = transactions.reduce(
-      (sum, t) => sum + (t.type === 'INCOME' ? t.amount : -t.amount),
-      0,
-    );
+    // Reverse each transaction against the account(s) it actually moved — a
+    // transfer touched two, so undoing only the statement's would leave drift.
+    const deltas = new Map<string, number>();
+    const bump = (accountId: string, amount: number) =>
+      deltas.set(accountId, (deltas.get(accountId) ?? 0) + amount);
+    for (const t of transactions) {
+      if (t.type === 'TRANSFER') {
+        bump(t.accountId, t.amount);
+        if (t.counterAccountId) bump(t.counterAccountId, -t.amount);
+      } else {
+        bump(t.accountId, t.type === 'INCOME' ? -t.amount : t.amount);
+      }
+    }
 
     await this.prisma.$transaction([
       this.prisma.importRow.updateMany({
@@ -291,10 +498,14 @@ export class ImportService {
       this.prisma.transaction.deleteMany({
         where: { id: { in: transactionIds } },
       }),
-      this.prisma.account.update({
-        where: { id: batch.accountId },
-        data: { balance: { increment: -delta } },
-      }),
+      ...[...deltas.entries()]
+        .filter(([, delta]) => delta !== 0)
+        .map(([accountId, delta]) =>
+          this.prisma.account.update({
+            where: { id: accountId },
+            data: { balance: { increment: delta } },
+          }),
+        ),
       this.prisma.importBatch.update({
         where: { id: batchId },
         data: { status: 'UNDONE', committedAt: null },
@@ -329,18 +540,21 @@ export class ImportService {
    * overall, by source, and per batch over time.
    */
   async accuracyStats(userId: string) {
+    // Filter on predictionSource, not source: source is overwritten to MANUAL
+    // when a human reviews a row, and excluding reviewed rows would drop every
+    // corrected (= wrong) prediction from the denominator, inflating accuracy.
     const rows = await this.prisma.importRow.findMany({
       where: {
         batch: { userId, status: 'COMMITTED' },
         status: 'COMMITTED',
         predictedSubcategoryId: { not: null },
-        source: { in: ['RULE', 'LLM'] },
+        predictionSource: { in: ['RULE', 'LLM'] },
       },
       select: {
         predictedSubcategoryId: true,
         subcategoryId: true,
         corrected: true,
-        source: true,
+        predictionSource: true,
         batch: { select: { id: true, filename: true, committedAt: true } },
       },
     });
@@ -367,8 +581,8 @@ export class ImportService {
     return {
       overall: tally(rows),
       bySource: {
-        RULE: tally(rows.filter((r) => r.source === 'RULE')),
-        LLM: tally(rows.filter((r) => r.source === 'LLM')),
+        RULE: tally(rows.filter((r) => r.predictionSource === 'RULE')),
+        LLM: tally(rows.filter((r) => r.predictionSource === 'LLM')),
       },
       byBatch: [...byBatch.values()]
         .map((list) => ({
@@ -441,7 +655,9 @@ export class ImportService {
         predictedSubcategoryId: null,
         confidence: null,
         source: 'NONE',
+        predictionSource: null,
         subcategoryId: null,
+        counterAccountId: null,
         note: null,
       });
     });
@@ -491,20 +707,34 @@ export class ImportService {
     // 1. Rule pre-pass.
     const rules = await this.prisma.categorizationRule.findMany({
       where: { userId },
-      select: { id: true, pattern: true, subcategoryId: true },
+      select: {
+        id: true,
+        pattern: true,
+        type: true,
+        subcategoryId: true,
+        counterAccountId: true,
+      },
     });
     const forProvider: StagedRow[] = [];
     for (const row of pending) {
-      const hit = this.rules.match(rules, row.normalizedDescription);
-      if (hit) {
-        row.predictedSubcategoryId = hit.subcategoryId;
-        row.subcategoryId = hit.subcategoryId;
-        row.confidence = 1;
-        row.source = 'RULE';
-        row.status = 'READY';
-      } else {
+      const hit = this.rules.match(rules, row.normalizedDescription, row.type);
+      if (!hit) {
         forProvider.push(row);
+        continue;
       }
+      if (hit.counterAccountId) {
+        // Movements between own accounts are not spending; they never reach the
+        // categorizer and carry no subcategory.
+        row.counterAccountId = hit.counterAccountId;
+        row.subcategoryId = null;
+      } else {
+        row.predictedSubcategoryId = hit.subcategoryId ?? null;
+        row.subcategoryId = hit.subcategoryId ?? null;
+      }
+      row.confidence = 1;
+      row.source = 'RULE';
+      row.predictionSource = 'RULE';
+      row.status = 'READY';
     }
 
     // 2. Provider (heuristic or LLM) for the remainder.
@@ -526,6 +756,7 @@ export class ImportService {
         row.subcategoryId = pred.subcategoryId;
         row.confidence = pred.confidence;
         row.source = 'LLM';
+        row.predictionSource = 'LLM';
         row.status = pred.confidence >= threshold ? 'READY' : 'NEEDS_REVIEW';
       } else {
         row.confidence = pred?.confidence ?? 0;

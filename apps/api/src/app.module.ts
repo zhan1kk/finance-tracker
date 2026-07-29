@@ -6,6 +6,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { validateEnv } from './config/env.validation';
 import { PrismaModule } from './prisma.module';
+import { FxModule } from './fx/fx.module';
 import { AuthModule } from './auth/auth.module';
 import { AccountModule } from './accounts/account.module';
 import { TransactionModule } from './transactions/transaction.module';
@@ -29,6 +30,7 @@ import { ReportsModule } from './reports/reports.module';
     ]),
     ScheduleModule.forRoot(),
     PrismaModule,
+    FxModule,
     AuthModule,
     AccountModule,
     TransactionModule,

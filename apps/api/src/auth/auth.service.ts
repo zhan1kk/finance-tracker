@@ -12,7 +12,12 @@ import { DEFAULT_SUBCATEGORIES } from '../subcategories/default-subcategories';
 import { REFRESH_TOKEN_TTL_DAYS } from './auth.constants';
 import type { AuthTokens, JwtPayload } from './types/auth.types';
 
-type PublicUser = { id: string; email: string; baseCurrency: string };
+type PublicUser = {
+  id: string;
+  email: string;
+  baseCurrency: string;
+  monthStartDay: number;
+};
 
 @Injectable()
 export class AuthService {
@@ -114,6 +119,18 @@ export class AuthService {
     return this.toPublicUser(user);
   }
 
+  /** Updates the caller's own reporting preferences. */
+  async updateProfile(
+    userId: string,
+    input: { monthStartDay?: number },
+  ): Promise<PublicUser> {
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { monthStartDay: input.monthStartDay },
+    });
+    return this.toPublicUser(user);
+  }
+
   private async issueTokens(
     userId: string,
     email: string,
@@ -149,7 +166,13 @@ export class AuthService {
     id: string;
     email: string;
     baseCurrency: string;
+    monthStartDay: number;
   }): PublicUser {
-    return { id: user.id, email: user.email, baseCurrency: user.baseCurrency };
+    return {
+      id: user.id,
+      email: user.email,
+      baseCurrency: user.baseCurrency,
+      monthStartDay: user.monthStartDay,
+    };
   }
 }

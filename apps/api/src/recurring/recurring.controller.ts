@@ -42,6 +42,12 @@ export class RecurringController {
     return this.recurringService.update(user.userId, id, body);
   }
 
+  // Declared before @Delete(':id') so the bare path is not read as an id.
+  @Delete()
+  removeAll(@CurrentUser() user: AuthUser) {
+    return this.recurringService.removeAll(user.userId);
+  }
+
   @Delete(':id')
   async remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     await this.recurringService.remove(user.userId, id);

@@ -56,6 +56,12 @@ export class TransactionController {
     return this.transactionService.updateTransaction(user.userId, id, body);
   }
 
+  // Declared before @Delete(':id') so the bare path is not read as an id.
+  @Delete()
+  deleteAll(@CurrentUser() user: AuthUser) {
+    return this.transactionService.deleteAllForUser(user.userId);
+  }
+
   @Delete(':id')
   async deleteTransaction(
     @CurrentUser() user: AuthUser,

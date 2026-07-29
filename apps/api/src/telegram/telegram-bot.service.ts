@@ -6,19 +6,30 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Bot, InlineKeyboard } from 'grammy';
+import { parseAmountOnly } from './capture-parser';
+import {
+  type BotReply,
+  GuidedCaptureService,
+  typeFromShort,
+} from './guided-capture.service';
 import { TelegramService } from './telegram.service';
 
 const HELP_TEXT = [
   'Quick-capture bot for your finance tracker.',
   '',
-  'Add an expense:  40 - dining out - lunch with friends',
-  'Add income:      +2000 - salary - july',
-  'With a date:     12.50 - groceries - snacks - 09.07',
+  'Fastest — just send the amount and tap a category:',
+  '  40            (expense)',
+  '  +2000         (income)',
+  '',
+  'Or type it all at once:',
+  '  40 - dining out - lunch with friends',
+  '  12.50 - groceries - snacks - 09.07',
   '',
   'Fields are separated by " - ": amount - category - note (optional) - date',
   '(optional, DD.MM / DD.MM.YYYY / YYYY-MM-DD; default today).',
   '',
   '/account — choose which account captures go to',
+  '/rate — view or set the exchange rate (e.g. /rate 540 for 1 EUR = 540 KZT)',
   '/link <code> — connect this chat (get the code from the web app, Accounts page)',
   '/help — this message',
 ].join('\n');
@@ -36,6 +47,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly config: ConfigService,
     private readonly telegram: TelegramService,
+    private readonly guided: GuidedCaptureService,
   ) {}
 
   onModuleInit() {
@@ -97,12 +109,33 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       });
     });
 
+    bot.command('rate', async (ctx) => {
+      if (ctx.chat.type !== 'private') return;
+      const text = await this.telegram.handleRate(
+        String(ctx.chat.id),
+        ctx.match,
+      );
+      await ctx.reply(text);
+    });
+
     bot.on('message:text', async (ctx) => {
       if (ctx.chat.type !== 'private') return;
-      const result = await this.telegram.capture(
-        String(ctx.chat.id),
-        ctx.message.text,
-      );
+      const chatId = String(ctx.chat.id);
+
+      // A message that is only an amount starts the button-driven picker;
+      // anything richer still goes through the one-shot dash format.
+      const amountOnly = parseAmountOnly(ctx.message.text);
+      if (amountOnly) {
+        const reply = await this.guided.start(
+          chatId,
+          amountOnly.type,
+          amountOnly.amountCents,
+        );
+        await ctx.reply(reply.text, markup(reply));
+        return;
+      }
+
+      const result = await this.telegram.capture(chatId, ctx.message.text);
       await ctx.reply(
         result.text,
         result.ok
@@ -141,7 +174,13 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         await ctx.editMessageText(text);
         return;
       }
+
+      const reply = await this.routeGuided(String(chatId), data);
       await ctx.answerCallbackQuery();
+      if (reply) {
+        // Editing in place keeps the whole capture to a single message.
+        await ctx.editMessageText(reply.text, markup(reply));
+      }
     });
 
     bot.catch((err) => {
@@ -150,6 +189,47 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
     this.bot = bot;
     this.startPolling(bot);
+  }
+
+  /**
+   * Dispatches the guided-capture callbacks. Each payload carries everything the
+   * step needs, so no per-chat state is kept:
+   *   p:<e|i>:<amount>                 show all categories ("More…" / back)
+   *   g:<e|i>:<amount>:<Category>      show that category's subcategories
+   *   b:<e|i>:<amount>:<subcategoryId> book it
+   *   d:<transactionId>                offer recent dates
+   *   s:<transactionId>:<YYYY-MM-DD>   apply a date
+   */
+  private async routeGuided(
+    chatId: string,
+    data: string,
+  ): Promise<BotReply | null> {
+    const [kind, ...rest] = data.split(':');
+
+    if (kind === 'd' && rest.length === 1) {
+      return this.guided.dateOptions(chatId, rest[0]);
+    }
+    if (kind === 's' && rest.length === 2) {
+      return this.guided.setDate(chatId, rest[0], rest[1]);
+    }
+
+    const type = typeFromShort(rest[0] ?? '');
+    const amount = Number(rest[1]);
+    if (!type || !Number.isInteger(amount) || amount <= 0) return null;
+
+    if (kind === 'p') return this.guided.categories(chatId, type, amount);
+    if (kind === 'g' && rest[2]) {
+      return this.guided.subcategories(
+        chatId,
+        type,
+        amount,
+        rest[2] as Parameters<GuidedCaptureService['subcategories']>[3],
+      );
+    }
+    if (kind === 'b' && rest[2]) {
+      return this.guided.book(chatId, type, amount, rest[2]);
+    }
+    return null;
   }
 
   /** Long polling for the lifetime of the app; a fatal crash (beyond grammY's
@@ -176,4 +256,17 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     this.stopping = true;
     await this.bot?.stop();
   }
+}
+
+/** Turns a reply's button grid into a grammY inline keyboard. */
+function markup(reply: BotReply) {
+  if (!reply.buttons || reply.buttons.length === 0) return undefined;
+  const keyboard = new InlineKeyboard();
+  for (const row of reply.buttons) {
+    for (const button of row) {
+      keyboard.text(button.label, button.data);
+    }
+    keyboard.row();
+  }
+  return { reply_markup: keyboard };
 }

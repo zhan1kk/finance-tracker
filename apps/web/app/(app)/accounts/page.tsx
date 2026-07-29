@@ -2,11 +2,12 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
+import { ExchangeRatesCard } from "@/components/exchange-rates-card";
 import { TelegramCard } from "@/components/telegram-card";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api, downloadFile } from "@/lib/api";
-import { formatCents, parseAmountToCents } from "@/lib/format";
-import { ACCOUNT_TYPES, type Account } from "@/lib/types";
+import { formatCents, parseSignedAmountToCents } from "@/lib/format";
+import { ACCOUNT_TYPES, CURRENCIES, type Account } from "@/lib/types";
 
 export default function AccountsPage() {
   const queryClient = useQueryClient();
@@ -37,6 +38,16 @@ export default function AccountsPage() {
     onError: setError,
   });
 
+  const setStartingBalance = useMutation({
+    mutationFn: ({ id, initialBalance }: { id: string; initialBalance: number }) =>
+      api<Account>(`/accounts/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ initialBalance }),
+      }),
+    onSuccess: invalidate,
+    onError: setError,
+  });
+
   const remove = useMutation({
     mutationFn: (id: string) =>
       api(`/accounts/${id}`, { method: "DELETE" }),
@@ -49,10 +60,9 @@ export default function AccountsPage() {
     setError(null);
     const form = new FormData(e.currentTarget);
     const amountInput = String(form.get("initialBalance") || "0") || "0";
-    const initialBalance =
-      amountInput === "0" ? 0 : parseAmountToCents(amountInput);
+    const initialBalance = parseSignedAmountToCents(amountInput);
     if (initialBalance === null) {
-      setError(new Error("Invalid starting balance"));
+      setError(new Error("Invalid starting balance — e.g. 100 or -478.42"));
       return;
     }
     create.mutate({
@@ -82,13 +92,13 @@ export default function AccountsPage() {
             </Select>
           </Field>
           <Field label="Currency">
-            <Input
-              name="currency"
-              required
-              defaultValue="EUR"
-              maxLength={3}
-              className="w-20 uppercase"
-            />
+            <Select name="currency" defaultValue="EUR">
+              {CURRENCIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </Select>
           </Field>
           <Field label="Starting balance">
             <Input name="initialBalance" placeholder="0.00" className="w-28" />
@@ -110,7 +120,15 @@ export default function AccountsPage() {
                   {account.type}
                 </span>
               </p>
-              <p className="text-lg">
+              {/* Negative is a credit account's normal state (debt owed), so
+                  the red warning tint applies to the other types only. */}
+              <p
+                className={`text-lg ${
+                  account.balance < 0 && account.type !== "credit"
+                    ? "text-red-600"
+                    : ""
+                }`}
+              >
                 {formatCents(account.balance, account.currency)}
               </p>
             </div>
@@ -128,6 +146,27 @@ export default function AccountsPage() {
                 Rename
               </Button>
               <Button
+                variant="ghost"
+                onClick={() => {
+                  const raw = window.prompt(
+                    "Starting balance on day one (negative = credit card debt, e.g. -478.42). Later transactions stay applied on top.",
+                    (account.initialBalance / 100).toFixed(2),
+                  );
+                  if (raw === null) return;
+                  const initialBalance = parseSignedAmountToCents(raw);
+                  if (initialBalance === null) {
+                    setError(new Error("Invalid amount — e.g. 100 or -478.42"));
+                    return;
+                  }
+                  if (initialBalance !== account.initialBalance) {
+                    setError(null);
+                    setStartingBalance.mutate({ id: account.id, initialBalance });
+                  }
+                }}
+              >
+                Set balance
+              </Button>
+              <Button
                 variant="danger"
                 onClick={() => {
                   if (window.confirm(`Delete account "${account.name}"?`)) {
@@ -142,6 +181,8 @@ export default function AccountsPage() {
           </Card>
         ))}
       </div>
+
+      <ExchangeRatesCard />
 
       <TelegramCard accounts={accounts.data ?? []} />
 

@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { Prisma, RecurringRule } from '@prisma/client';
+import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
 import type { TransactionCategory } from '../subcategories/types/subcategory.types';
 import { nextOccurrence, occurrencesPerYear } from './cadence';
@@ -20,7 +21,10 @@ const RULE_INCLUDE = {
 
 @Injectable()
 export class RecurringService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fx: FxService,
+  ) {}
 
   async list(userId: string) {
     const rules = await this.prisma.recurringRule.findMany({
@@ -84,6 +88,18 @@ export class RecurringService {
   }
 
   /**
+   * Deletes every recurring rule the user owns. Transactions already posted by
+   * these rules stay put; the schema's ON DELETE SET NULL clears their
+   * recurringRuleId, so balances and stats are untouched.
+   */
+  async removeAll(userId: string): Promise<{ deleted: number }> {
+    const { count } = await this.prisma.recurringRule.deleteMany({
+      where: { userId },
+    });
+    return { deleted: count };
+  }
+
+  /**
    * Posts every occurrence due at/before `now` for the matching active rules,
    * advancing each schedule and deactivating rules that hit their end date or
    * installment count. Each rule's occurrences + balance change + rule update
@@ -102,6 +118,11 @@ export class RecurringService {
 
   private async postRule(rule: RecurringRule, now: Date): Promise<number> {
     const anchorDay = rule.startDate.getUTCDate();
+    const { currency } = await this.prisma.account.findUniqueOrThrow({
+      where: { id: rule.accountId },
+      select: { currency: true },
+    });
+    const convert = await this.fx.converterFor(rule.userId, currency);
     let nextRunAt = rule.nextRunAt;
     let occurrencesCreated = rule.occurrencesCreated;
     let active = true;
@@ -123,6 +144,7 @@ export class RecurringService {
         type: rule.type,
         date: nextRunAt,
         amount: rule.amount,
+        amountBase: convert(nextRunAt, rule.amount),
         description: rule.description,
         accountId: rule.accountId,
         subcategoryId: rule.subcategoryId,

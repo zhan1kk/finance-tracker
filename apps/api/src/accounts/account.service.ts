@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
 import type {
   BalanceIntegrityEntry,
@@ -12,7 +13,10 @@ import type {
 
 @Injectable()
 export class AccountService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fx: FxService,
+  ) {}
 
   listAccounts(userId: string) {
     return this.prisma.account.findMany({ where: { userId } });
@@ -30,14 +34,24 @@ export class AccountService {
     return account;
   }
 
-  createAccount(userId: string, input: CreateAccountInput) {
+  async createAccount(userId: string, input: CreateAccountInput) {
+    const initialBalance = input.initialBalance ?? 0;
+    // Freeze the opening balance's base-currency value at today's rate; it is
+    // the net-worth anchor and is not re-derived from transactions.
+    const initialBalanceBase = await this.fx.convert(
+      userId,
+      input.currency,
+      new Date(),
+      initialBalance,
+    );
     return this.prisma.account.create({
       data: {
         name: input.name,
         type: input.type,
         currency: input.currency,
-        balance: input.initialBalance,
-        initialBalance: input.initialBalance,
+        balance: initialBalance,
+        initialBalance,
+        initialBalanceBase,
         userId,
       },
     });
@@ -59,13 +73,39 @@ export class AccountService {
       }
     }
 
-    // Balance is derived from transactions and is intentionally not updatable.
+    // Correcting the starting balance shifts the derived balance by the same
+    // difference, so every transaction since day one keeps its effect.
+    const initialDelta =
+      input.initialBalance !== undefined
+        ? input.initialBalance - existing.initialBalance
+        : 0;
+
+    // Re-anchor the opening balance's base-currency value when either input
+    // changes: a currency change (only allowed with no transactions) or a new
+    // starting balance, both frozen at today's rate like on create.
+    const currency = input.currency ?? existing.currency;
+    const rebase =
+      input.initialBalance !== undefined ||
+      (input.currency !== undefined && input.currency !== existing.currency);
+    const initialBalanceBase = rebase
+      ? await this.fx.convert(
+          userId,
+          currency,
+          new Date(),
+          input.initialBalance ?? existing.initialBalance,
+        )
+      : undefined;
+
+    // Balance is never set directly — only shifted alongside its anchor.
     return this.prisma.account.update({
       where: { id },
       data: {
         name: input.name,
         type: input.type,
         currency: input.currency,
+        initialBalance: input.initialBalance,
+        initialBalanceBase,
+        balance: initialDelta !== 0 ? { increment: initialDelta } : undefined,
       },
     });
   }

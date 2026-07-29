@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { type Budget, Prisma } from '@prisma/client';
+import { periodBounds, periodLabel } from '../common/period';
 import { PrismaService } from '../prisma.service';
 import type { CreateBudgetDTO } from './dtos/create-budget.dto';
 import type { UpdateBudgetDTO } from './dtos/update-budget.dto';
@@ -17,14 +18,24 @@ const BUDGET_INCLUDE = {
 export class BudgetService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Budgets with the current calendar month's spending progress. */
+  /** Budgets with the current financial month's spending progress. */
   async list(userId: string) {
-    const budgets = await this.prisma.budget.findMany({
-      where: { userId },
-      include: BUDGET_INCLUDE,
-      orderBy: { createdAt: 'asc' },
-    });
-    const { start, end } = currentMonthUtc();
+    const [budgets, user] = await Promise.all([
+      this.prisma.budget.findMany({
+        where: { userId },
+        include: BUDGET_INCLUDE,
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { monthStartDay: true },
+      }),
+    ]);
+    // Budgets reset on the user's pay cycle, not on the 1st.
+    const { start, end } = periodBounds(
+      periodLabel(new Date(), user.monthStartDay),
+      user.monthStartDay,
+    );
     return Promise.all(
       budgets.map(async (budget) => {
         const spentCents = await this.computeSpent(userId, budget, start, end);
@@ -136,13 +147,14 @@ export class BudgetService {
           },
         };
 
+    // Budgets are set in the base currency, so spending is summed in base too.
     const [expense, reimbursed] = await Promise.all([
       this.prisma.transaction.aggregate({
-        _sum: { amount: true },
+        _sum: { amountBase: true },
         where: { ...owner, type: 'EXPENSE', date, ...expenseScope },
       }),
       this.prisma.transaction.aggregate({
-        _sum: { amount: true },
+        _sum: { amountBase: true },
         where: {
           ...owner,
           type: 'INCOME',
@@ -153,7 +165,7 @@ export class BudgetService {
       }),
     ]);
 
-    return (expense._sum.amount ?? 0) - (reimbursed._sum.amount ?? 0);
+    return (expense._sum.amountBase ?? 0) - (reimbursed._sum.amountBase ?? 0);
   }
 
   private async assertOwn(userId: string, id: string) {
@@ -167,12 +179,3 @@ export class BudgetService {
   }
 }
 
-function currentMonthUtc(): { start: Date; end: Date } {
-  const now = new Date();
-  const year = now.getUTCFullYear();
-  const month = now.getUTCMonth();
-  return {
-    start: new Date(Date.UTC(year, month, 1)),
-    end: new Date(Date.UTC(year, month + 1, 1)),
-  };
-}

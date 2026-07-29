@@ -3,10 +3,24 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, TransactionType } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
+import { normalizeMerchant } from './normalization';
 
-export type RuleMatch = { subcategoryId: string; ruleId: string };
+/** A rule assigns either a subcategory or a transfer counter account. */
+export type RuleTarget =
+  | { subcategoryId: string; counterAccountId?: never }
+  | { counterAccountId: string; subcategoryId?: never };
+
+export type RuleMatch = RuleTarget & { ruleId: string };
+
+type MatchableRule = {
+  id: string;
+  pattern: string;
+  type: TransactionType;
+  subcategoryId: string | null;
+  counterAccountId: string | null;
+};
 
 @Injectable()
 export class RulesService {
@@ -15,23 +29,30 @@ export class RulesService {
   list(userId: string) {
     return this.prisma.categorizationRule.findMany({
       where: { userId },
-      include: { subcategory: { select: { id: true, name: true } } },
+      include: {
+        subcategory: { select: { id: true, name: true } },
+        counterAccount: { select: { id: true, name: true } },
+      },
       orderBy: { pattern: 'asc' },
     });
   }
 
   async create(
     userId: string,
-    input: { pattern: string; subcategoryId: string },
+    input: {
+      pattern: string;
+      subcategoryId?: string | null;
+      counterAccountId?: string | null;
+    },
   ) {
     const pattern = normalizePattern(input.pattern);
     if (pattern === '') {
       throw new ConflictException('Rule pattern cannot be empty');
     }
-    await this.assertOwnSubcategory(userId, input.subcategoryId);
+    const { target, type } = await this.resolveTarget(userId, input);
 
     const existing = await this.prisma.categorizationRule.findUnique({
-      where: { userId_pattern: { userId, pattern } },
+      where: { userId_pattern_type: { userId, pattern, type } },
     });
     if (existing) {
       throw new ConflictException(`A rule for "${pattern}" already exists`);
@@ -41,21 +62,76 @@ export class RulesService {
       data: {
         userId,
         pattern,
-        subcategoryId: input.subcategoryId,
+        type,
+        subcategoryId: target.subcategoryId ?? null,
+        counterAccountId: target.counterAccountId ?? null,
         source: 'MANUAL',
       },
     });
   }
 
-  async update(userId: string, id: string, input: { subcategoryId?: string }) {
+  async update(
+    userId: string,
+    id: string,
+    input: { subcategoryId?: string | null; counterAccountId?: string | null },
+  ) {
     await this.assertOwnRule(userId, id);
-    if (input.subcategoryId) {
-      await this.assertOwnSubcategory(userId, input.subcategoryId);
-    }
+    // Retargeting always replaces the other side, so a rule never ends up with
+    // both a subcategory and a counter account. The direction follows the new
+    // target for the same reason it is derived on create.
+    const { target, type } = await this.resolveTarget(userId, input);
     return this.prisma.categorizationRule.update({
       where: { id },
-      data: { subcategoryId: input.subcategoryId },
+      data: {
+        type,
+        subcategoryId: target.subcategoryId ?? null,
+        counterAccountId: target.counterAccountId ?? null,
+      },
     });
+  }
+
+  /**
+   * Validates that exactly one target is given and that the user owns it, and
+   * derives the rule's direction from the target: transfer rules match either
+   * sign (money moves both ways past the same counterparty name), subcategory
+   * rules only rows of their subcategory's direction. Never user-supplied.
+   */
+  private async resolveTarget(
+    userId: string,
+    input: { subcategoryId?: string | null; counterAccountId?: string | null },
+  ): Promise<{ target: RuleTarget; type: TransactionType }> {
+    const hasSub = Boolean(input.subcategoryId);
+    const hasAccount = Boolean(input.counterAccountId);
+    if (hasSub === hasAccount) {
+      throw new ConflictException(
+        'A rule must target exactly one of a subcategory or a transfer account',
+      );
+    }
+    if (hasSub) {
+      const subcategory = await this.getOwnSubcategory(
+        userId,
+        input.subcategoryId as string,
+      );
+      return {
+        target: { subcategoryId: subcategory.id },
+        type: subcategory.category === 'Income' ? 'INCOME' : 'EXPENSE',
+      };
+    }
+    await this.assertOwnAccount(userId, input.counterAccountId as string);
+    return {
+      target: { counterAccountId: input.counterAccountId as string },
+      type: 'TRANSFER',
+    };
+  }
+
+  private async assertOwnAccount(userId: string, accountId: string) {
+    const found = await this.prisma.account.findFirst({
+      where: { id: accountId, userId },
+      select: { id: true },
+    });
+    if (!found) {
+      throw new NotFoundException(`Account with id ${accountId} was not found`);
+    }
   }
 
   async remove(userId: string, id: string) {
@@ -64,60 +140,76 @@ export class RulesService {
   }
 
   /**
-   * Best rule for a normalized description: the longest pattern that is a
-   * substring of it (most specific wins). Pure read — hit counts are bumped on
-   * commit, not on preview.
+   * Best rule for a row: the longest pattern that is a substring of the
+   * normalized description (most specific wins) among rules that apply to the
+   * row's direction — INCOME/EXPENSE rules only match their own sign, TRANSFER
+   * rules match either. Pure read — hit counts are bumped on commit, not on
+   * preview.
    */
   match(
-    rules: { id: string; pattern: string; subcategoryId: string }[],
+    rules: MatchableRule[],
     normalizedDescription: string,
+    rowType: TransactionType,
   ): RuleMatch | null {
-    let best: { id: string; pattern: string; subcategoryId: string } | null =
-      null;
+    let best: MatchableRule | null = null;
     for (const rule of rules) {
+      if (rule.type !== 'TRANSFER' && rule.type !== rowType) continue;
       if (!normalizedDescription.includes(rule.pattern)) continue;
       if (!best || rule.pattern.length > best.pattern.length) {
         best = rule;
       }
     }
-    return best ? { subcategoryId: best.subcategoryId, ruleId: best.id } : null;
+    if (!best) return null;
+    return best.counterAccountId
+      ? { counterAccountId: best.counterAccountId, ruleId: best.id }
+      : { subcategoryId: best.subcategoryId as string, ruleId: best.id };
   }
 
   /**
-   * Learns a rule from a human correction (upsert by normalized pattern), run
-   * inside the commit transaction. Pattern is the row's normalized merchant.
+   * Learns a rule from a human correction (upsert by normalized pattern +
+   * direction), run inside the commit transaction. Pattern is the row's
+   * normalized merchant; keying on the row's direction lets the same merchant
+   * carry different meanings by sign (Amazon charge → shopping, Amazon credit
+   * → refund) without the corrections overwriting each other.
    */
   learnFromCorrection(
     tx: Prisma.TransactionClient,
     userId: string,
     pattern: string,
-    subcategoryId: string,
+    target: RuleTarget,
+    rowType: TransactionType,
   ) {
     const normalized = normalizePattern(pattern);
     if (normalized === '') return Promise.resolve(null);
+    const subcategoryId = target.subcategoryId ?? null;
+    const counterAccountId = target.counterAccountId ?? null;
+    const type: TransactionType = counterAccountId ? 'TRANSFER' : rowType;
     return tx.categorizationRule.upsert({
-      where: { userId_pattern: { userId, pattern: normalized } },
+      where: { userId_pattern_type: { userId, pattern: normalized, type } },
       create: {
         userId,
         pattern: normalized,
+        type,
         subcategoryId,
+        counterAccountId,
         source: 'MANUAL',
         hitCount: 1,
       },
-      update: { subcategoryId, hitCount: { increment: 1 } },
+      update: { subcategoryId, counterAccountId, hitCount: { increment: 1 } },
     });
   }
 
-  private async assertOwnSubcategory(userId: string, subcategoryId: string) {
+  private async getOwnSubcategory(userId: string, subcategoryId: string) {
     const found = await this.prisma.subcategory.findFirst({
       where: { id: subcategoryId, userId },
-      select: { id: true },
+      select: { id: true, category: true },
     });
     if (!found) {
       throw new NotFoundException(
         `Subcategory with id ${subcategoryId} was not found`,
       );
     }
+    return found;
   }
 
   private async assertOwnRule(userId: string, id: string) {
@@ -131,7 +223,14 @@ export class RulesService {
   }
 }
 
-/** Lowercased, whitespace-collapsed pattern used for matching and uniqueness. */
+/**
+ * A rule pattern is matched (as a substring) against a row's *normalized*
+ * merchant, so it must be reduced the exact same way — otherwise a user-typed
+ * "Transfer from KAMILA JUSUPOVA" keeps the noise word "transfer" that the
+ * description drops, and could never match. Reusing normalizeMerchant keeps
+ * patterns and descriptions in one vocabulary. Idempotent, so re-normalizing an
+ * already-normalized learned pattern is a no-op.
+ */
 export function normalizePattern(raw: string): string {
-  return raw.trim().toLowerCase().replace(/\s+/g, ' ');
+  return normalizeMerchant(raw);
 }

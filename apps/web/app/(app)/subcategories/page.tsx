@@ -39,6 +39,16 @@ export default function SubcategoriesPage() {
     onError: setError,
   });
 
+  const setPinned = useMutation({
+    mutationFn: ({ id, pinned }: { id: string; pinned: boolean }) =>
+      api<Subcategory>(`/subcategories/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ pinned }),
+      }),
+    onSuccess: invalidate,
+    onError: setError,
+  });
+
   const onCreate = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
@@ -92,6 +102,24 @@ export default function SubcategoriesPage() {
                 key={subcategory.id}
                 className="group flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1 text-sm dark:border-zinc-800 dark:bg-zinc-900"
               >
+                <button
+                  aria-label={`${subcategory.pinned ? "Unpin" : "Pin"} ${subcategory.name}`}
+                  title="Pinned categories are one-tap shortcuts in the Telegram bot"
+                  className={
+                    subcategory.pinned
+                      ? "text-amber-500"
+                      : "text-zinc-300 hover:text-amber-500 dark:text-zinc-700"
+                  }
+                  onClick={() => {
+                    setError(null);
+                    setPinned.mutate({
+                      id: subcategory.id,
+                      pinned: !subcategory.pinned,
+                    });
+                  }}
+                >
+                  ★
+                </button>
                 {subcategory.name}
                 <button
                   aria-label={`Delete ${subcategory.name}`}

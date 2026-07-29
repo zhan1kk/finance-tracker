@@ -4,7 +4,9 @@ import { AppModule } from './app.module';
 import { configureApp } from './app.setup';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // Body parsing is registered by configureApp so its size limit applies
+  // everywhere, including the e2e harness.
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
   configureApp(app);
 
   // API docs are a dev/staging tool; don't advertise the surface in production.

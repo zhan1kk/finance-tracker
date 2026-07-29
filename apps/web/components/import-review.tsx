@@ -5,11 +5,19 @@ import { Button, Card, ErrorText, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { formatCents } from "@/lib/format";
 import type {
+  Account,
   ImportBatch,
   ImportRow,
   ImportRowStatus,
   Subcategory,
 } from "@/lib/types";
+
+/**
+ * The picker offers both kinds of target, so option values carry which one they
+ * are: "sub:<id>" for a category, "acc:<id>" for a transfer to my own account.
+ */
+const SUB = "sub:";
+const ACC = "acc:";
 
 const STATUS_STYLE: Record<ImportRowStatus, string> = {
   READY: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
@@ -51,6 +59,10 @@ export function ImportReview({
     queryKey: ["subcategories"],
     queryFn: () => api<Subcategory[]>("/subcategories"),
   });
+  const accounts = useQuery({
+    queryKey: ["accounts"],
+    queryFn: () => api<Account[]>("/accounts"),
+  });
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ["import-batch", batchId] });
@@ -63,11 +75,29 @@ export function ImportReview({
   };
 
   const correct = useMutation({
-    mutationFn: (vars: { rowId: string; subcategoryId: string }) =>
+    mutationFn: (vars: { rowId: string; choice: string }) =>
       api(`/imports/${batchId}/rows/${vars.rowId}`, {
         method: "PATCH",
-        body: JSON.stringify({ subcategoryId: vars.subcategoryId }),
+        body: JSON.stringify(
+          vars.choice.startsWith(ACC)
+            ? { counterAccountId: vars.choice.slice(ACC.length) }
+            : { subcategoryId: vars.choice.slice(SUB.length) },
+        ),
       }),
+    onSuccess: invalidate,
+  });
+
+  // Confirms every still-in-review suggestion as-is. Sequential on purpose: a
+  // burst of parallel PATCHes against the same batch buys nothing at this size.
+  const acceptAll = useMutation({
+    mutationFn: async (rows: { rowId: string; subcategoryId: string }[]) => {
+      for (const row of rows) {
+        await api(`/imports/${batchId}/rows/${row.rowId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ subcategoryId: row.subcategoryId }),
+        });
+      }
+    },
     onSuccess: invalidate,
   });
   const commit = useMutation({
@@ -97,7 +127,13 @@ export function ImportReview({
   const reviewCount = data.rows.filter(
     (r) => r.status === "NEEDS_REVIEW",
   ).length;
-  const error = commit.error ?? undo.error ?? discard.error ?? correct.error;
+  // Review rows that already carry a suggestion — confirmable in one click.
+  const suggested = data.rows.filter(
+    (r) => r.status === "NEEDS_REVIEW" && r.predictedSubcategory !== null,
+  );
+  const error =
+    commit.error ?? undo.error ?? discard.error ?? correct.error ??
+    acceptAll.error;
 
   return (
     <Card>
@@ -118,6 +154,26 @@ export function ImportReview({
         <div className="ml-auto flex gap-2">
           {pending && (
             <>
+              {suggested.length > 0 && (
+                <Button
+                  variant="ghost"
+                  onClick={() =>
+                    acceptAll.mutate(
+                      suggested.map((r) => ({
+                        rowId: r.id,
+                        subcategoryId: (r.predictedSubcategory as {
+                          id: string;
+                        }).id,
+                      })),
+                    )
+                  }
+                  disabled={acceptAll.isPending}
+                >
+                  {acceptAll.isPending
+                    ? "Accepting…"
+                    : `Accept ${suggested.length} suggested`}
+                </Button>
+              )}
               <Button
                 onClick={() => commit.mutate()}
                 disabled={commit.isPending || readyCount === 0}
@@ -179,9 +235,12 @@ export function ImportReview({
                 currency={currency}
                 editable={pending && row.status !== "DUPLICATE"}
                 subcategories={subcategories.data ?? []}
-                onPick={(subcategoryId) =>
-                  correct.mutate({ rowId: row.id, subcategoryId })
-                }
+                onPick={(choice) => correct.mutate({ rowId: row.id, choice })}
+                accounts={(accounts.data ?? []).filter(
+                  (a) =>
+                    a.id !== data.account.id &&
+                    a.currency === data.account.currency,
+                )}
               />
             ))}
           </tbody>
@@ -197,19 +256,22 @@ function Row({
   currency,
   editable,
   subcategories,
+  accounts,
   onPick,
 }: {
   row: ImportRow;
   currency: string;
   editable: boolean;
   subcategories: Subcategory[];
-  onPick: (subcategoryId: string) => void;
+  accounts: Account[];
+  onPick: (choice: string) => void;
 }) {
   const eligible = subcategories.filter((s) =>
     row.type === "INCOME" ? s.category === "Income" : s.category !== "Income",
   );
   const sign = row.type === "INCOME" ? "+" : "−";
   const duplicate = row.status === "DUPLICATE";
+  const chosen = row.subcategoryId ?? row.counterAccountId;
 
   return (
     <tr
@@ -230,27 +292,61 @@ function Row({
       <td className="py-2 pr-3">
         {editable ? (
           <Select
-            value={row.subcategoryId ?? ""}
+            value={
+              row.counterAccountId
+                ? `${ACC}${row.counterAccountId}`
+                : row.subcategoryId
+                  ? `${SUB}${row.subcategoryId}`
+                  : ""
+            }
             onChange={(e) => e.target.value && onPick(e.target.value)}
-            className={row.subcategoryId ? "" : "border-amber-400"}
+            className={chosen ? "" : "border-amber-400"}
           >
             <option value="">Pick…</option>
-            {eligible.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
+            <optgroup label="Category">
+              {eligible.map((s) => (
+                <option key={s.id} value={`${SUB}${s.id}`}>
+                  {s.name}
+                </option>
+              ))}
+            </optgroup>
+            {accounts.length > 0 && (
+              <optgroup label="Transfer (not income or spending)">
+                {accounts.map((a) => (
+                  <option key={a.id} value={`${ACC}${a.id}`}>
+                    {row.type === "INCOME" ? `from ${a.name}` : `to ${a.name}`}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </Select>
         ) : (
-          <span>{row.subcategory?.name ?? "—"}</span>
+          <span>
+            {row.counterAccount
+              ? `⇄ ${row.counterAccount.name}`
+              : (row.subcategory?.name ?? "—")}
+          </span>
         )}
-        {row.source !== "NONE" && row.subcategoryId && (
+        {row.source !== "NONE" && chosen && (
           <span className="ml-1.5 text-xs text-zinc-400">
             {SOURCE_LABEL[row.source]}
             {row.source === "LLM" && row.confidence != null
               ? ` ${Math.round(row.confidence * 100)}%`
               : ""}
           </span>
+        )}
+        {/* The select is prefilled with the suggestion, so re-picking the same
+            value fires no change event — confirming it needs its own control. */}
+        {editable && row.status === "NEEDS_REVIEW" && row.predictedSubcategory && (
+          <button
+            className="ml-1.5 font-medium text-emerald-600 hover:underline"
+            title={`Accept "${row.predictedSubcategory.name}"`}
+            onClick={() =>
+              onPick(`${SUB}${(row.predictedSubcategory as { id: string }).id}`)
+            }
+          >
+            ✓ Accept
+          </button>
         )}
       </td>
       <td className="py-2 pr-3">

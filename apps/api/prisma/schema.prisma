@@ -36,6 +36,10 @@ model User {
   email        String   @unique
   passwordHash String
   baseCurrency String   @default("EUR")
+  /// Day of the month a financial month begins (1 = plain calendar months).
+  /// With 29, a month runs 29 May–28 Jun and is labelled by the month it ends in,
+  /// matching a pay cycle where the 29th funds the following month.
+  monthStartDay Int     @default(1)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -57,6 +61,29 @@ model User {
   importMappings      AccountImportMapping[]
   recurringRules      RecurringRule[]
   budgets             Budget[]
+  exchangeRates       ExchangeRate[]
+}
+
+/// A user-set conversion rate from a foreign `currency` to the user's base
+/// currency, effective from `date` until the next later rate. `rate` is foreign
+/// units per 1 base unit (e.g. currency "KZT", rate 540 = 540 KZT per 1 EUR).
+/// Transactions cache their converted value (Transaction.amountBase); changing a
+/// rate recomputes the affected transactions from that date onward.
+model ExchangeRate {
+  id        String   @id @default(uuid())
+  currency  String
+  /// Calendar date this rate takes effect (UTC midnight).
+  date      DateTime @db.Date
+  /// Foreign units per 1 unit of the base currency.
+  rate      Float
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, currency, date])
+  @@index([userId, currency, date])
 }
 
 model RefreshToken {
@@ -80,6 +107,9 @@ model Account {
   balance        Int         @default(0)
   /// Starting balance in minor currency units (cents); balance = initialBalance + sum of transaction deltas
   initialBalance Int         @default(0)
+  /// `initialBalance` converted to the user's base currency (cents), frozen at the
+  /// rate in effect when the account was created/edited. Used as the net-worth anchor.
+  initialBalanceBase Int     @default(0)
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 
@@ -92,6 +122,9 @@ model Account {
   importBatches     ImportBatch[]
   importMapping     AccountImportMapping?
   recurringRules    RecurringRule[]
+  /// Rules and staged rows that treat this account as the other side of a transfer
+  transferRules     CategorizationRule[]  @relation("RuleCounterAccount")
+  transferRows      ImportRow[]           @relation("ImportRowCounterAccount")
 
   @@index([userId])
 }
@@ -100,6 +133,9 @@ model Subcategory {
   id       String              @id @default(uuid())
   name     String
   category TransactionCategory
+  /// Shown as a one-tap shortcut in the Telegram capture picker; the rest sit
+  /// behind "More…". Ordered by name.
+  pinned   Boolean             @default(false)
 
   userId String
   user   User   @relation(fields: [userId], references: [id])
@@ -118,8 +154,12 @@ model Transaction {
   id          String          @id @default(uuid())
   type        TransactionType
   date        DateTime
-  /// Amount in minor currency units (cents), always positive
+  /// Amount in minor currency units (cents), always positive, in the account's currency
   amount      Int
+  /// `amount` converted to the user's base currency (cents), using the exchange rate
+  /// effective on `date`. Equals `amount` for base-currency accounts. All cross-account
+  /// aggregations (stats, net worth, budgets) sum this so mixed currencies add up correctly.
+  amountBase  Int
   description String?
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
@@ -229,11 +269,20 @@ model ImportRow {
   predictedSubcategory   Subcategory?         @relation("PredictedSubcategory", fields: [predictedSubcategoryId], references: [id])
   confidence             Float?
   source                 CategorizationSource @default(NONE)
+  /// Who made the prediction (RULE/LLM), frozen at staging. `source` tracks who
+  /// decided the *final* value and is overwritten on review — without this,
+  /// reviewed rows silently drop out of the accuracy metric.
+  predictionSource       CategorizationSource?
 
   /// The effective choice (defaults to the prediction; changes when a human corrects it)
   subcategoryId String?
   subcategory   Subcategory? @relation("ChosenSubcategory", fields: [subcategoryId], references: [id])
   corrected     Boolean      @default(false)
+
+  /// Set instead of subcategoryId when the row is a transfer between own accounts;
+  /// holds the account on the other side of the movement.
+  counterAccountId String?
+  counterAccount   Account? @relation("ImportRowCounterAccount", fields: [counterAccountId], references: [id], onDelete: SetNull)
 
   /// Parse errors or skip reasons, surfaced in the review UI
   note String?
@@ -250,10 +299,18 @@ model ImportRow {
 }
 
 /// A learned or user-defined merchant → subcategory mapping applied before the LLM.
+/// Exactly one target is set (enforced in the service): a subcategory, or a
+/// counter account meaning "matching rows are transfers between my own accounts".
 model CategorizationRule {
   id        String               @id @default(uuid())
   /// Lowercased normalized substring matched against a row's normalized description
   pattern   String
+  /// Which rows the rule applies to. INCOME/EXPENSE rules only match rows of
+  /// that direction — the same merchant can mean different things by sign
+  /// (an Amazon charge is shopping, an Amazon credit is a refund). TRANSFER
+  /// rules match either direction, since money moves both ways past the same
+  /// counterparty name. Derived by the service, never user-supplied.
+  type      TransactionType
   source    CategorizationSource @default(MANUAL)
   hitCount  Int                  @default(0)
   createdAt DateTime             @default(now())
@@ -262,10 +319,14 @@ model CategorizationRule {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  subcategoryId String
-  subcategory   Subcategory @relation(fields: [subcategoryId], references: [id])
+  subcategoryId String?
+  subcategory   Subcategory? @relation(fields: [subcategoryId], references: [id])
 
-  @@unique([userId, pattern])
+  /// The other side of a transfer (my other account), instead of a subcategory.
+  counterAccountId String?
+  counterAccount   Account? @relation("RuleCounterAccount", fields: [counterAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, pattern, type])
   @@index([userId])
 }
 

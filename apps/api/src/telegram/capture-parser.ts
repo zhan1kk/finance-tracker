@@ -66,6 +66,22 @@ export function parseCapture(text: string): ParsedCapture | null {
   };
 }
 
+/**
+ * A message that is nothing but an amount ("40", "12,50", "+2000") — the entry
+ * point for the guided picker. Anything richer is left to `parseCapture` so the
+ * one-shot dash format keeps working unchanged.
+ */
+export function parseAmountOnly(
+  text: string,
+): { type: 'INCOME' | 'EXPENSE'; amountCents: number } | null {
+  const match = AMOUNT.exec(text.trim());
+  if (!match) return null;
+  const [, plus, raw] = match;
+  const amountCents = Math.round(parseFloat(raw.replace(',', '.')) * 100);
+  if (amountCents <= 0) return null;
+  return { type: plus ? 'INCOME' : 'EXPENSE', amountCents };
+}
+
 /** "2026-07-09", "09.07.2026" or "09.07" (current year) → ISO date, else null. */
 export function parseCaptureDate(raw: string): string | null {
   const t = raw.trim();

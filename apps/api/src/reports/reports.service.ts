@@ -1,4 +1,10 @@
 import { Injectable } from '@nestjs/common';
+import {
+  periodLabelShiftMonths,
+  periodOffsetDays,
+  recentPeriodLabels,
+} from '../common/period';
+import { BASE_CURRENCY } from '../fx/fx';
 import { PrismaService } from '../prisma.service';
 
 export type NetWorthPoint = { month: string; netWorthCents: number };
@@ -14,21 +20,35 @@ export class ReportsService {
    * anchored to the sum of account starting balances.
    */
   async netWorth(userId: string, months: number): Promise<NetWorthPoint[]> {
+    const { monthStartDay } = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { monthStartDay: true },
+    });
+    const offset = periodOffsetDays(monthStartDay);
+    const shift = periodLabelShiftMonths(monthStartDay);
+
+    // Anchor and deltas are both in the base currency so accounts in different
+    // currencies add up (initialBalanceBase / amountBase are the converted values).
     const base =
       (
         await this.prisma.account.aggregate({
-          _sum: { initialBalance: true },
+          _sum: { initialBalanceBase: true },
           where: { userId },
         })
-      )._sum.initialBalance ?? 0;
+      )._sum.initialBalanceBase ?? 0;
 
+    // Grouped by financial month, matching the dashboard's periods.
     const rows = await this.prisma.$queryRaw<
       { month: string; delta: bigint }[]
     >`
-      SELECT to_char(date_trunc('month', t."date"), 'YYYY-MM') AS month,
+      SELECT to_char(
+          date_trunc('month', t."date" - make_interval(days => ${offset}::int))
+            + make_interval(months => ${shift}::int),
+          'YYYY-MM'
+        ) AS month,
         SUM(CASE t."type"
-          WHEN 'INCOME' THEN t."amount"
-          WHEN 'EXPENSE' THEN -t."amount"
+          WHEN 'INCOME' THEN t."amountBase"
+          WHEN 'EXPENSE' THEN -t."amountBase"
           ELSE 0 END)::bigint AS delta
       FROM "Transaction" t
       JOIN "Account" a ON a."id" = t."accountId"
@@ -37,9 +57,8 @@ export class ReportsService {
     `;
     const deltaByMonth = new Map(rows.map((r) => [r.month, Number(r.delta)]));
 
-    const now = new Date();
-    const currentIndex = now.getUTCFullYear() * 12 + now.getUTCMonth();
-    const startIndex = currentIndex - (months - 1);
+    const window = recentPeriodLabels(new Date(), monthStartDay, months);
+    const startIndex = monthToIndex(window[0]);
 
     // Everything before the window folds into the starting running total.
     let running = base;
@@ -48,9 +67,9 @@ export class ReportsService {
     }
 
     const series: NetWorthPoint[] = [];
-    for (let index = startIndex; index <= currentIndex; index++) {
-      running += deltaByMonth.get(indexToMonth(index)) ?? 0;
-      series.push({ month: indexToMonth(index), netWorthCents: running });
+    for (const month of window) {
+      running += deltaByMonth.get(month) ?? 0;
+      series.push({ month, netWorthCents: running });
     }
     return series;
   }
@@ -117,9 +136,10 @@ export class ReportsService {
       'Description',
       'Currency',
       'Amount',
+      `Amount (${BASE_CURRENCY})`,
     ];
     const rows = transactions.map((t) => {
-      const signed = t.type === 'INCOME' ? t.amount : -t.amount;
+      const sign = t.type === 'INCOME' ? 1 : -1;
       const category =
         t.type === 'TRANSFER'
           ? `Transfer to ${t.counterAccount?.name ?? ''}`
@@ -131,7 +151,8 @@ export class ReportsService {
         defuse(category),
         defuse(t.description ?? ''),
         t.account.currency,
-        (signed / 100).toFixed(2),
+        ((sign * t.amount) / 100).toFixed(2),
+        ((sign * t.amountBase) / 100).toFixed(2),
       ];
     });
 
@@ -161,8 +182,3 @@ function monthToIndex(month: string): number {
   return year * 12 + (m - 1);
 }
 
-function indexToMonth(index: number): string {
-  const year = Math.floor(index / 12);
-  const month = index % 12;
-  return `${year}-${String(month + 1).padStart(2, '0')}`;
-}

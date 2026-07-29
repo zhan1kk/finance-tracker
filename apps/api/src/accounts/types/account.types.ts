@@ -14,9 +14,7 @@ export type CreateAccountInput = {
   initialBalance?: number;
 };
 
-export type UpdateAccountInput = Partial<
-  Omit<CreateAccountInput, 'initialBalance'>
->;
+export type UpdateAccountInput = Partial<CreateAccountInput>;
 
 export type BalanceIntegrityEntry = {
   accountId: string;

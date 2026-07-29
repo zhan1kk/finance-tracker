@@ -51,6 +51,13 @@ export default function RecurringPage() {
     onSuccess: invalidate,
   });
 
+  const removeAll = useMutation({
+    mutationFn: () => api<{ deleted: number }>("/recurring", { method: "DELETE" }),
+    onSuccess: invalidate,
+  });
+
+  const hasRules = (rules.data?.length ?? 0) > 0;
+
   return (
     <main className="flex flex-col gap-6">
       <NewRule onCreated={invalidate} />
@@ -66,6 +73,23 @@ export default function RecurringPage() {
           >
             Post due now
           </Button>
+          {hasRules && (
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "Delete ALL recurring rules? Transactions they already posted stay put. This cannot be undone.",
+                  )
+                ) {
+                  removeAll.mutate();
+                }
+              }}
+              disabled={removeAll.isPending}
+            >
+              Delete all
+            </Button>
+          )}
         </div>
         {runNow.data && (
           <p className="mb-2 text-sm text-emerald-600">

@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Patch,
   Post,
   Req,
   Res,
@@ -17,6 +18,7 @@ import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
 import { LoginDTO } from './dtos/login.dto';
 import { RegisterDTO } from './dtos/register.dto';
+import { UpdateProfileDTO } from './dtos/update-profile.dto';
 import type { AuthTokens, AuthUser } from './types/auth.types';
 
 // Rate-limited per IP: these routes accept credentials, so they are the
@@ -77,6 +79,11 @@ export class AuthController {
   @Get('me')
   getMe(@CurrentUser() user: AuthUser) {
     return this.authService.getProfile(user.userId);
+  }
+
+  @Patch('me')
+  updateMe(@CurrentUser() user: AuthUser, @Body() body: UpdateProfileDTO) {
+    return this.authService.updateProfile(user.userId, body);
   }
 
   private readRefreshCookie(req: Request): string | undefined {

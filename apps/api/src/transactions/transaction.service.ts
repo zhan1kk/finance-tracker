@@ -5,6 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { type Account, Prisma } from '@prisma/client';
+import { periodLabelShiftMonths, periodOffsetDays } from '../common/period';
+import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
 import type { TransactionCategory } from '../subcategories/types/subcategory.types';
 import { checkOutlier, type OutlierVerdict } from './outlier';
@@ -26,7 +28,10 @@ const TRANSACTION_INCLUDE = {
 
 @Injectable()
 export class TransactionService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fx: FxService,
+  ) {}
 
   async listTransactions(userId: string, query: ListTransactionsQuery) {
     const page = query.page ?? 1;
@@ -67,6 +72,7 @@ export class TransactionService {
    * against the parent expense's subcategory.
    */
   async getStats(userId: string, query: StatsQuery): Promise<TransactionStats> {
+    const period = await this.periodExpression(userId);
     const range = [
       ...(query.from ? [Prisma.sql`t."date" >= ${new Date(query.from)}`] : []),
       ...(query.to ? [Prisma.sql`t."date" <= ${new Date(query.to)}`] : []),
@@ -80,12 +86,12 @@ export class TransactionService {
     const [monthly, byCategory] = await this.prisma.$transaction([
       this.prisma.$queryRaw<MonthlyStat[]>`
         SELECT
-          to_char(date_trunc('month', t."date"), 'YYYY-MM') AS month,
-          COALESCE(SUM(t."amount") FILTER (
+          ${period} AS month,
+          COALESCE(SUM(t."amountBase") FILTER (
             WHERE t."type" = 'INCOME' AND t."parentTransactionId" IS NULL
           ), 0)::int AS income,
-          (COALESCE(SUM(t."amount") FILTER (WHERE t."type" = 'EXPENSE'), 0)
-           - COALESCE(SUM(t."amount") FILTER (
+          (COALESCE(SUM(t."amountBase") FILTER (WHERE t."type" = 'EXPENSE'), 0)
+           - COALESCE(SUM(t."amountBase") FILTER (
                WHERE t."type" = 'INCOME' AND t."parentTransactionId" IS NOT NULL
              ), 0))::int AS expense
         FROM "Transaction" t
@@ -101,12 +107,12 @@ export class TransactionService {
           s."category"::text AS category,
           SUM(x.signed)::int AS amount
         FROM (
-          SELECT t."subcategoryId" AS sid, t."amount" AS signed
+          SELECT t."subcategoryId" AS sid, t."amountBase" AS signed
           FROM "Transaction" t
           JOIN "Account" a ON a."id" = t."accountId"
           WHERE ${scope(Prisma.sql`t."type" = 'EXPENSE'`)}
           UNION ALL
-          SELECT p."subcategoryId" AS sid, -t."amount" AS signed
+          SELECT p."subcategoryId" AS sid, -t."amountBase" AS signed
           FROM "Transaction" t
           JOIN "Account" a ON a."id" = t."accountId"
           JOIN "Transaction" p ON p."id" = t."parentTransactionId"
@@ -121,6 +127,28 @@ export class TransactionService {
     ]);
 
     return { monthly, byCategory };
+  }
+
+  /**
+   * SQL that labels a transaction's financial month. Shifting the date back by
+   * `monthStartDay - 1` days makes the calendar-month truncation land on the
+   * right period; the month offset then names it after the month it ends in.
+   * With the default start day of 1 this is exactly `date_trunc('month', date)`.
+   */
+  private async periodExpression(userId: string): Promise<Prisma.Sql> {
+    const { monthStartDay } = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { monthStartDay: true },
+    });
+    const offset = periodOffsetDays(monthStartDay);
+    const shift = periodLabelShiftMonths(monthStartDay);
+    // The ::int casts matter: Prisma binds JS numbers as bigint, and there is no
+    // make_interval overload for that.
+    return Prisma.sql`to_char(
+      date_trunc('month', t."date" - make_interval(days => ${offset}::int))
+        + make_interval(months => ${shift}::int),
+      'YYYY-MM'
+    )`;
   }
 
   async getTransactionById(userId: string, id: string) {
@@ -168,17 +196,27 @@ export class TransactionService {
       input,
     );
 
-    // Judged against history *before* this transaction exists.
-    const outlier = await this.outlierVerdict(userId, input);
+    const date = new Date(input.date);
+    const amountBase = await this.fx.convert(
+      userId,
+      account.currency,
+      date,
+      input.amount,
+    );
+
+    // Judged against history *before* this transaction exists, in base currency
+    // so a subcategory used across currencies is compared on one scale.
+    const outlier = await this.outlierVerdict(userId, input, amountBase);
 
     const delta = this.signedDelta(input.type, input.amount);
 
-    const [transaction] = await this.prisma.$transaction([
+    const [transaction, updatedAccount] = await this.prisma.$transaction([
       this.prisma.transaction.create({
         data: {
           type: input.type,
-          date: new Date(input.date),
+          date,
           amount: input.amount,
+          amountBase,
           description: input.description,
           accountId: input.accountId,
           subcategoryId: input.subcategoryId,
@@ -192,7 +230,10 @@ export class TransactionService {
       }),
     ]);
 
-    return { ...transaction, outlier };
+    // Negative balances are allowed (credit accounts; deliberate bookkeeping
+    // like importing rows that predate the starting balance) — the resulting
+    // balance is returned so clients can warn instead of block.
+    return { ...transaction, outlier, balanceAfter: updatedAccount.balance };
   }
 
   /**
@@ -202,6 +243,7 @@ export class TransactionService {
   private async outlierVerdict(
     userId: string,
     input: CreateTransactionInput,
+    amountBase: number,
   ): Promise<OutlierVerdict | null> {
     const history = await this.prisma.transaction.findMany({
       where: {
@@ -211,11 +253,11 @@ export class TransactionService {
       },
       orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
       take: 50,
-      select: { amount: true },
+      select: { amountBase: true },
     });
     return checkOutlier(
-      history.map((t) => t.amount),
-      input.amount,
+      history.map((t) => t.amountBase),
+      amountBase,
     );
   }
 
@@ -226,7 +268,7 @@ export class TransactionService {
   ) {
     const existing = await this.prisma.transaction.findFirst({
       where: { id, account: { userId } },
-      include: { subcategory: true },
+      include: { subcategory: true, account: { select: { currency: true } } },
     });
 
     if (!existing) {
@@ -234,7 +276,7 @@ export class TransactionService {
     }
 
     if (existing.type === 'TRANSFER') {
-      return this.updateTransfer(existing, input);
+      return this.updateTransfer(userId, existing, input);
     }
 
     let newSubcategory = existing.subcategory;
@@ -254,12 +296,23 @@ export class TransactionService {
       input.amount ?? existing.amount,
     );
 
+    // Amount and date both feed the base conversion (date picks the rate).
+    const newDate = input.date ? new Date(input.date) : existing.date;
+    const newAmount = input.amount ?? existing.amount;
+    const amountBase = await this.fx.convert(
+      userId,
+      existing.account.currency,
+      newDate,
+      newAmount,
+    );
+
     const [transaction] = await this.prisma.$transaction([
       this.prisma.transaction.update({
         where: { id },
         data: {
           date: input.date ? new Date(input.date) : undefined,
           amount: input.amount,
+          amountBase,
           description: input.description,
           subcategoryId: input.subcategoryId,
         },
@@ -319,6 +372,25 @@ export class TransactionService {
     ]);
   }
 
+  /**
+   * Deletes every transaction the user owns and resets each account to its
+   * starting balance — which, once all transactions are gone, is exactly what
+   * the balance must be. A clean slate before importing real statements.
+   * `amountBase` and reimbursement/recurring links vanish with the rows;
+   * ImportRow.transactionId is nulled by the schema's ON DELETE SET NULL.
+   */
+  async deleteAllForUser(userId: string): Promise<{ deleted: number }> {
+    return this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.transaction.deleteMany({
+        where: { account: { userId } },
+      });
+      await tx.$executeRaw`
+        UPDATE "Account" SET "balance" = "initialBalance" WHERE "userId" = ${userId}
+      `;
+      return { deleted: count };
+    });
+  }
+
   private async createTransfer(
     userId: string,
     account: Account,
@@ -349,12 +421,21 @@ export class TransactionService {
       );
     }
 
-    const [transaction] = await this.prisma.$transaction([
+    const date = new Date(input.date);
+    const amountBase = await this.fx.convert(
+      userId,
+      account.currency,
+      date,
+      input.amount,
+    );
+
+    const [transaction, updatedSource] = await this.prisma.$transaction([
       this.prisma.transaction.create({
         data: {
           type: 'TRANSFER',
-          date: new Date(input.date),
+          date,
           amount: input.amount,
+          amountBase,
           description: input.description,
           accountId: input.accountId,
           counterAccountId: input.counterAccountId,
@@ -371,15 +452,19 @@ export class TransactionService {
       }),
     ]);
 
-    return transaction;
+    // The source account is the one that can dip below zero.
+    return { ...transaction, balanceAfter: updatedSource.balance };
   }
 
   private async updateTransfer(
+    userId: string,
     existing: {
       id: string;
       amount: number;
+      date: Date;
       accountId: string;
       counterAccountId: string | null;
+      account: { currency: string };
     },
     input: UpdateTransactionInput,
   ) {
@@ -389,12 +474,22 @@ export class TransactionService {
 
     const amountDiff = (input.amount ?? existing.amount) - existing.amount;
 
+    const newDate = input.date ? new Date(input.date) : existing.date;
+    const newAmount = input.amount ?? existing.amount;
+    const amountBase = await this.fx.convert(
+      userId,
+      existing.account.currency,
+      newDate,
+      newAmount,
+    );
+
     const [transaction] = await this.prisma.$transaction([
       this.prisma.transaction.update({
         where: { id: existing.id },
         data: {
           date: input.date ? new Date(input.date) : undefined,
           amount: input.amount,
+          amountBase,
           description: input.description,
         },
         include: TRANSACTION_INCLUDE,

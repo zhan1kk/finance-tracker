@@ -6,22 +6,22 @@ import type {
   CategorizationProvider,
   SubcategoryLite,
 } from '../types/import.types';
+import {
+  buildCategorizationPrompt,
+  CATEGORIZATION_RESPONSE_SCHEMA,
+  CATEGORIZATION_SYSTEM_PROMPT,
+  coercePredictions,
+} from './prompt';
 
 const CHUNK_SIZE = 40;
-const MAX_TOKENS = 4096;
-
-const SYSTEM_PROMPT =
-  "You categorize bank/card transactions into a fixed list of the user's " +
-  'subcategories. For each transaction, choose the single best subcategory id ' +
-  'from the provided list, or null if none is a reasonable fit. Also return a ' +
-  'confidence between 0 and 1 reflecting how certain you are. Prefer null with ' +
-  'low confidence over a wrong guess. Use only ids from the list.';
+const MAX_TOKENS = 8192;
 
 /**
- * LLM categorizer. Selected only when ANTHROPIC_API_KEY is set. Uses tool-use
- * for structured output and chunks large imports. Any API/parse failure yields
- * null predictions for that chunk (the rows fall to manual review) — an import
- * must never fail because the model is unavailable.
+ * Hosted LLM categorizer (Claude). Selected when CATEGORIZER=anthropic, or by
+ * default when an ANTHROPIC_API_KEY is present. Uses tool-use for structured
+ * output and chunks large imports. Any API/parse failure yields null
+ * predictions for that chunk (the rows fall to manual review) — an import must
+ * never fail because the model is unavailable.
  */
 export class AnthropicCategorizationProvider implements CategorizationProvider {
   readonly name = 'anthropic';
@@ -40,14 +40,20 @@ export class AnthropicCategorizationProvider implements CategorizationProvider {
     subcategories: SubcategoryLite[],
   ): Promise<CategorizationPrediction[]> {
     const allowedIds = new Set(subcategories.map((s) => s.id));
-    const results: CategorizationPrediction[] = [];
+    // Chunks are independent, so they run in parallel: a month's statement is
+    // one round-trip of wall time instead of several in sequence (the import
+    // request is synchronous — the browser is waiting on it). categorizeChunk
+    // never rejects, so one failed chunk cannot sink the others.
+    const chunks: CategorizationInput[][] = [];
     for (let i = 0; i < inputs.length; i += CHUNK_SIZE) {
-      const chunk = inputs.slice(i, i + CHUNK_SIZE);
-      results.push(
-        ...(await this.categorizeChunk(chunk, subcategories, allowedIds)),
-      );
+      chunks.push(inputs.slice(i, i + CHUNK_SIZE));
     }
-    return results;
+    const results = await Promise.all(
+      chunks.map((chunk) =>
+        this.categorizeChunk(chunk, subcategories, allowedIds),
+      ),
+    );
+    return results.flat();
   }
 
   private async categorizeChunk(
@@ -61,92 +67,55 @@ export class AnthropicCategorizationProvider implements CategorizationProvider {
       confidence: 0,
     }));
 
+    // Row ids are aliased to their chunk index for the round trip: echoing the
+    // real 64-char hash ids roughly tripled the reply, which could push a full
+    // chunk past the token budget and silently truncate the JSON — losing every
+    // prediction in the chunk at once.
+    const aliased = chunk.map((c, i) => ({ ...c, rowId: String(i + 1) }));
+
     try {
       const message = await this.client.messages.create({
         model: this.model,
         max_tokens: MAX_TOKENS,
-        system: SYSTEM_PROMPT,
+        system: CATEGORIZATION_SYSTEM_PROMPT,
         tools: [
           {
             name: 'submit_categorizations',
             description: 'Return a categorization for every transaction.',
-            input_schema: {
-              type: 'object',
-              properties: {
-                items: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      rowId: { type: 'string' },
-                      subcategoryId: { type: ['string', 'null'] },
-                      confidence: { type: 'number' },
-                    },
-                    required: ['rowId', 'subcategoryId', 'confidence'],
-                  },
-                },
-              },
-              required: ['items'],
-            },
+            input_schema: CATEGORIZATION_RESPONSE_SCHEMA,
           },
         ],
         tool_choice: { type: 'tool', name: 'submit_categorizations' },
         messages: [
           {
             role: 'user',
-            content: this.buildPrompt(chunk, subcategories),
+            content: buildCategorizationPrompt(aliased, subcategories),
           },
         ],
       });
+
+      if (message.stop_reason === 'max_tokens') {
+        // Truncated tool input parses as missing/partial items; affected rows
+        // fall back to review. Log it so a silent quality drop is explainable.
+        this.logger.warn(
+          `Categorization reply truncated at ${MAX_TOKENS} tokens for a ${chunk.length}-row chunk`,
+        );
+      }
 
       const block = message.content.find((b) => b.type === 'tool_use');
       if (!block || block.type !== 'tool_use') return fallback;
 
       const items = (block.input as { items?: unknown }).items;
-      if (!Array.isArray(items)) return fallback;
-
-      const byRow = new Map<string, CategorizationPrediction>();
-      for (const item of items as Record<string, unknown>[]) {
-        const rowId = typeof item.rowId === 'string' ? item.rowId : null;
-        if (!rowId) continue;
-        const rawId = item.subcategoryId;
-        const subcategoryId =
-          typeof rawId === 'string' && allowedIds.has(rawId) ? rawId : null;
-        const confidence =
-          typeof item.confidence === 'number'
-            ? Math.max(0, Math.min(1, item.confidence))
-            : 0;
-        byRow.set(rowId, { rowId, subcategoryId, confidence });
-      }
-      return chunk.map(
-        (c) =>
-          byRow.get(c.rowId) ?? {
-            rowId: c.rowId,
-            subcategoryId: null,
-            confidence: 0,
-          },
-      );
+      // Predictions come back in aliased-chunk order; restore the real row ids.
+      return coercePredictions(items, aliased, allowedIds).map((p, i) => ({
+        ...p,
+        rowId: chunk[i].rowId,
+      }));
     } catch (err) {
       this.logger.error(
         `Anthropic categorization failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       return fallback;
     }
-  }
-
-  private buildPrompt(
-    chunk: CategorizationInput[],
-    subcategories: SubcategoryLite[],
-  ): string {
-    const cats = subcategories
-      .map((s) => `- ${s.id} — ${s.name} (${s.category})`)
-      .join('\n');
-    const rows = chunk
-      .map(
-        (c) =>
-          `- rowId ${c.rowId}: ${c.type} ${(c.amount / 100).toFixed(2)} — "${c.description}"`,
-      )
-      .join('\n');
-    return `Subcategories:\n${cats}\n\nTransactions:\n${rows}`;
   }
 }

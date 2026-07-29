@@ -74,12 +74,7 @@ export class ImportController {
     @Param('rowId') rowId: string,
     @Body() body: ReviewRowDTO,
   ) {
-    return this.importService.reviewRow(
-      user.userId,
-      id,
-      rowId,
-      body.subcategoryId,
-    );
+    return this.importService.reviewRow(user.userId, id, rowId, body);
   }
 
   @Post(':id/commit')

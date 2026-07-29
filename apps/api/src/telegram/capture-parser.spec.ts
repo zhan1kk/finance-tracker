@@ -1,5 +1,6 @@
 import {
   matchSubcategory,
+  parseAmountOnly,
   parseCapture,
   parseCaptureDate,
 } from './capture-parser';
@@ -118,5 +119,44 @@ describe('matchSubcategory', () => {
 
   it('returns empty ambiguous list when nothing matches', () => {
     expect(matchSubcategory(subs, 'zzz')).toEqual({ ambiguous: [] });
+  });
+});
+
+describe('parseAmountOnly', () => {
+  it('treats a bare number as an expense to be picked from buttons', () => {
+    expect(parseAmountOnly('40')).toEqual({
+      type: 'EXPENSE',
+      amountCents: 4000,
+    });
+    expect(parseAmountOnly(' 12.50 ')).toEqual({
+      type: 'EXPENSE',
+      amountCents: 1250,
+    });
+    expect(parseAmountOnly('12,50')).toEqual({
+      type: 'EXPENSE',
+      amountCents: 1250,
+    });
+  });
+
+  it('reads a leading + as income', () => {
+    expect(parseAmountOnly('+2000')).toEqual({
+      type: 'INCOME',
+      amountCents: 200_000,
+    });
+  });
+
+  it('ignores anything richer, leaving it to the one-shot format', () => {
+    // These must fall through to parseCapture, not open the picker.
+    expect(parseAmountOnly('40 - groceries')).toBeNull();
+    expect(parseAmountOnly('40 groceries')).toBeNull();
+    expect(parseAmountOnly('/account')).toBeNull();
+    expect(parseAmountOnly('hello')).toBeNull();
+    expect(parseAmountOnly('')).toBeNull();
+  });
+
+  it('rejects zero and over-precise amounts', () => {
+    expect(parseAmountOnly('0')).toBeNull();
+    expect(parseAmountOnly('0.00')).toBeNull();
+    expect(parseAmountOnly('1.234')).toBeNull();
   });
 });

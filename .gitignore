@@ -11,5 +11,8 @@ ruvector.db
 .claude-flow/
 .hive-mind/
 # Local-only planning doc — kept on disk, intentionally out of git
-PLAN.md.DS_Store
 PLAN.md
+.DS_Store
+
+"EXCEL - Easy Budget.xlsx"
+*.xlsx

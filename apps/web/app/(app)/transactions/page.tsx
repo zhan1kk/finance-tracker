@@ -1,13 +1,14 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api, downloadFile } from "@/lib/api";
 import { formatCents, parseAmountToCents, todayISO } from "@/lib/format";
 import type {
   Account,
   Subcategory,
+  TelegramSettings,
   Transaction,
   TransactionList,
   TransactionType,
@@ -68,6 +69,12 @@ export default function TransactionsPage() {
 
   const remove = useMutation({
     mutationFn: (id: string) => api(`/transactions/${id}`, { method: "DELETE" }),
+    onSuccess: invalidateAll,
+  });
+
+  const removeAll = useMutation({
+    mutationFn: () =>
+      api<{ deleted: number }>("/transactions", { method: "DELETE" }),
     onSuccess: invalidateAll,
   });
 
@@ -154,6 +161,21 @@ export default function TransactionsPage() {
             >
               Export CSV
             </button>
+            <button
+              className="text-red-600 hover:underline disabled:opacity-50"
+              disabled={removeAll.isPending}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "Delete ALL transactions across every account? Each account resets to its starting balance. This cannot be undone.",
+                  )
+                ) {
+                  removeAll.mutate();
+                }
+              }}
+            >
+              Delete all
+            </button>
           </span>
         </div>
 
@@ -176,6 +198,8 @@ export default function TransactionsPage() {
                   transaction={t}
                   accountName={accountName}
                   currency={currencyOf(t.accountId)}
+                  subcategories={subcategories.data ?? []}
+                  onChange={invalidateAll}
                   onDelete={() => {
                     if (window.confirm("Delete this transaction?")) {
                       remove.mutate(t.id);
@@ -224,13 +248,69 @@ function TransactionRow({
   transaction: t,
   accountName,
   currency,
+  subcategories,
+  onChange,
   onDelete,
 }: {
   transaction: Transaction;
   accountName: (id: string | null) => string;
   currency: string;
+  subcategories: Subcategory[];
+  onChange: () => void;
   onDelete: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [date, setDate] = useState(t.date.slice(0, 10));
+  const [amount, setAmount] = useState((t.amount / 100).toFixed(2));
+  const [subcategoryId, setSubcategoryId] = useState(t.subcategoryId ?? "");
+  const [description, setDescription] = useState(t.description ?? "");
+  const [error, setError] = useState<string | null>(null);
+
+  // Type and account are fixed; only these fields are editable. Categories are
+  // filtered to the row's direction (income vs. spending).
+  const eligible = subcategories.filter((s) =>
+    t.type === "INCOME" ? s.category === "Income" : s.category !== "Income",
+  );
+
+  const save = useMutation({
+    mutationFn: (body: Record<string, unknown>) =>
+      api<Transaction>(`/transactions/${t.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      setEditing(false);
+      onChange();
+    },
+    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+  });
+
+  const beginEdit = () => {
+    setDate(t.date.slice(0, 10));
+    setAmount((t.amount / 100).toFixed(2));
+    setSubcategoryId(t.subcategoryId ?? "");
+    setDescription(t.description ?? "");
+    setError(null);
+    setEditing(true);
+  };
+
+  const submit = () => {
+    const cents = parseAmountToCents(amount);
+    if (cents === null) {
+      setError("Invalid amount — use e.g. 12.50");
+      return;
+    }
+    const body: Record<string, unknown> = { date, amount: cents, description };
+    if (t.type !== "TRANSFER") {
+      if (!subcategoryId) {
+        setError("Pick a category");
+        return;
+      }
+      body.subcategoryId = subcategoryId;
+    }
+    save.mutate(body);
+  };
+
   const sign = t.type === "INCOME" ? "+" : "−";
   const color =
     t.type === "INCOME"
@@ -238,6 +318,77 @@ function TransactionRow({
       : t.type === "TRANSFER"
         ? "text-zinc-500"
         : "";
+
+  if (editing) {
+    return (
+      <tr className="border-b border-zinc-100 align-top dark:border-zinc-900">
+        <td className="py-2 pr-3">
+          <Input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="w-36"
+          />
+        </td>
+        <td className="py-2 pr-3">
+          {t.type === "TRANSFER" ? (
+            <span className="text-zinc-500">Transfer</span>
+          ) : (
+            <Select
+              value={subcategoryId}
+              onChange={(e) => setSubcategoryId(e.target.value)}
+            >
+              {eligible.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </Select>
+          )}
+        </td>
+        <td className="py-2 pr-3">
+          <Input
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="optional"
+            className="w-full"
+          />
+        </td>
+        <td className="py-2 pr-3 whitespace-nowrap text-zinc-500">
+          {accountName(t.accountId)}
+          {t.type === "TRANSFER" && ` → ${accountName(t.counterAccountId)}`}
+        </td>
+        <td className="py-2 pr-3 text-right">
+          <Input
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            inputMode="decimal"
+            className="w-24 text-right"
+          />
+        </td>
+        <td className="py-2">
+          <div className="flex items-center justify-end gap-2">
+            <button
+              className="font-medium text-emerald-600 hover:underline disabled:opacity-50"
+              onClick={submit}
+              disabled={save.isPending}
+            >
+              Save
+            </button>
+            <button
+              className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300"
+              onClick={() => setEditing(false)}
+            >
+              Cancel
+            </button>
+          </div>
+          {error && (
+            <p className="mt-1 text-right text-xs text-red-600">{error}</p>
+          )}
+        </td>
+      </tr>
+    );
+  }
 
   return (
     <tr className="border-b border-zinc-100 dark:border-zinc-900">
@@ -270,18 +421,30 @@ function TransactionRow({
         {t.type === "TRANSFER" ? "" : sign}
         {formatCents(t.amount, currency)}
       </td>
-      <td className="py-2 text-right">
-        <button
-          aria-label="Delete transaction"
-          className="text-zinc-400 hover:text-red-600"
-          onClick={onDelete}
-        >
-          ×
-        </button>
+      <td className="py-2">
+        <div className="flex items-center justify-end gap-2">
+          <button
+            aria-label="Edit transaction"
+            className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300"
+            onClick={beginEdit}
+          >
+            Edit
+          </button>
+          <button
+            aria-label="Delete transaction"
+            className="text-zinc-400 hover:text-red-600"
+            onClick={onDelete}
+          >
+            ×
+          </button>
+        </div>
       </td>
     </tr>
   );
 }
+
+/** Remembers the date across entries so a backlog can be typed in one sitting. */
+const LAST_DATE_KEY = "ft:lastTransactionDate";
 
 function QuickAdd({
   accounts,
@@ -295,6 +458,33 @@ function QuickAdd({
   const [type, setType] = useState<TransactionType>("EXPENSE");
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Account and date are controlled so they survive the form reset: entering a
+  // run of past transactions should not mean re-picking both every single time.
+  const settings = useQuery({
+    queryKey: ["telegram-settings"],
+    queryFn: () => api<TelegramSettings>("/telegram/settings"),
+  });
+  const [accountId, setAccountId] = useState("");
+  const [date, setDate] = useState(todayISO());
+
+  // Prefer the account chosen as default, else the first one.
+  useEffect(() => {
+    if (accountId || accounts.length === 0) return;
+    const preferred = settings.data?.defaultAccountId;
+    setAccountId(
+      preferred && accounts.some((a) => a.id === preferred)
+        ? preferred
+        : accounts[0].id,
+    );
+  }, [accountId, accounts, settings.data?.defaultAccountId]);
+
+  // Restore the last date used on this device (read after mount, so the
+  // server-rendered markup and the first client render still agree).
+  useEffect(() => {
+    const saved = window.localStorage.getItem(LAST_DATE_KEY);
+    if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved)) setDate(saved);
+  }, []);
 
   const eligibleSubcategories = subcategories.filter((s) =>
     type === "INCOME" ? s.category === "Income" : s.category !== "Income",
@@ -322,15 +512,28 @@ function QuickAdd({
       }),
     onSuccess: (created, body) => {
       onCreated();
+      const currency =
+        accounts.find((a) => a.id === body.accountId)?.currency ?? "EUR";
+      const notices: string[] = [];
       if (created.outlier) {
-        const currency =
-          accounts.find((a) => a.id === body.accountId)?.currency ?? "EUR";
-        setNotice(
+        notices.push(
           `Heads up: that's unusually ${created.outlier.direction} for ${
             created.subcategory?.name ?? "this category"
           } — typically around ${formatCents(created.outlier.medianCents, currency)}.`,
         );
       }
+      const bookedAccount = accounts.find((a) => a.id === body.accountId);
+      if (
+        created.balanceAfter !== undefined &&
+        created.balanceAfter < 0 &&
+        // Negative is a credit account's normal state (debt owed) — no warning.
+        bookedAccount?.type !== "credit"
+      ) {
+        notices.push(
+          `${bookedAccount?.name ?? "The account"} is below zero (${formatCents(created.balanceAfter, currency)}).`,
+        );
+      }
+      if (notices.length > 0) setNotice(notices.join(" "));
     },
     onError: setError,
   });
@@ -363,6 +566,7 @@ function QuickAdd({
       body.parentTransactionId = parentId;
     }
     create.mutate(body);
+    window.localStorage.setItem(LAST_DATE_KEY, date);
     e.currentTarget.reset();
   };
 
@@ -391,7 +595,12 @@ function QuickAdd({
           />
         </Field>
         <Field label={type === "TRANSFER" ? "From account" : "Account"}>
-          <Select name="accountId" required>
+          <Select
+            name="accountId"
+            required
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
+          >
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
@@ -433,7 +642,13 @@ function QuickAdd({
           </Field>
         )}
         <Field label="Date">
-          <Input name="date" type="date" defaultValue={todayISO()} required />
+          <Input
+            name="date"
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            required
+          />
         </Field>
         <Field label="Description">
           <Input name="description" placeholder="optional" />

@@ -26,6 +26,23 @@ export function parseAmountToCents(input: string): number | null {
   return cents > 0 ? cents : null;
 }
 
+/**
+ * Like parseAmountToCents but allows zero and a leading minus — for starting
+ * balances, where "-478.42" is a credit card's opening debt.
+ */
+export function parseSignedAmountToCents(input: string): number | null {
+  const trimmed = input.trim();
+  const negative = trimmed.startsWith("-") || trimmed.startsWith("−");
+  const normalized = (negative ? trimmed.slice(1) : trimmed)
+    .trim()
+    .replace(",", ".");
+  if (!/^\d+(\.\d{1,2})?$/.test(normalized)) {
+    return null;
+  }
+  const cents = Math.round(parseFloat(normalized) * 100);
+  return negative ? -cents : cents;
+}
+
 /** Today's calendar date in the user's local timezone (UTC would date
  *  late-evening entries "yesterday" for anyone east of Greenwich). */
 export function todayISO(): string {

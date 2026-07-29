@@ -6,7 +6,6 @@ import {
   IsOptional,
   IsString,
   Matches,
-  Min,
 } from 'class-validator';
 import type { AccountType } from '../types/account.types';
 
@@ -31,10 +30,10 @@ export class CreateAccountDTO {
   @Matches(/^[A-Z]{3}$/, { message: 'currency must be a 3-letter ISO code' })
   public readonly currency!: string;
 
-  /** Starting balance in minor currency units (cents). */
+  /** Starting balance in minor currency units (cents). Negative is allowed —
+   * a credit card's opening state is the debt owed on day one. */
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  @Min(0)
   public readonly initialBalance?: number;
 }

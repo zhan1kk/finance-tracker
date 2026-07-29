@@ -2,6 +2,8 @@ export type User = {
   id: string;
   email: string;
   baseCurrency: string;
+  /** Day of the month a financial month begins (1 = calendar months). */
+  monthStartDay: number;
 };
 
 export const ACCOUNT_TYPES = [
@@ -14,6 +16,10 @@ export const ACCOUNT_TYPES = [
 ] as const;
 export type AccountType = (typeof ACCOUNT_TYPES)[number];
 
+/** Currencies the app supports; the first is the base/reporting currency. */
+export const CURRENCIES = ['EUR', 'KZT'] as const;
+export type Currency = (typeof CURRENCIES)[number];
+
 export type Account = {
   id: string;
   name: string;
@@ -22,6 +28,23 @@ export type Account = {
   /** Minor currency units (cents). */
   balance: number;
   initialBalance: number;
+};
+
+export type ExchangeRate = {
+  id: string;
+  currency: string;
+  /** Date the rate takes effect (ISO). */
+  date: string;
+  /** Foreign units per 1 base unit (e.g. 540 = 540 KZT per 1 EUR). */
+  rate: number;
+};
+
+export type FxRates = {
+  currency: string;
+  baseCurrency: string;
+  defaultRate: number | null;
+  effectiveRate: number;
+  rates: ExchangeRate[];
 };
 
 export const TRANSACTION_CATEGORIES = [
@@ -38,6 +61,8 @@ export type Subcategory = {
   id: string;
   name: string;
   category: TransactionCategory;
+  /** One-tap shortcut in the Telegram capture picker. */
+  pinned?: boolean;
 };
 
 export type TransactionType = 'INCOME' | 'EXPENSE' | 'TRANSFER';
@@ -46,8 +71,10 @@ export type Transaction = {
   id: string;
   type: TransactionType;
   date: string;
-  /** Minor currency units (cents). */
+  /** Minor currency units (cents), in the account's currency. */
   amount: number;
+  /** `amount` converted to the base currency (cents). */
+  amountBase: number;
   description: string | null;
   accountId: string;
   subcategoryId: string | null;
@@ -57,6 +84,8 @@ export type Transaction = {
   reimbursements: Omit<Transaction, 'subcategory' | 'reimbursements'>[];
   /** Present on create responses: non-blocking "unusual amount" warning. */
   outlier?: { direction: 'high' | 'low'; medianCents: number } | null;
+  /** Present on create responses: the (source) account's balance after booking. */
+  balanceAfter?: number;
 };
 
 export type TransactionList = {
@@ -143,6 +172,9 @@ export type ImportRow = {
   subcategoryId: string | null;
   subcategory: Subcategory | null;
   predictedSubcategory: { id: string; name: string } | null;
+  /** Set instead of subcategoryId when the row is a transfer between own accounts. */
+  counterAccountId: string | null;
+  counterAccount: { id: string; name: string } | null;
 };
 
 export type ImportBatch = {
@@ -177,13 +209,47 @@ export type CsvInspection = {
   sample: Record<string, string>[];
 };
 
+// ---- budget spreadsheet onboarding ----
+
+export type SpreadsheetPreviewItem = {
+  name: string;
+  category: TransactionCategory;
+  /** Median of the months that carried a budget; null when none did. */
+  suggestedBudgetCents: number | null;
+  samples: { sheet: string; cents: number }[];
+  monthsSeen: number;
+  budgetable: boolean;
+  existingSubcategory: boolean;
+  existingBudget: boolean;
+  existingCategory: TransactionCategory | null;
+  similarTo: string | null;
+};
+
+export type SpreadsheetPreview = {
+  sheetsScanned: string[];
+  items: SpreadsheetPreviewItem[];
+};
+
+export type SpreadsheetApplyResult = {
+  subcategoriesCreated: number;
+  subcategoriesReused: number;
+  budgetsCreated: number;
+  budgetsUpdated: number;
+  skipped: { name: string; reason: string }[];
+};
+
 export type CategorizationRule = {
   id: string;
   pattern: string;
+  /** Which rows the rule applies to; TRANSFER rules match either direction. */
+  type: TransactionType;
   source: CategorizationSource;
   hitCount: number;
-  subcategoryId: string;
-  subcategory: { id: string; name: string };
+  /** Exactly one of these targets is set. */
+  subcategoryId: string | null;
+  subcategory: { id: string; name: string } | null;
+  counterAccountId: string | null;
+  counterAccount: { id: string; name: string } | null;
 };
 
 export type AccuracyTally = {
