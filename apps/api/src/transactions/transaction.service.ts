@@ -39,7 +39,17 @@ export class TransactionService {
 
     const where: Prisma.TransactionWhereInput = {
       account: { userId },
-      accountId: query.accountId,
+      // Filtering by an account includes transfers *into* it (where it is the
+      // counter account), not just those it owns — money arriving is a movement
+      // on that account and must show for the ledger to reconcile.
+      ...(query.accountId
+        ? {
+            OR: [
+              { accountId: query.accountId },
+              { type: 'TRANSFER', counterAccountId: query.accountId },
+            ],
+          }
+        : {}),
       subcategoryId: query.subcategoryId,
       type: query.type,
       date: {
@@ -62,7 +72,67 @@ export class TransactionService {
       this.prisma.transaction.count({ where }),
     ]);
 
-    return { items, total, page, pageSize };
+    // A running balance is only meaningful for one account (one currency,
+    // one ledger), so it is attached only when the list is scoped to one.
+    const withBalance = query.accountId
+      ? await this.attachRunningBalance(userId, query.accountId, items)
+      : items;
+
+    return { items: withBalance, total, page, pageSize };
+  }
+
+  /**
+   * Decorates each returned row with the account's balance *after* that
+   * transaction, computed over the account's full history (income +, expense −,
+   * transfer ± by direction) so it matches a bank statement's running balance
+   * for reconciliation — independent of the page or any display filter.
+   */
+  private async attachRunningBalance<T extends { id: string }>(
+    userId: string,
+    accountId: string,
+    items: T[],
+  ): Promise<(T & { runningBalance?: number })[]> {
+    const account = await this.prisma.account.findFirst({
+      where: { id: accountId, userId },
+      select: { initialBalance: true },
+    });
+    if (!account) return items;
+
+    const all = await this.prisma.transaction.findMany({
+      where: {
+        OR: [
+          { accountId },
+          { type: 'TRANSFER', counterAccountId: accountId },
+        ],
+      },
+      select: {
+        id: true,
+        type: true,
+        amount: true,
+        accountId: true,
+      },
+      orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
+    });
+
+    let running = account.initialBalance;
+    const balanceById = new Map<string, number>();
+    for (const t of all) {
+      const effect =
+        t.type === 'INCOME'
+          ? t.amount
+          : t.type === 'EXPENSE'
+            ? -t.amount
+            : t.accountId === accountId
+              ? -t.amount // transfer out of this account
+              : t.amount; // transfer into this account
+      running += effect;
+      balanceById.set(t.id, running);
+    }
+
+    return items.map((item) => ({
+      ...item,
+      runningBalance: balanceById.get(item.id),
+    }));
   }
 
   /**
@@ -79,11 +149,18 @@ export class TransactionService {
     ];
     const scope = (extra: Prisma.Sql) =>
       Prisma.join(
-        [Prisma.sql`a."userId" = ${userId}`, extra, ...range],
+        [
+          Prisma.sql`a."userId" = ${userId}`,
+          // Internal moves (own-account transfers / currency exchanges) move a
+          // balance but are not earnings or spending, so they never count here.
+          Prisma.sql`t."excludeFromStats" = false`,
+          extra,
+          ...range,
+        ],
         ' AND ',
       );
 
-    const [monthly, byCategory] = await this.prisma.$transaction([
+    const [monthly, byCategory, incomeByCategory] = await this.prisma.$transaction([
       this.prisma.$queryRaw<MonthlyStat[]>`
         SELECT
           ${period} AS month,
@@ -92,10 +169,14 @@ export class TransactionService {
           ), 0)::int AS income,
           (COALESCE(SUM(t."amountBase") FILTER (WHERE t."type" = 'EXPENSE'), 0)
            - COALESCE(SUM(t."amountBase") FILTER (
+               -- Skip reimbursements of an internal parent: that expense isn't
+               -- counted, so netting its payback would leave a phantom credit.
                WHERE t."type" = 'INCOME' AND t."parentTransactionId" IS NOT NULL
+                 AND p."excludeFromStats" = false
              ), 0))::int AS expense
         FROM "Transaction" t
         JOIN "Account" a ON a."id" = t."accountId"
+        LEFT JOIN "Transaction" p ON p."id" = t."parentTransactionId"
         WHERE ${scope(Prisma.sql`t."type" <> 'TRANSFER'`)}
         GROUP BY 1
         ORDER BY 1
@@ -117,16 +198,36 @@ export class TransactionService {
           JOIN "Account" a ON a."id" = t."accountId"
           JOIN "Transaction" p ON p."id" = t."parentTransactionId"
           WHERE ${scope(
-            Prisma.sql`t."type" = 'INCOME' AND t."parentTransactionId" IS NOT NULL`,
+            // Only net a payback against a parent that actually counts — an
+            // internal parent is excluded, so its reimbursement must be too.
+            Prisma.sql`t."type" = 'INCOME' AND t."parentTransactionId" IS NOT NULL AND p."excludeFromStats" = false`,
           )}
         ) x
         JOIN "Subcategory" s ON s."id" = x.sid
         GROUP BY s."id", s."name", s."category"
         ORDER BY amount DESC
       `,
+      // Income by subcategory: real income only (reimbursements, which carry a
+      // parent, are money coming back — not earnings — so they are excluded,
+      // matching how monthly income is counted).
+      this.prisma.$queryRaw<CategoryStat[]>`
+        SELECT
+          s."id" AS "subcategoryId",
+          s."name",
+          s."category"::text AS category,
+          COALESCE(SUM(t."amountBase"), 0)::int AS amount
+        FROM "Transaction" t
+        JOIN "Account" a ON a."id" = t."accountId"
+        JOIN "Subcategory" s ON s."id" = t."subcategoryId"
+        WHERE ${scope(
+          Prisma.sql`t."type" = 'INCOME' AND t."parentTransactionId" IS NULL`,
+        )}
+        GROUP BY s."id", s."name", s."category"
+        ORDER BY amount DESC
+      `,
     ]);
 
-    return { monthly, byCategory };
+    return { monthly, byCategory, incomeByCategory };
   }
 
   /**
@@ -179,17 +280,20 @@ export class TransactionService {
         'counterAccountId is only allowed for TRANSFER transactions',
       );
     }
-    if (!input.subcategoryId) {
+    // An internal move (excluded from stats) may skip the category — it is not
+    // spending or earnings, just money crossing between your own accounts.
+    // Everything else needs a category, validated against the direction.
+    if (input.subcategoryId) {
+      const subcategory = await this.getOwnSubcategory(
+        userId,
+        input.subcategoryId,
+      );
+      this.ensureCategoryMatchesType(input.type, subcategory.category);
+    } else if (!input.excludeFromStats) {
       throw new BadRequestException(
         'subcategoryId is required for INCOME and EXPENSE transactions',
       );
     }
-
-    const subcategory = await this.getOwnSubcategory(
-      userId,
-      input.subcategoryId,
-    );
-    this.ensureCategoryMatchesType(input.type, subcategory.category);
 
     const parentTransactionId = await this.resolveReimbursementParent(
       userId,
@@ -205,8 +309,11 @@ export class TransactionService {
     );
 
     // Judged against history *before* this transaction exists, in base currency
-    // so a subcategory used across currencies is compared on one scale.
-    const outlier = await this.outlierVerdict(userId, input, amountBase);
+    // so a subcategory used across currencies is compared on one scale. Only
+    // meaningful against a category, so internal moves skip it.
+    const outlier = input.subcategoryId
+      ? await this.outlierVerdict(userId, input, amountBase)
+      : null;
 
     const delta = this.signedDelta(input.type, input.amount);
 
@@ -219,8 +326,9 @@ export class TransactionService {
           amountBase,
           description: input.description,
           accountId: input.accountId,
-          subcategoryId: input.subcategoryId,
+          subcategoryId: input.subcategoryId ?? null,
           parentTransactionId,
+          excludeFromStats: input.excludeFromStats ?? false,
         },
         include: TRANSACTION_INCLUDE,
       }),
@@ -315,6 +423,7 @@ export class TransactionService {
           amountBase,
           description: input.description,
           subcategoryId: input.subcategoryId,
+          excludeFromStats: input.excludeFromStats,
         },
         include: TRANSACTION_INCLUDE,
       }),
@@ -417,7 +526,10 @@ export class TransactionService {
     );
     if (counterAccount.currency !== account.currency) {
       throw new BadRequestException(
-        'Transfers between accounts with different currencies are not supported yet',
+        'A cross-currency move is two different amounts (plus any fee), so it ' +
+          "can't be one transfer. Record it as an expense on the source and an " +
+          'income on the destination, then link them with "reimburses" — the ' +
+          'difference captures the conversion and commission.',
       );
     }
 
@@ -509,6 +621,58 @@ export class TransactionService {
     ]);
 
     return transaction;
+  }
+
+  /**
+   * Links an existing INCOME to the EXPENSE it reimburses (or unlinks, with
+   * null) after the fact — the two legs often arrive in separate statements
+   * weeks apart, e.g. a peer FX swap where the Kaspi debit and the Revolut
+   * credit import at different times. Purely a stats/budget association: the
+   * income already moved its account's balance as income, so nothing here
+   * touches balances.
+   */
+  async linkReimbursement(
+    userId: string,
+    id: string,
+    parentTransactionId: string | null,
+  ) {
+    const income = await this.prisma.transaction.findFirst({
+      where: { id, account: { userId } },
+    });
+    if (!income) {
+      throw new NotFoundException(`Transaction with id ${id} was not found`);
+    }
+    if (income.type !== 'INCOME') {
+      throw new BadRequestException(
+        'Only INCOME transactions can reimburse an expense',
+      );
+    }
+
+    if (parentTransactionId) {
+      if (parentTransactionId === id) {
+        throw new BadRequestException('A transaction cannot reimburse itself');
+      }
+      const parent = await this.prisma.transaction.findFirst({
+        where: { id: parentTransactionId, account: { userId } },
+        select: { type: true },
+      });
+      if (!parent) {
+        throw new NotFoundException(
+          `Transaction with id ${parentTransactionId} was not found`,
+        );
+      }
+      if (parent.type !== 'EXPENSE') {
+        throw new BadRequestException(
+          'Reimbursements can only be linked to EXPENSE transactions',
+        );
+      }
+    }
+
+    return this.prisma.transaction.update({
+      where: { id },
+      data: { parentTransactionId },
+      include: TRANSACTION_INCLUDE,
+    });
   }
 
   /** Validates and returns the parent id for a reimbursement, if requested. */

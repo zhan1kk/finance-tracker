@@ -18,37 +18,115 @@ const BUDGET_INCLUDE = {
 export class BudgetService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Budgets with the current financial month's spending progress. */
-  async list(userId: string) {
-    const [budgets, user] = await Promise.all([
-      this.prisma.budget.findMany({
-        where: { userId },
-        include: BUDGET_INCLUDE,
-        orderBy: { createdAt: 'asc' },
-      }),
-      this.prisma.user.findUniqueOrThrow({
-        where: { id: userId },
-        select: { monthStartDay: true },
-      }),
-    ]);
+  /**
+   * Budgets with spending progress for one financial month (default: the
+   * current one). Each budget's *effective* limit for that month is its
+   * per-month override if one exists, else the recurring `monthlyLimit`.
+   */
+  async list(userId: string, period?: string) {
+    const { monthStartDay } = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { monthStartDay: true },
+    });
+    const label = this.resolvePeriod(period, monthStartDay);
     // Budgets reset on the user's pay cycle, not on the 1st.
-    const { start, end } = periodBounds(
-      periodLabel(new Date(), user.monthStartDay),
-      user.monthStartDay,
-    );
+    const { start, end } = periodBounds(label, monthStartDay);
+    const budgets = await this.prisma.budget.findMany({
+      where: { userId },
+      include: {
+        ...BUDGET_INCLUDE,
+        periods: { where: { period: label }, select: { limit: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
     return Promise.all(
-      budgets.map(async (budget) => {
-        const spentCents = await this.computeSpent(userId, budget, start, end);
-        return {
-          ...budget,
-          spentCents,
-          remainingCents: budget.monthlyLimit - spentCents,
-          percent:
-            budget.monthlyLimit > 0 ? spentCents / budget.monthlyLimit : 0,
-          overBudget: spentCents > budget.monthlyLimit,
-        };
-      }),
+      budgets.map((budget) =>
+        this.buildEntry(userId, budget, label, start, end),
+      ),
     );
+  }
+
+  /** Sets (or replaces) the limit for one budget in one month. */
+  async setPeriodLimit(
+    userId: string,
+    id: string,
+    period: string,
+    limit: number,
+  ) {
+    const { monthStartDay } = await this.assertOwn(userId, id);
+    const label = this.resolvePeriod(period, monthStartDay);
+    await this.prisma.budgetPeriod.upsert({
+      where: { budgetId_period: { budgetId: id, period: label } },
+      create: { budgetId: id, period: label, limit },
+      update: { limit },
+    });
+    return this.entryFor(userId, id, label, monthStartDay);
+  }
+
+  /** Clears a month's override, so it falls back to the recurring limit. */
+  async clearPeriodLimit(userId: string, id: string, period: string) {
+    const { monthStartDay } = await this.assertOwn(userId, id);
+    const label = this.resolvePeriod(period, monthStartDay);
+    // deleteMany, not delete: a missing override is a no-op, not a 404.
+    await this.prisma.budgetPeriod.deleteMany({
+      where: { budgetId: id, period: label },
+    });
+    return this.entryFor(userId, id, label, monthStartDay);
+  }
+
+  /** Validates a "YYYY-MM" label, defaulting to the month containing today. */
+  private resolvePeriod(period: string | undefined, monthStartDay: number) {
+    if (period === undefined) return periodLabel(new Date(), monthStartDay);
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+      throw new BadRequestException('period must be a "YYYY-MM" label');
+    }
+    return period;
+  }
+
+  /** Recomputes a single budget's progress for a month (post-mutation view). */
+  private async entryFor(
+    userId: string,
+    id: string,
+    label: string,
+    monthStartDay: number,
+  ) {
+    const budget = await this.prisma.budget.findFirstOrThrow({
+      where: { id, userId },
+      include: {
+        ...BUDGET_INCLUDE,
+        periods: { where: { period: label }, select: { limit: true } },
+      },
+    });
+    const { start, end } = periodBounds(label, monthStartDay);
+    return this.buildEntry(userId, budget, label, start, end);
+  }
+
+  private async buildEntry(
+    userId: string,
+    budget: Prisma.BudgetGetPayload<{
+      include: typeof BUDGET_INCLUDE & {
+        periods: { select: { limit: true } };
+      };
+    }>,
+    period: string,
+    start: Date,
+    end: Date,
+  ) {
+    const override = budget.periods[0]?.limit ?? null;
+    const limit = override ?? budget.monthlyLimit;
+    const spentCents = await this.computeSpent(userId, budget, start, end);
+    const { periods: _periods, ...rest } = budget;
+    return {
+      ...rest,
+      period,
+      // Effective limit for this month; monthlyLimit stays the recurring base.
+      limit,
+      isOverride: override !== null,
+      spentCents,
+      remainingCents: limit - spentCents,
+      percent: limit > 0 ? spentCents / limit : 0,
+      overBudget: spentCents > limit,
+    };
   }
 
   async create(userId: string, dto: CreateBudgetDTO) {
@@ -139,25 +217,41 @@ export class BudgetService {
     const expenseScope: Prisma.TransactionWhereInput = budget.subcategoryId
       ? { subcategoryId: budget.subcategoryId }
       : { subcategory: { is: { category } } };
+    // A payback only nets when its parent actually counts as spending — an
+    // internal parent is excluded, so its reimbursement must be too (else it
+    // would show as a phantom credit against the budget).
     const reimbScope: Prisma.TransactionWhereInput = budget.subcategoryId
-      ? { parentTransaction: { is: { subcategoryId: budget.subcategoryId } } }
+      ? {
+          parentTransaction: {
+            is: { subcategoryId: budget.subcategoryId, excludeFromStats: false },
+          },
+        }
       : {
           parentTransaction: {
-            is: { subcategory: { is: { category } } },
+            is: { subcategory: { is: { category } }, excludeFromStats: false },
           },
         };
 
     // Budgets are set in the base currency, so spending is summed in base too.
+    // Internal moves are excluded — a transfer through a budgeted category is
+    // not spending against it.
     const [expense, reimbursed] = await Promise.all([
       this.prisma.transaction.aggregate({
         _sum: { amountBase: true },
-        where: { ...owner, type: 'EXPENSE', date, ...expenseScope },
+        where: {
+          ...owner,
+          type: 'EXPENSE',
+          excludeFromStats: false,
+          date,
+          ...expenseScope,
+        },
       }),
       this.prisma.transaction.aggregate({
         _sum: { amountBase: true },
         where: {
           ...owner,
           type: 'INCOME',
+          excludeFromStats: false,
           parentTransactionId: { not: null },
           date,
           ...reimbScope,
@@ -168,7 +262,10 @@ export class BudgetService {
     return (expense._sum.amountBase ?? 0) - (reimbursed._sum.amountBase ?? 0);
   }
 
-  private async assertOwn(userId: string, id: string) {
+  private async assertOwn(
+    userId: string,
+    id: string,
+  ): Promise<{ monthStartDay: number }> {
     const budget = await this.prisma.budget.findFirst({
       where: { id, userId },
       select: { id: true },
@@ -176,6 +273,11 @@ export class BudgetService {
     if (!budget) {
       throw new NotFoundException(`Budget with id ${id} was not found`);
     }
+    const { monthStartDay } = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { monthStartDay: true },
+    });
+    return { monthStartDay };
   }
 }
 

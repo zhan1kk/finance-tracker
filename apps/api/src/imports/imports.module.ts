@@ -8,6 +8,7 @@ import { CsvParserService } from './csv-parser.service';
 import { ImportController } from './import.controller';
 import { ImportService } from './import.service';
 import { MappingService } from './mapping.service';
+import { PdfImportService } from './pdf/pdf-import.service';
 import { RulesController } from './rules.controller';
 import { RulesService } from './rules.service';
 import { SpreadsheetImportController } from './spreadsheet/spreadsheet-import.controller';
@@ -26,6 +27,7 @@ import {
     RulesService,
     CategorizationService,
     SpreadsheetImportService,
+    PdfImportService,
     {
       provide: CATEGORIZATION_PROVIDER,
       inject: [ConfigService],

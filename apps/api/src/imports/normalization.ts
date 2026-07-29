@@ -1,13 +1,15 @@
 import { createHash } from 'node:crypto';
 import type { TransactionType } from '@prisma/client';
 
-/** Noise tokens common to card/bank statement descriptions. */
+// Processing noise common to card/bank statement descriptions. Deliberately
+// does NOT include direction words like "transfer"/"payment": those carry
+// meaning ("transfer to X" vs "to X" can be two different destinations), and
+// dropping them collapsed distinct counterparties into one un-distinguishable
+// rule. Keeping them lets the longest-match rule route each correctly.
 const NOISE_TOKENS = new Set([
   'pos',
   'card',
   'purchase',
-  'payment',
-  'pmt',
   'debit',
   'credit',
   'visa',
@@ -17,8 +19,6 @@ const NOISE_TOKENS = new Set([
   'ecom',
   'ideal',
   'sepa',
-  'tfr',
-  'transfer',
   'ref',
   'transaction',
   'trans',
@@ -33,12 +33,17 @@ const NOISE_TOKENS = new Set([
  * everything after a `*` dropped (card processor refs), long digit runs and
  * noise tokens removed, punctuation collapsed to single spaces. Deterministic,
  * so it doubles as the basis for the dedupe hash and rule matching.
+ *
+ * Letters of any script are kept (`\p{L}`), not just a–z: statements name
+ * counterparties in Cyrillic, Kazakh, etc. Stripping non-ASCII would collapse
+ * "Transfers Темирлан Н." and "Transfers Диас Д." to the same "transfers" key —
+ * false duplicates, and one learned rule firing on every counterparty.
  */
 export function normalizeMerchant(raw: string): string {
   const beforeStar = raw.split('*')[0];
   const tokens = beforeStar
     .toLowerCase()
-    .replace(/[^a-z0-9\s]+/g, ' ')
+    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
     .split(/\s+/)
     .filter((token) => {
       if (token === '') return false;

@@ -85,6 +85,20 @@ export default function TransactionsPage() {
 
   const total = transactions.data?.total ?? 0;
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const goToPage = (p: number) =>
+    setFilters({ ...filters, page: Math.min(Math.max(1, p), lastPage) });
+
+  // Deleting the last row on a page (or any change that shrinks the list) can
+  // leave `page` pointing past the end — the pager then hides and you're stuck
+  // on an empty page. Once fresh data lands, pull the page back into range.
+  useEffect(() => {
+    if (transactions.data && filters.page > lastPage) {
+      setFilters((f) => ({ ...f, page: lastPage }));
+    }
+  }, [transactions.data, filters.page, lastPage]);
+
+  // A running balance is only meaningful (and only returned) for one account.
+  const singleAccount = filters.accountId !== "";
 
   return (
     <main className="flex flex-col gap-6">
@@ -179,6 +193,12 @@ export default function TransactionsPage() {
           </span>
         </div>
 
+        {lastPage > 1 && (
+          <div className="mb-2">
+            <Pager page={filters.page} lastPage={lastPage} onGo={goToPage} />
+          </div>
+        )}
+
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -188,6 +208,9 @@ export default function TransactionsPage() {
                 <th className="py-2 pr-3 font-medium">Description</th>
                 <th className="py-2 pr-3 font-medium">Account</th>
                 <th className="py-2 pr-3 text-right font-medium">Amount</th>
+                {singleAccount && (
+                  <th className="py-2 pr-3 text-right font-medium">Balance</th>
+                )}
                 <th className="py-2" />
               </tr>
             </thead>
@@ -198,6 +221,8 @@ export default function TransactionsPage() {
                   transaction={t}
                   accountName={accountName}
                   currency={currencyOf(t.accountId)}
+                  currencyOf={currencyOf}
+                  filterAccountId={singleAccount ? filters.accountId : null}
                   subcategories={subcategories.data ?? []}
                   onChange={invalidateAll}
                   onDelete={() => {
@@ -209,7 +234,10 @@ export default function TransactionsPage() {
               ))}
               {transactions.data?.items.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-6 text-center text-zinc-500">
+                  <td
+                    colSpan={singleAccount ? 7 : 6}
+                    className="py-6 text-center text-zinc-500"
+                  >
                     No transactions match.
                   </td>
                 </tr>
@@ -219,24 +247,8 @@ export default function TransactionsPage() {
         </div>
 
         {lastPage > 1 && (
-          <div className="mt-3 flex items-center justify-end gap-2 text-sm">
-            <Button
-              variant="ghost"
-              disabled={filters.page <= 1}
-              onClick={() => setFilters({ ...filters, page: filters.page - 1 })}
-            >
-              Previous
-            </Button>
-            <span className="text-zinc-500">
-              {filters.page} / {lastPage}
-            </span>
-            <Button
-              variant="ghost"
-              disabled={filters.page >= lastPage}
-              onClick={() => setFilters({ ...filters, page: filters.page + 1 })}
-            >
-              Next
-            </Button>
+          <div className="mt-3">
+            <Pager page={filters.page} lastPage={lastPage} onGo={goToPage} />
           </div>
         )}
       </Card>
@@ -244,10 +256,143 @@ export default function TransactionsPage() {
   );
 }
 
+/** First / Prev / Next / Last pager, so jumping to either end never needs scrolling. */
+function Pager({
+  page,
+  lastPage,
+  onGo,
+}: {
+  page: number;
+  lastPage: number;
+  onGo: (page: number) => void;
+}) {
+  return (
+    <div className="flex items-center justify-end gap-2 text-sm">
+      <Button variant="ghost" disabled={page <= 1} onClick={() => onGo(1)}>
+        « First
+      </Button>
+      <Button variant="ghost" disabled={page <= 1} onClick={() => onGo(page - 1)}>
+        ‹ Prev
+      </Button>
+      <span className="text-zinc-500">
+        {page} / {lastPage}
+      </span>
+      <Button
+        variant="ghost"
+        disabled={page >= lastPage}
+        onClick={() => onGo(page + 1)}
+      >
+        Next ›
+      </Button>
+      <Button
+        variant="ghost"
+        disabled={page >= lastPage}
+        onClick={() => onGo(lastPage)}
+      >
+        Last »
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Search-driven picker for the expense an income reimburses. A plain dropdown
+ * only holds the most recent expenses, so an older one (a May charge refunded
+ * in June) is unreachable — this queries the server by merchant text instead,
+ * so any expense is findable no matter its age.
+ */
+function ReimbursePicker({
+  value,
+  currencyOf,
+  onChange,
+}: {
+  value: string;
+  currencyOf: (id: string) => string;
+  onChange: (parentId: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [debounced, setDebounced] = useState("");
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(search.trim()), 250);
+    return () => clearTimeout(id);
+  }, [search]);
+
+  // Results for the typed query; only fires once something is typed.
+  const results = useQuery({
+    queryKey: ["reimburse-search", debounced],
+    queryFn: () =>
+      api<TransactionList>(
+        `/transactions?type=EXPENSE&pageSize=12&search=${encodeURIComponent(debounced)}`,
+      ),
+    enabled: debounced !== "",
+  });
+  // The linked expense may be far older than any search result, so fetch it
+  // directly to label the current selection.
+  const current = useQuery({
+    queryKey: ["transaction", value],
+    queryFn: () => api<Transaction>(`/transactions/${value}`),
+    enabled: value !== "",
+  });
+
+  const label = (e: Transaction) =>
+    `${e.date.slice(0, 10)} · ${
+      e.description || e.subcategory?.name || "expense"
+    } · ${formatCents(e.amount, currencyOf(e.accountId))}`;
+
+  if (value) {
+    return (
+      <div className="mt-1 flex items-center gap-2 text-xs">
+        <span className="text-emerald-600">
+          reimburses: {current.data ? label(current.data) : "…"}
+        </span>
+        <button
+          type="button"
+          className="text-zinc-400 hover:text-red-600"
+          onClick={() => onChange("")}
+        >
+          clear
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-1">
+      <Input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="reimburses an expense? search it (e.g. amazon)…"
+        className="w-full text-xs"
+      />
+      {debounced && (
+        <div className="mt-1 max-h-40 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-800">
+          {results.data?.items.map((e) => (
+            <button
+              type="button"
+              key={e.id}
+              className="block w-full px-2 py-1 text-left text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              onClick={() => onChange(e.id)}
+            >
+              {label(e)}
+            </button>
+          ))}
+          {results.data?.items.length === 0 && (
+            <p className="px-2 py-1 text-xs text-zinc-400">
+              no matching expense
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TransactionRow({
   transaction: t,
   accountName,
   currency,
+  currencyOf,
+  filterAccountId,
   subcategories,
   onChange,
   onDelete,
@@ -255,6 +400,10 @@ function TransactionRow({
   transaction: Transaction;
   accountName: (id: string | null) => string;
   currency: string;
+  currencyOf: (id: string) => string;
+  /** When the list is scoped to one account, its id — enables the running
+   * balance column and orients a transfer's sign to that account. */
+  filterAccountId: string | null;
   subcategories: Subcategory[];
   onChange: () => void;
   onDelete: () => void;
@@ -264,6 +413,8 @@ function TransactionRow({
   const [amount, setAmount] = useState((t.amount / 100).toFixed(2));
   const [subcategoryId, setSubcategoryId] = useState(t.subcategoryId ?? "");
   const [description, setDescription] = useState(t.description ?? "");
+  const [parentId, setParentId] = useState(t.parentTransactionId ?? "");
+  const [excludeFromStats, setExcludeFromStats] = useState(t.excludeFromStats);
   const [error, setError] = useState<string | null>(null);
 
   // Type and account are fixed; only these fields are editable. Categories are
@@ -273,11 +424,25 @@ function TransactionRow({
   );
 
   const save = useMutation({
-    mutationFn: (body: Record<string, unknown>) =>
-      api<Transaction>(`/transactions/${t.id}`, {
+    mutationFn: async (vars: {
+      body: Record<string, unknown>;
+      parentChanged: boolean;
+      parentTransactionId: string | null;
+    }) => {
+      await api<Transaction>(`/transactions/${t.id}`, {
         method: "PATCH",
-        body: JSON.stringify(body),
-      }),
+        body: JSON.stringify(vars.body),
+      });
+      // The reimbursement link is a separate association, set via its own route.
+      if (vars.parentChanged) {
+        await api<Transaction>(`/transactions/${t.id}/reimburses`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            parentTransactionId: vars.parentTransactionId,
+          }),
+        });
+      }
+    },
     onSuccess: () => {
       setEditing(false);
       onChange();
@@ -290,6 +455,8 @@ function TransactionRow({
     setAmount((t.amount / 100).toFixed(2));
     setSubcategoryId(t.subcategoryId ?? "");
     setDescription(t.description ?? "");
+    setParentId(t.parentTransactionId ?? "");
+    setExcludeFromStats(t.excludeFromStats);
     setError(null);
     setEditing(true);
   };
@@ -302,22 +469,35 @@ function TransactionRow({
     }
     const body: Record<string, unknown> = { date, amount: cents, description };
     if (t.type !== "TRANSFER") {
-      if (!subcategoryId) {
-        setError("Pick a category");
+      if (!excludeFromStats && !subcategoryId) {
+        setError("Pick a category (or mark it internal)");
         return;
       }
-      body.subcategoryId = subcategoryId;
+      if (subcategoryId) body.subcategoryId = subcategoryId;
+      body.excludeFromStats = excludeFromStats;
     }
-    save.mutate(body);
+    save.mutate({
+      body,
+      parentChanged:
+        t.type === "INCOME" && parentId !== (t.parentTransactionId ?? ""),
+      parentTransactionId: parentId || null,
+    });
   };
 
-  const sign = t.type === "INCOME" ? "+" : "−";
+  // A transfer's sign depends on which side the filtered account is on: money
+  // arriving (this account is the destination) is +, leaving is −.
+  const transferIn =
+    t.type === "TRANSFER" && t.counterAccountId === filterAccountId;
+  const sign = t.type === "INCOME" || transferIn ? "+" : "−";
   const color =
-    t.type === "INCOME"
+    t.type === "INCOME" || transferIn
       ? "text-emerald-600"
       : t.type === "TRANSFER"
         ? "text-zinc-500"
         : "";
+  // Show a signed amount for transfers only when scoped to one account (so the
+  // running balance reads correctly); otherwise keep them sign-less.
+  const showSign = t.type !== "TRANSFER" || filterAccountId !== null;
 
   if (editing) {
     return (
@@ -334,16 +514,27 @@ function TransactionRow({
           {t.type === "TRANSFER" ? (
             <span className="text-zinc-500">Transfer</span>
           ) : (
-            <Select
-              value={subcategoryId}
-              onChange={(e) => setSubcategoryId(e.target.value)}
-            >
-              {eligible.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </Select>
+            <>
+              <Select
+                value={subcategoryId}
+                onChange={(e) => setSubcategoryId(e.target.value)}
+                disabled={excludeFromStats}
+              >
+                {eligible.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </Select>
+              <label className="mt-1 flex items-center gap-1 text-xs text-zinc-500">
+                <input
+                  type="checkbox"
+                  checked={excludeFromStats}
+                  onChange={(e) => setExcludeFromStats(e.target.checked)}
+                />
+                Internal (exclude from stats)
+              </label>
+            </>
           )}
         </td>
         <td className="py-2 pr-3">
@@ -353,6 +544,16 @@ function TransactionRow({
             placeholder="optional"
             className="w-full"
           />
+          {/* Link this income to the expense it pays back (e.g. a peer FX swap:
+              the Kaspi debit is the expense, this Revolut credit reimburses it,
+              so only the spread hits the monthly total). */}
+          {t.type === "INCOME" && (
+            <ReimbursePicker
+              value={parentId}
+              currencyOf={currencyOf}
+              onChange={setParentId}
+            />
+          )}
         </td>
         <td className="py-2 pr-3 whitespace-nowrap text-zinc-500">
           {accountName(t.accountId)}
@@ -366,6 +567,7 @@ function TransactionRow({
             className="w-24 text-right"
           />
         </td>
+        {filterAccountId && <td className="py-2 pr-3" />}
         <td className="py-2">
           <div className="flex items-center justify-end gap-2">
             <button
@@ -399,18 +601,38 @@ function TransactionRow({
         ) : (
           (t.subcategory?.name ?? "—")
         )}
+        {t.excludeFromStats && (
+          <span className="ml-1.5 rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+            internal
+          </span>
+        )}
         {t.type === "INCOME" && t.parentTransactionId && (
           <span className="ml-1.5 text-xs text-zinc-400">reimbursement</span>
         )}
-        {t.type === "EXPENSE" && t.reimbursements.length > 0 && (
-          <span className="ml-1.5 text-xs text-zinc-400">
-            reimbursed{" "}
-            {formatCents(
-              t.reimbursements.reduce((sum, r) => sum + r.amount, 0),
-              currency,
-            )}
-          </span>
-        )}
+        {t.type === "EXPENSE" &&
+          !t.excludeFromStats &&
+          t.reimbursements.length > 0 &&
+          (() => {
+            // Show the payback in the currency it actually arrived in (the
+            // reimbursing account's), not the expense's — a €120 Revolut credit
+            // against a tenge charge is "€120", not "KZT 120". Amounts are only
+            // summed when they share a currency.
+            const cur = currencyOf(t.reimbursements[0].accountId);
+            const uniform = t.reimbursements.every(
+              (r) => currencyOf(r.accountId) === cur,
+            );
+            return (
+              <span className="ml-1.5 text-xs text-zinc-400">
+                reimbursed{" "}
+                {uniform
+                  ? formatCents(
+                      t.reimbursements.reduce((sum, r) => sum + r.amount, 0),
+                      cur,
+                    )
+                  : `${t.reimbursements.length}×`}
+              </span>
+            );
+          })()}
       </td>
       <td className="py-2 pr-3">{t.description ?? ""}</td>
       <td className="py-2 pr-3 whitespace-nowrap">
@@ -418,9 +640,16 @@ function TransactionRow({
         {t.type === "TRANSFER" && ` → ${accountName(t.counterAccountId)}`}
       </td>
       <td className={`py-2 pr-3 text-right whitespace-nowrap ${color}`}>
-        {t.type === "TRANSFER" ? "" : sign}
+        {showSign ? sign : ""}
         {formatCents(t.amount, currency)}
       </td>
+      {filterAccountId && (
+        <td className="py-2 pr-3 text-right whitespace-nowrap tabular-nums text-zinc-500">
+          {t.runningBalance !== undefined
+            ? formatCents(t.runningBalance, currency)
+            : ""}
+        </td>
+      )}
       <td className="py-2">
         <div className="flex items-center justify-end gap-2">
           <button
@@ -456,6 +685,7 @@ function QuickAdd({
   onCreated: () => void;
 }) {
   const [type, setType] = useState<TransactionType>("EXPENSE");
+  const [internal, setInternal] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -466,6 +696,7 @@ function QuickAdd({
     queryFn: () => api<TelegramSettings>("/telegram/settings"),
   });
   const [accountId, setAccountId] = useState("");
+  const [counterAccountId, setCounterAccountId] = useState("");
   const [date, setDate] = useState(todayISO());
 
   // Prefer the account chosen as default, else the first one.
@@ -478,6 +709,23 @@ function QuickAdd({
         : accounts[0].id,
     );
   }, [accountId, accounts, settings.data?.defaultAccountId]);
+
+  // Default the transfer destination to a different account than the source.
+  useEffect(() => {
+    if (counterAccountId || accounts.length === 0) return;
+    setCounterAccountId(
+      (accounts.find((a) => a.id !== accountId) ?? accounts[0]).id,
+    );
+  }, [counterAccountId, accountId, accounts]);
+
+  // A transfer can't cross currencies (two amounts + a fee) — warn before submit.
+  const fromCurrency = accounts.find((a) => a.id === accountId)?.currency;
+  const toCurrency = accounts.find((a) => a.id === counterAccountId)?.currency;
+  const currencyMismatch =
+    type === "TRANSFER" &&
+    !!fromCurrency &&
+    !!toCurrency &&
+    fromCurrency !== toCurrency;
 
   // Restore the last date used on this device (read after mount, so the
   // server-rendered markup and the first client render still agree).
@@ -558,16 +806,21 @@ function QuickAdd({
     };
     if (type === "TRANSFER") {
       body.counterAccountId = String(form.get("counterAccountId"));
+    } else if (internal) {
+      // An internal move (own-account transfer / exchange): no category, and
+      // kept out of income/spending stats.
+      body.excludeFromStats = true;
     } else {
       body.subcategoryId = String(form.get("subcategoryId"));
     }
     const parentId = String(form.get("parentTransactionId") || "");
-    if (type === "INCOME" && parentId) {
+    if (type === "INCOME" && !internal && parentId) {
       body.parentTransactionId = parentId;
     }
     create.mutate(body);
     window.localStorage.setItem(LAST_DATE_KEY, date);
     e.currentTarget.reset();
+    setInternal(false);
   };
 
   return (
@@ -610,7 +863,12 @@ function QuickAdd({
         </Field>
         {type === "TRANSFER" ? (
           <Field label="To account">
-            <Select name="counterAccountId" required>
+            <Select
+              name="counterAccountId"
+              required
+              value={counterAccountId}
+              onChange={(e) => setCounterAccountId(e.target.value)}
+            >
               {accounts.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name}
@@ -618,7 +876,7 @@ function QuickAdd({
               ))}
             </Select>
           </Field>
-        ) : (
+        ) : internal ? null : (
           <Field label="Category">
             <Select name="subcategoryId" required>
               {eligibleSubcategories.map((s) => (
@@ -629,7 +887,21 @@ function QuickAdd({
             </Select>
           </Field>
         )}
-        {type === "INCOME" && (
+        {/* Own-account transfer / currency exchange: moves the balance, but is
+            kept out of income/spending. No category needed. */}
+        {type !== "TRANSFER" && (
+          <Field label="Internal move">
+            <label className="flex h-9 items-center gap-1.5 text-sm text-zinc-600 dark:text-zinc-300">
+              <input
+                type="checkbox"
+                checked={internal}
+                onChange={(e) => setInternal(e.target.checked)}
+              />
+              exclude from stats
+            </label>
+          </Field>
+        )}
+        {type === "INCOME" && !internal && (
           <Field label="Reimburses">
             <Select name="parentTransactionId" defaultValue="">
               <option value="">—</option>
@@ -653,10 +925,18 @@ function QuickAdd({
         <Field label="Description">
           <Input name="description" placeholder="optional" />
         </Field>
-        <Button type="submit" disabled={create.isPending}>
+        <Button type="submit" disabled={create.isPending || currencyMismatch}>
           Add
         </Button>
       </form>
+      {currencyMismatch && (
+        <p className="mt-2 text-sm text-amber-600">
+          A {fromCurrency}→{toCurrency} move isn&apos;t one transfer (two amounts
+          plus any fee). Record it as an <strong>expense</strong> on the source
+          and an <strong>income</strong> on the destination, then link them with
+          “reimburses” — the difference captures the conversion and commission.
+        </p>
+      )}
       {notice && <p className="mt-2 text-sm text-amber-600">{notice}</p>}
       <ErrorText error={error} />
     </Card>

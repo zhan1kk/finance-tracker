@@ -12,6 +12,8 @@ export type CreateTransactionInput = {
   /** Links an INCOME to the EXPENSE it reimburses. */
   parentTransactionId?: string;
   description?: string;
+  /** Marks an internal move: keeps the balance effect, drops it from stats. */
+  excludeFromStats?: boolean;
 };
 
 export type ListTransactionsQuery = {
@@ -55,4 +57,6 @@ export type CategoryStat = {
 export type TransactionStats = {
   monthly: MonthlyStat[];
   byCategory: CategoryStat[];
+  /** Income per subcategory in cents (excludes reimbursements). */
+  incomeByCategory: CategoryStat[];
 };

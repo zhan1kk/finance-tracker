@@ -52,6 +52,7 @@ export default function ImportsPage() {
 function NewImport({ onImported }: { onImported: (batchId: string) => void }) {
   const queryClient = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
+  const pdfInput = useRef<HTMLInputElement>(null);
   const [accountId, setAccountId] = useState("");
   const [filename, setFilename] = useState("");
   const [csv, setCsv] = useState("");
@@ -71,6 +72,7 @@ function NewImport({ onImported }: { onImported: (batchId: string) => void }) {
     setInspection(null);
     setMapping(null);
     if (fileInput.current) fileInput.current.value = "";
+    if (pdfInput.current) pdfInput.current.value = "";
   };
 
   const onFile = async (file: File) => {
@@ -133,12 +135,49 @@ function NewImport({ onImported }: { onImported: (batchId: string) => void }) {
     create.mutate();
   };
 
+  // PDF path: no column mapping — a local Ollama model reads the statement into
+  // rows, which then flow through the same review screen as a CSV.
+  const createPdf = useMutation({
+    mutationFn: (vars: { filename: string; pdfBase64: string }) =>
+      api<ImportResult>("/imports/pdf", {
+        method: "POST",
+        body: JSON.stringify({ accountId, ...vars }),
+      }),
+    onSuccess: (result) => {
+      void queryClient.invalidateQueries({ queryKey: ["import-batches"] });
+      setSkipped(result.skipped.length);
+      reset();
+      onImported(result.batch.id);
+    },
+    onError: setError,
+  });
+
+  const onPdfFile = async (file: File) => {
+    setError(null);
+    setSkipped(null);
+    if (!accountId) {
+      setError(new Error("Pick an account first"));
+      if (pdfInput.current) pdfInput.current.value = "";
+      return;
+    }
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+    // Strip the "data:application/pdf;base64," prefix.
+    const pdfBase64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+    createPdf.mutate({ filename: file.name, pdfBase64 });
+  };
+
   return (
     <Card>
       <h2 className="mb-1 font-medium">Import a statement</h2>
       <p className="mb-3 text-sm text-zinc-500">
-        Upload a CSV export from your bank. Transactions are categorized
-        automatically where possible; you confirm the rest.
+        Upload a CSV export, or a PDF (read locally by Ollama) for banks that
+        only give PDFs. Transactions are categorized automatically where
+        possible; you confirm the rest.
       </p>
 
       <div className="flex flex-wrap items-end gap-3">
@@ -164,7 +203,27 @@ function NewImport({ onImported }: { onImported: (batchId: string) => void }) {
             className="text-sm file:mr-3 file:rounded-md file:border file:border-zinc-300 file:bg-white file:px-3 file:py-1.5 file:text-sm dark:file:border-zinc-700 dark:file:bg-zinc-900"
           />
         </Field>
+        <Field label="PDF file (Ollama)">
+          <input
+            ref={pdfInput}
+            type="file"
+            accept=".pdf,application/pdf"
+            disabled={createPdf.isPending}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void onPdfFile(file);
+            }}
+            className="text-sm file:mr-3 file:rounded-md file:border file:border-zinc-300 file:bg-white file:px-3 file:py-1.5 file:text-sm disabled:opacity-50 dark:file:border-zinc-700 dark:file:bg-zinc-900"
+          />
+        </Field>
       </div>
+
+      {createPdf.isPending && (
+        <p className="mt-3 text-sm text-amber-600">
+          Reading the PDF with Ollama… this can take up to a minute (longer on a
+          cold model). Keep this tab open.
+        </p>
+      )}
 
       {inspection && mapping && (
         <form

@@ -19,7 +19,12 @@ export class AccountService {
   ) {}
 
   listAccounts(userId: string) {
-    return this.prisma.account.findMany({ where: { userId } });
+    // Pinned first (then stable by creation) so every list surfaces the
+    // important accounts at the top.
+    return this.prisma.account.findMany({
+      where: { userId },
+      orderBy: [{ pinned: 'desc' }, { createdAt: 'asc' }],
+    });
   }
 
   async getAccountById(userId: string, id: string) {
@@ -52,6 +57,7 @@ export class AccountService {
         balance: initialBalance,
         initialBalance,
         initialBalanceBase,
+        countInNetWorth: input.countInNetWorth ?? true,
         userId,
       },
     });
@@ -105,6 +111,8 @@ export class AccountService {
         currency: input.currency,
         initialBalance: input.initialBalance,
         initialBalanceBase,
+        countInNetWorth: input.countInNetWorth,
+        pinned: input.pinned,
         balance: initialDelta !== 0 ? { increment: initialDelta } : undefined,
       },
     });

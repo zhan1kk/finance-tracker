@@ -110,6 +110,13 @@ model Account {
   /// `initialBalance` converted to the user's base currency (cents), frozen at the
   /// rate in effect when the account was created/edited. Used as the net-worth anchor.
   initialBalanceBase Int     @default(0)
+  /// Whether this account's balance is part of the base-currency net worth. Off
+  /// for a foreign "pocket" the user spends from but doesn't count as wealth
+  /// (e.g. a KZT account) — its spending still counts in the stats, only the
+  /// net-worth line ignores it.
+  countInNetWorth Boolean    @default(true)
+  /// Pinned accounts sort to the top of the accounts list, separated from the rest.
+  pinned         Boolean     @default(false)
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 
@@ -161,6 +168,10 @@ model Transaction {
   /// aggregations (stats, net worth, budgets) sum this so mixed currencies add up correctly.
   amountBase  Int
   description String?
+  /// True for an internal move between your own accounts (a transfer leg or a
+  /// currency exchange). It still moves the account balance, but is left out of
+  /// income/spending/budget stats so it doesn't look like earnings or spending.
+  excludeFromStats Boolean  @default(false)
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
@@ -284,8 +295,17 @@ model ImportRow {
   counterAccountId String?
   counterAccount   Account? @relation("ImportRowCounterAccount", fields: [counterAccountId], references: [id], onDelete: SetNull)
 
+  /// Marked an internal move (own-account transfer / currency exchange): commits
+  /// a transaction that moves the balance but is excluded from income/spending.
+  excludeFromStats Boolean @default(false)
+
   /// Parse errors or skip reasons, surfaced in the review UI
   note String?
+
+  /// The user's own annotation, written while reviewing ("K's birthday brunch");
+  /// merged into the created transaction's description on commit. Separate from
+  /// `note`, which the system overwrites with skip reasons.
+  userNote String?
 
   /// The transaction created on commit; nulled if the batch is undone
   transactionId String?      @unique
@@ -325,6 +345,10 @@ model CategorizationRule {
   /// The other side of a transfer (my other account), instead of a subcategory.
   counterAccountId String?
   counterAccount   Account? @relation("RuleCounterAccount", fields: [counterAccountId], references: [id], onDelete: Cascade)
+
+  /// A third kind of target: matched rows are marked internal (excluded from
+  /// stats) instead of getting a subcategory or transfer account.
+  excludeFromStats Boolean @default(false)
 
   @@unique([userId, pattern, type])
   @@index([userId])
@@ -398,12 +422,14 @@ model RecurringRule {
   @@index([active, nextRunAt])
 }
 
-/// A monthly spending limit for one subcategory OR one category (exactly one is
-/// set; enforced in the service). Progress is computed against the current
+/// A spending limit for one subcategory OR one category (exactly one is set;
+/// enforced in the service). `monthlyLimit` is the recurring default; a month
+/// can override it via a BudgetPeriod. Progress is computed against a financial
 /// month's spending in that scope.
 model Budget {
   id           String   @id @default(uuid())
-  /// Monthly limit in minor currency units (cents)
+  /// Default monthly limit in minor currency units (cents); used for any month
+  /// without a BudgetPeriod override.
   monthlyLimit Int
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -417,7 +443,26 @@ model Budget {
   /// ...or a whole category (subcategoryId is then null)
   category      TransactionCategory?
 
+  periods BudgetPeriod[]
+
   @@unique([userId, subcategoryId])
   @@unique([userId, category])
   @@index([userId])
+}
+
+/// A per-month override of a budget's limit, so the same budget can be e.g.
+/// €300 for the May cycle and €500 for June. `period` is the financial-month
+/// label "YYYY-MM" (the same labelling the dashboard uses). A month with no row
+/// falls back to Budget.monthlyLimit.
+model BudgetPeriod {
+  id       String @id @default(uuid())
+  /// Financial-month label, e.g. "2026-06"
+  period   String
+  /// Limit for this month in minor currency units (cents)
+  limit    Int
+  budgetId String
+  budget   Budget @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+
+  @@unique([budgetId, period])
+  @@index([budgetId])
 }

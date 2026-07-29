@@ -60,7 +60,11 @@ export function parseDate(raw: string, format: DateFormat): Date | null {
 
   const [a, b, y] = nums;
   const [day, month] = format === 'MM/DD/YYYY' ? [b, a] : [a, b];
-  return utcDate(y, month, day);
+  // Two-digit years (e.g. Kaspi's "19.06.26") map to 2000–2099. Without this,
+  // Date.UTC treats 0–99 as 1900–1999, so "26" would silently become 1926 and
+  // the whole import would vanish from the current-year views.
+  const fullYear = y < 100 ? 2000 + y : y;
+  return utcDate(fullYear, month, day);
 }
 
 function utcDate(year: number, month: number, day: number): Date | null {

@@ -42,8 +42,32 @@ type StagedRow = {
   subcategoryId: string | null;
   /** Set instead of subcategoryId when the row is a transfer between own accounts. */
   counterAccountId: string | null;
+  /** Marked an internal move: commits, moves the balance, excluded from stats. */
+  excludeFromStats: boolean;
   note: string | null;
+  /** A repeat of an earlier row in the same file (usually a real second charge);
+   * kept out of auto-categorization so including it is always a conscious act. */
+  isRepeat: boolean;
 };
+
+/**
+ * The committed transaction's description: the bank's text plus the user's
+ * review-time annotation ("Starbucks · K's birthday brunch") — the bank text
+ * stays for traceability, the note carries what it was actually for.
+ */
+function mergedDescription(row: {
+  description: string;
+  userNote: string | null;
+}): string {
+  if (!row.userNote) return row.description;
+  return row.description ? `${row.description} · ${row.userNote}` : row.userNote;
+}
+
+// Amount columns are Postgres `Int` (32-bit). A value past this can't be stored
+// and would otherwise surface as a 500 on insert. In practice it means a wrong
+// decimal separator (a dot-decimal file read as comma turns 250000.00 into
+// 25,000,000,000), so such a row is skipped with a hint rather than crashing.
+const PG_INT_MAX = 2_147_483_647;
 
 const BATCH_INCLUDE = {
   rows: {
@@ -128,6 +152,7 @@ export class ImportService {
             predictionSource: row.predictionSource,
             subcategoryId: row.subcategoryId,
             counterAccountId: row.counterAccountId,
+            excludeFromStats: row.excludeFromStats,
             note: row.note,
           })),
         },
@@ -170,12 +195,21 @@ export class ImportService {
     return batch;
   }
 
-  /** Assigns a row either a subcategory or a transfer counter account. */
+  /**
+   * Assigns a row a subcategory or a transfer counter account, and/or saves the
+   * user's annotation. A note-only call leaves categorization state untouched —
+   * jotting down "what was this" must not force a category decision.
+   */
   async reviewRow(
     userId: string,
     batchId: string,
     rowId: string,
-    choice: { subcategoryId?: string | null; counterAccountId?: string | null },
+    choice: {
+      subcategoryId?: string | null;
+      counterAccountId?: string | null;
+      excludeFromStats?: boolean;
+      userNote?: string;
+    },
   ) {
     const batch = await this.getPendingBatch(userId, batchId);
     const row = batch.rows.find((r) => r.id === rowId);
@@ -190,10 +224,31 @@ export class ImportService {
       );
     }
 
+    // Trimmed; an empty string clears the note.
+    const userNote =
+      choice.userNote !== undefined ? choice.userNote.trim() || null : undefined;
+
+    const asInternal = choice.excludeFromStats === true;
     const asTransfer = Boolean(choice.counterAccountId);
-    if (asTransfer === Boolean(choice.subcategoryId)) {
+    const asSubcategory = Boolean(choice.subcategoryId);
+    if (!asInternal && !asTransfer && !asSubcategory) {
+      if (userNote === undefined) {
+        throw new BadRequestException(
+          'Choose a category, a transfer account, mark it internal, or add a note',
+        );
+      }
+      return this.prisma.importRow.update({
+        where: { id: rowId },
+        data: { userNote },
+        include: {
+          subcategory: { select: { id: true, name: true, category: true } },
+          counterAccount: { select: { id: true, name: true } },
+        },
+      });
+    }
+    if ([asInternal, asTransfer, asSubcategory].filter(Boolean).length > 1) {
       throw new BadRequestException(
-        'Choose exactly one of a category or a transfer account',
+        'Choose only one of a category, a transfer account, or internal',
       );
     }
     if (asTransfer) {
@@ -203,34 +258,38 @@ export class ImportService {
         batch.account.currency,
         choice.counterAccountId as string,
       );
-    } else {
+    } else if (asSubcategory) {
       await this.assertOwnSubcategory(userId, choice.subcategoryId as string);
     }
 
     return this.prisma.importRow.update({
       where: { id: rowId },
       data: {
-        subcategoryId: asTransfer ? null : (choice.subcategoryId as string),
+        subcategoryId: asSubcategory ? (choice.subcategoryId as string) : null,
         counterAccountId: asTransfer
           ? (choice.counterAccountId as string)
           : null,
-        // `corrected` gates rule-learning on commit. A transfer picked on a row
-        // no rule had already routed there is worth learning, too — so future
-        // statements auto-route it without another manual pick.
-        corrected: asTransfer
-          ? row.counterAccountId !== (choice.counterAccountId as string)
-          : row.predictedSubcategoryId !== choice.subcategoryId,
+        excludeFromStats: asInternal,
+        // `corrected` gates rule-learning on commit. A transfer or internal mark
+        // picked on a row no rule had already routed there is worth learning,
+        // too — so future statements auto-route it without another manual pick.
+        corrected: asInternal
+          ? !row.excludeFromStats
+          : asTransfer
+            ? row.counterAccountId !== (choice.counterAccountId as string)
+            : row.predictedSubcategoryId !== choice.subcategoryId,
         // Accepting the suggestion as-is keeps the categorizer as the deciding
         // source — the human co-signed, the prediction stood. Anything else is
         // a manual decision.
         source:
-          !asTransfer &&
+          asSubcategory &&
           row.predictedSubcategoryId !== null &&
           choice.subcategoryId === row.predictedSubcategoryId
             ? row.source
             : 'MANUAL',
         status: 'READY',
         note: null,
+        userNote,
       },
       include: {
         subcategory: { select: { id: true, name: true, category: true } },
@@ -265,7 +324,10 @@ export class ImportService {
     }
     if (account.currency !== currency) {
       throw new BadRequestException(
-        `Cannot transfer to ${account.name}: it is in ${account.currency}, not ${currency}`,
+        `Cannot transfer to ${account.name}: it is in ${account.currency}, not ` +
+          `${currency}. A cross-currency move isn't one transfer — categorize ` +
+          `this row as an expense/income and link it to the matching leg on the ` +
+          `other account with "reimburses".`,
       );
     }
   }
@@ -275,7 +337,9 @@ export class ImportService {
     const committable = batch.rows.filter(
       (r) =>
         r.status === 'READY' &&
-        (r.subcategoryId !== null || r.counterAccountId !== null),
+        (r.subcategoryId !== null ||
+          r.counterAccountId !== null ||
+          r.excludeFromStats),
     );
     const convert = await this.fx.converterFor(userId, batch.account.currency);
 
@@ -326,9 +390,10 @@ export class ImportService {
                 date: row.date,
                 amount: row.amount,
                 amountBase: convert(row.date, row.amount),
-                description: row.description,
+                description: mergedDescription(row),
                 accountId: batch.accountId,
                 subcategoryId: row.subcategoryId,
+                excludeFromStats: row.excludeFromStats,
                 dedupeHash: row.dedupeHash,
               },
             });
@@ -344,7 +409,9 @@ export class ImportService {
               ? { counterAccountId: row.counterAccountId }
               : row.subcategoryId
                 ? { subcategoryId: row.subcategoryId }
-                : null;
+                : row.excludeFromStats
+                  ? { excludeFromStats: true as const }
+                  : null;
             if (target) {
               await this.rules.learnFromCorrection(
                 tx,
@@ -395,6 +462,7 @@ export class ImportService {
       amount: number;
       type: TransactionType;
       description: string;
+      userNote: string | null;
       dedupeHash: string;
       counterAccountId: string | null;
     },
@@ -434,7 +502,7 @@ export class ImportService {
         date: row.date,
         amount: row.amount,
         amountBase: convert(row.date, row.amount),
-        description: row.description,
+        description: mergedDescription(row),
         accountId: from,
         counterAccountId: to,
         dedupeHash: row.dedupeHash,
@@ -512,6 +580,33 @@ export class ImportService {
       }),
     ]);
 
+    return this.getBatch(userId, batchId);
+  }
+
+  /**
+   * Reverses an accidental undo. Undo already restored every committed row to
+   * READY (transaction links cleared) but left the batch in UNDONE, which no
+   * longer opens for review or commit — a dead end. Flipping it back to
+   * PENDING_REVIEW reopens it exactly as it stood pre-commit; the rows are
+   * untouched, so review verdicts and categories survive the round trip.
+   */
+  async reopen(userId: string, batchId: string) {
+    const batch = await this.prisma.importBatch.findFirst({
+      where: { id: batchId, userId },
+      select: { id: true, status: true },
+    });
+    if (!batch) {
+      throw new NotFoundException(
+        `Import batch with id ${batchId} was not found`,
+      );
+    }
+    if (batch.status !== 'UNDONE') {
+      throw new ConflictException('Only an undone batch can be reopened');
+    }
+    await this.prisma.importBatch.update({
+      where: { id: batchId },
+      data: { status: 'PENDING_REVIEW' },
+    });
     return this.getBatch(userId, batchId);
   }
 
@@ -615,14 +710,18 @@ export class ImportService {
         raw[mapping.amountColumn] ?? '',
         mapping.decimalSeparator,
       );
-      if (!date || signedAmount === null || signedAmount === 0) {
+      const tooLarge =
+        signedAmount !== null && Math.abs(signedAmount) > PG_INT_MAX;
+      if (!date || signedAmount === null || signedAmount === 0 || tooLarge) {
         skipped.push({
           rowIndex,
           reason: !date
             ? 'unparseable date'
             : signedAmount === null
               ? 'unparseable amount'
-              : 'zero amount',
+              : signedAmount === 0
+                ? 'zero amount'
+                : 'amount out of range — check the decimal separator',
           raw,
         });
         return;
@@ -658,14 +757,24 @@ export class ImportService {
         predictionSource: null,
         subcategoryId: null,
         counterAccountId: null,
+        excludeFromStats: false,
         note: null,
+        isRepeat: false,
       });
     });
 
     return { staged, skipped };
   }
 
-  /** Marks rows whose hash repeats within the batch or already exists committed. */
+  /**
+   * Flags rows that collide on dedupe hash. A match against an *already
+   * committed* transaction is a hard DUPLICATE — the re-import case, excluded
+   * so a re-uploaded statement can't double-count. A repeat *within this same
+   * file* is different: the bank listing a charge twice usually means it
+   * happened twice (two identical tickets bought together), so it stays
+   * includable — surfaced for review, kept out of auto-categorization so it is
+   * never silently committed. Leave it untouched to skip it.
+   */
   private async dedupe(accountId: string, staged: StagedRow[]) {
     const existing = await this.prisma.transaction.findMany({
       where: {
@@ -683,8 +792,10 @@ export class ImportService {
         row.status = 'DUPLICATE';
         row.note = 'Already imported in a previous statement';
       } else if (seenInBatch.has(row.dedupeHash)) {
-        row.status = 'DUPLICATE';
-        row.note = 'Repeated within this file';
+        row.status = 'NEEDS_REVIEW';
+        row.isRepeat = true;
+        row.note =
+          'Same as an earlier row in this file — categorize it to include (a real second charge), or leave it to skip';
       } else {
         seenInBatch.add(row.dedupeHash);
       }
@@ -696,7 +807,10 @@ export class ImportService {
     staged: StagedRow[],
     threshold: number,
   ) {
-    const pending = staged.filter((r) => r.status !== 'DUPLICATE');
+    // Repeats are excluded alongside duplicates: auto-categorizing one could
+    // promote it to READY and silently commit a possible double charge, so
+    // including a repeat must always be a deliberate pick in review.
+    const pending = staged.filter((r) => r.status !== 'DUPLICATE' && !r.isRepeat);
     if (pending.length === 0) return;
 
     const subcategories = await this.prisma.subcategory.findMany({
@@ -713,6 +827,7 @@ export class ImportService {
         type: true,
         subcategoryId: true,
         counterAccountId: true,
+        excludeFromStats: true,
       },
     });
     const forProvider: StagedRow[] = [];
@@ -722,7 +837,13 @@ export class ImportService {
         forProvider.push(row);
         continue;
       }
-      if (hit.counterAccountId) {
+      if (hit.excludeFromStats) {
+        // A learned internal move (own-account transfer / exchange): excluded
+        // from stats, no subcategory or counter account.
+        row.excludeFromStats = true;
+        row.subcategoryId = null;
+        row.counterAccountId = null;
+      } else if (hit.counterAccountId) {
         // Movements between own accounts are not spending; they never reach the
         // categorizer and carry no subcategory.
         row.counterAccountId = hit.counterAccountId;

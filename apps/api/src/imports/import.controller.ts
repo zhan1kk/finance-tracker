@@ -12,16 +12,19 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/auth.types';
 import { ColumnMappingDTO } from './dtos/column-mapping.dto';
 import { CreateImportDTO } from './dtos/create-import.dto';
+import { CreatePdfImportDTO } from './dtos/create-pdf-import.dto';
 import { InspectCsvDTO } from './dtos/inspect-csv.dto';
 import { ReviewRowDTO } from './dtos/review-row.dto';
 import { ImportService } from './import.service';
 import { MappingService } from './mapping.service';
+import { PdfImportService } from './pdf/pdf-import.service';
 
 @Controller('imports')
 export class ImportController {
   constructor(
     private readonly importService: ImportService,
     private readonly mappingService: MappingService,
+    private readonly pdfImportService: PdfImportService,
   ) {}
 
   /** Detect headers + sample rows for building a column mapping. */
@@ -33,6 +36,12 @@ export class ImportController {
   @Post()
   createImport(@CurrentUser() user: AuthUser, @Body() body: CreateImportDTO) {
     return this.importService.createImport(user.userId, body);
+  }
+
+  /** Extract a PDF statement (local Ollama) into a review batch. */
+  @Post('pdf')
+  importPdf(@CurrentUser() user: AuthUser, @Body() body: CreatePdfImportDTO) {
+    return this.pdfImportService.importPdf(user.userId, body);
   }
 
   @Get()
@@ -85,6 +94,11 @@ export class ImportController {
   @Post(':id/undo')
   undo(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.importService.undo(user.userId, id);
+  }
+
+  @Post(':id/reopen')
+  reopen(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.importService.reopen(user.userId, id);
   }
 
   @Delete(':id')

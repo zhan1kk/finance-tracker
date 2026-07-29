@@ -12,6 +12,9 @@ export type CreateAccountInput = {
   currency: string;
   /** In minor currency units (cents). */
   initialBalance?: number;
+  countInNetWorth?: boolean;
+  /** Sorts the account to the top of the list. */
+  pinned?: boolean;
 };
 
 export type UpdateAccountInput = Partial<CreateAccountInput>;

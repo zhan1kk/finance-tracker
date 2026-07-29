@@ -138,13 +138,51 @@ describe('API (e2e)', () => {
       expect(await getBalance(account.id)).toBe(120_000);
     });
 
-    it('rejects direct balance edits', async () => {
-      const account = await createAccount();
+    it('corrects the starting balance, shifting the derived balance by the delta', async () => {
+      const account = await createAccount(100_000);
+      const expenseId = (await createSubcategory('Coffee', 'Expenses')).id;
+      await request(http)
+        .post('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'EXPENSE',
+          date: '2026-07-01',
+          amount: 30_000,
+          subcategoryId: expenseId,
+          accountId: account.id,
+        })
+        .expect(201);
+      expect(await getBalance(account.id)).toBe(70_000);
+
+      // Correcting the opening balance (+20_000) carries into the balance as a
+      // delta — it does not reset the balance to the new starting figure.
       await request(http)
         .patch(`/accounts/${account.id}`)
         .set('Authorization', `Bearer ${token}`)
-        .send({ initialBalance: 999_999 })
-        .expect(400);
+        .send({ initialBalance: 120_000 })
+        .expect(200);
+      expect(await getBalance(account.id)).toBe(90_000);
+    });
+
+    it('pins an account, sorting it to the top of the list', async () => {
+      const first = await createAccount(1_000);
+      const second = await createAccount(2_000);
+      await request(http)
+        .patch(`/accounts/${second.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ pinned: true })
+        .expect(200);
+
+      const list = await request(http)
+        .get('/accounts')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const ids = (list.body as { id: string; pinned: boolean }[]).map(
+        (a) => a.id,
+      );
+      // Pinned account leads, regardless of creation order.
+      expect(ids).toEqual([second.id, first.id]);
+      expect(list.body[0]).toMatchObject({ pinned: true });
     });
   });
 
@@ -298,6 +336,15 @@ describe('API (e2e)', () => {
 
       await createTransaction('EXPENSE', expenseId, 2_000);
       expect(await getBalance(accountId)).toBe(148_000);
+    });
+
+    it('books an internal move with no category and still moves the balance', async () => {
+      // An internal move (own-account transfer / exchange) skips the category
+      // requirement but still adjusts the balance.
+      await createTransaction('EXPENSE', undefined, 5_000, 201, {
+        excludeFromStats: true,
+      });
+      expect(await getBalance(accountId)).toBe(95_000);
     });
 
     it('Debts/Savings subcategories now count as expenses', async () => {
@@ -720,6 +767,11 @@ describe('API (e2e)', () => {
     type Stats = {
       monthly: { month: string; income: number; expense: number }[];
       byCategory: { subcategoryId: string; name: string; amount: number }[];
+      incomeByCategory: {
+        subcategoryId: string;
+        name: string;
+        amount: number;
+      }[];
     };
 
     beforeEach(async () => {
@@ -778,6 +830,9 @@ describe('API (e2e)', () => {
         expect.objectContaining({ subcategoryId: rentId, amount: 80_000 }),
         expect.objectContaining({ subcategoryId: groceriesId, amount: 12_000 }),
       ]);
+      expect(stats.incomeByCategory).toEqual([
+        expect.objectContaining({ subcategoryId: salaryId, amount: 300_000 }),
+      ]);
     });
 
     it('excludes transfers', async () => {
@@ -818,6 +873,62 @@ describe('API (e2e)', () => {
       expect(stats.byCategory).toEqual([
         expect.objectContaining({ subcategoryId: groceriesId, amount: 6_000 }),
       ]);
+      // The payback is a reimbursement, not earnings — excluded from income.
+      expect(stats.incomeByCategory).toEqual([]);
+    });
+
+    it('does not net a reimbursement against an internal (excluded) parent', async () => {
+      const parent = await addTransaction({
+        type: 'EXPENSE',
+        subcategoryId: groceriesId,
+        amount: 9_000,
+        date: '2026-06-05',
+        excludeFromStats: true,
+      });
+      await addTransaction({
+        type: 'INCOME',
+        subcategoryId: salaryId,
+        amount: 3_000,
+        date: '2026-06-06',
+        parentTransactionId: parent.id,
+      });
+
+      const stats = await getStats();
+      // The internal expense is excluded; its payback must not subtract either,
+      // or spending would carry a phantom -3000 credit.
+      expect(stats.monthly).toEqual([
+        { month: '2026-06', income: 0, expense: 0 },
+      ]);
+      expect(stats.byCategory).toEqual([]);
+      expect(stats.incomeByCategory).toEqual([]);
+    });
+
+    it('excludes internal moves from income and category breakdowns', async () => {
+      await addTransaction({
+        type: 'INCOME',
+        subcategoryId: salaryId,
+        amount: 100_000,
+        date: '2026-06-01',
+      });
+      // An internal move (e.g. money arriving from your own other account).
+      await addTransaction({
+        type: 'INCOME',
+        subcategoryId: salaryId,
+        amount: 500_000,
+        date: '2026-06-02',
+        excludeFromStats: true,
+      });
+
+      const stats = await getStats();
+      // Only the real €1000 counts as income; the internal €5000 does not.
+      expect(stats.monthly).toEqual([
+        { month: '2026-06', income: 100_000, expense: 0 },
+      ]);
+      expect(stats.incomeByCategory).toEqual([
+        expect.objectContaining({ subcategoryId: salaryId, amount: 100_000 }),
+      ]);
+      // But both moved the balance: 500k start + 100k + 500k.
+      expect(await getBalance(accountId)).toBe(1_100_000);
     });
 
     it('respects the from/to range', async () => {
@@ -1052,6 +1163,7 @@ describe('API (e2e)', () => {
       source: string;
       description: string;
       subcategory: { name: string } | null;
+      excludeFromStats: boolean;
     };
     type Batch = { id: string; status: string; rows: Row[] };
 
@@ -1119,6 +1231,79 @@ describe('API (e2e)', () => {
       expect(rowFor(batch, 'SPAR')).toMatchObject({
         status: 'NEEDS_REVIEW',
         subcategory: null,
+      });
+    });
+
+    it('skips an amount too large for the integer column instead of erroring', async () => {
+      // A dot-decimal file read as comma turns 30000000.00 into 3,000,000,000
+      // cents, past the 32-bit column. It must skip that row with a hint, not
+      // 500, and still import the valid rows.
+      const res = await request(http)
+        .post('/imports')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          accountId,
+          filename: 'huge.csv',
+          csv: [
+            'Date,Amount,Description',
+            '2026-07-01,-30000000.00,Overflow Co',
+            '2026-07-02,-12.50,SPAR AMSTERDAM 4471',
+          ].join('\n'),
+          mapping: MAPPING,
+        })
+        .expect(201);
+      const body = res.body as {
+        batch: Batch;
+        skipped: { reason: string }[];
+      };
+      expect(body.skipped).toEqual([
+        expect.objectContaining({
+          reason: expect.stringContaining('out of range'),
+        }),
+      ]);
+      expect(body.batch.rows).toHaveLength(1);
+      expect(body.batch.rows[0].description).toContain('SPAR');
+    });
+
+    it('marks a row internal: commits it, excludes it from stats, and auto-tags repeats', async () => {
+      const csv = [
+        'Date,Amount,Description',
+        '2026-07-01,100.00,Receipt from your account From Kaspi Pay',
+      ].join('\n');
+      const batch = await doImport(csv);
+      const row = batch.rows[0];
+      expect(row.status).toBe('NEEDS_REVIEW');
+
+      await request(http)
+        .patch(`/imports/${batch.id}/rows/${row.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ excludeFromStats: true })
+        .expect(200);
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      // It moved the balance (income +100 on a 500000-cent account) ...
+      expect(await getBalance(accountId)).toBe(510_000);
+      // ... but is not counted as income.
+      const stats = await request(http)
+        .get('/transactions/stats')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(stats.body).toMatchObject({ monthly: [], incomeByCategory: [] });
+
+      // A learned rule auto-flags the same counterparty on a later import.
+      const next = await doImport(
+        [
+          'Date,Amount,Description',
+          '2026-08-01,250.00,Receipt from your account From Kaspi Pay',
+        ].join('\n'),
+      );
+      expect(next.rows[0]).toMatchObject({
+        status: 'READY',
+        source: 'RULE',
+        excludeFromStats: true,
       });
     });
 
@@ -1223,6 +1408,47 @@ describe('API (e2e)', () => {
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
       expect(txns.body).toMatchObject({ total: 0 });
+    });
+
+    it('reopens an undone batch so it can be committed again', async () => {
+      const batch = await doImport();
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      await request(http)
+        .post(`/imports/${batch.id}/undo`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      const reopened = await request(http)
+        .post(`/imports/${batch.id}/reopen`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      // Back to a reviewable state with the rows preserved (the undo restored
+      // the committed rows to READY, the unreviewed SPAR row stayed as it was).
+      expect(reopened.body).toMatchObject({ status: 'PENDING_REVIEW' });
+      expect(reopened.body.rows).toHaveLength(3);
+
+      // Re-committing posts the same transactions and balance as the first time.
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      expect(await getBalance(accountId)).toBe(620_000);
+      const txns = await request(http)
+        .get('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(txns.body).toMatchObject({ total: 2 });
+    });
+
+    it('rejects reopening a batch that was not undone', async () => {
+      const batch = await doImport();
+      await request(http)
+        .post(`/imports/${batch.id}/reopen`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(409);
     });
 
     it('remembers the column mapping per account', async () => {
@@ -1541,13 +1767,17 @@ describe('API (e2e)', () => {
       return res.body as { id: string };
     };
 
-    const listBudgets = async (asToken = token) => {
+    const listBudgets = async (asToken = token, period?: string) => {
       const res = await request(http)
-        .get('/budgets')
+        .get(`/budgets${period ? `?period=${period}` : ''}`)
         .set('Authorization', `Bearer ${asToken}`)
         .expect(200);
       return res.body as {
         id: string;
+        limit: number;
+        monthlyLimit: number;
+        isOverride: boolean;
+        period: string;
         spentCents: number;
         remainingCents: number;
         overBudget: boolean;
@@ -1614,6 +1844,24 @@ describe('API (e2e)', () => {
       });
     });
 
+    it('ignores a reimbursement whose parent is an internal move', async () => {
+      await createBudget({ monthlyLimit: 10_000, subcategoryId: groceriesId });
+      const parent = await createTxn({
+        type: 'EXPENSE',
+        amount: 6_000,
+        subcategoryId: groceriesId,
+        excludeFromStats: true,
+      });
+      await createTxn({
+        type: 'INCOME',
+        amount: 2_000,
+        subcategoryId: incomeId,
+        parentTransactionId: parent.id,
+      });
+      // The internal expense is excluded; its payback must not push spend below 0.
+      expect((await listBudgets())[0]).toMatchObject({ spentCents: 0 });
+    });
+
     it('updates a budget limit and isolates budgets between users', async () => {
       const budget = await createBudget({
         monthlyLimit: 10_000,
@@ -1633,6 +1881,67 @@ describe('API (e2e)', () => {
         .set('Authorization', `Bearer ${otherToken}`)
         .send({ monthlyLimit: 999 })
         .expect(404);
+    });
+
+    it('overrides a budget limit for one month and reverts it', async () => {
+      const period = new Date().toISOString().slice(0, 7);
+      const otherMonth = '2020-01';
+      const budget = await createBudget({
+        monthlyLimit: 30_000,
+        subcategoryId: groceriesId,
+      });
+
+      // No override yet: the effective limit is the recurring base.
+      expect((await listBudgets(token, period))[0]).toMatchObject({
+        limit: 30_000,
+        monthlyLimit: 30_000,
+        isOverride: false,
+      });
+
+      // Override just this month.
+      const set = await request(http)
+        .put(`/budgets/${budget.id}/periods/${period}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ limit: 50_000 })
+        .expect(200);
+      expect(set.body).toMatchObject({
+        period,
+        limit: 50_000,
+        monthlyLimit: 30_000,
+        isOverride: true,
+      });
+
+      // This month reflects the override; another month still shows the base.
+      expect((await listBudgets(token, period))[0]).toMatchObject({
+        limit: 50_000,
+        isOverride: true,
+      });
+      expect((await listBudgets(token, otherMonth))[0]).toMatchObject({
+        limit: 30_000,
+        isOverride: false,
+      });
+
+      // Clearing the override reverts that month to the base.
+      await request(http)
+        .delete(`/budgets/${budget.id}/periods/${period}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect((await listBudgets(token, period))[0]).toMatchObject({
+        limit: 30_000,
+        isOverride: false,
+      });
+    });
+
+    it('rejects a malformed budget period label', async () => {
+      const budget = await createBudget({
+        monthlyLimit: 10_000,
+        subcategoryId: groceriesId,
+      });
+      await request(http)
+        .put(`/budgets/${budget.id}/periods/2026-13`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ limit: 5_000 })
+        .expect(400);
     });
 
     it('reports net worth over time', async () => {

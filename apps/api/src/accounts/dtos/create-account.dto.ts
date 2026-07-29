@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -36,4 +37,15 @@ export class CreateAccountDTO {
   @Type(() => Number)
   @IsInt()
   public readonly initialBalance?: number;
+
+  /** Whether this account counts toward the base-currency net worth (default
+   * true). Turn off for a foreign pocket you don't count as wealth. */
+  @IsOptional()
+  @IsBoolean()
+  public readonly countInNetWorth?: boolean;
+
+  /** Pins the account to the top of the list, separated from the rest. */
+  @IsOptional()
+  @IsBoolean()
+  public readonly pinned?: boolean;
 }

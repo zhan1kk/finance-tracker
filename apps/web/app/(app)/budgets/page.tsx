@@ -6,6 +6,7 @@ import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatCents, parseAmountToCents } from "@/lib/format";
+import { formatPeriod, periodOf, shiftPeriod } from "@/lib/period";
 import {
   BUDGETABLE_CATEGORIES,
   type Budget,
@@ -17,16 +18,23 @@ export default function BudgetsPage() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<unknown>(null);
   const currency = user?.baseCurrency ?? "EUR";
+  const monthStartDay = user?.monthStartDay ?? 1;
+
+  const currentPeriod = periodOf(new Date(), monthStartDay);
+  const [period, setPeriod] = useState<string | null>(null);
+  const shown = period ?? currentPeriod;
 
   const budgets = useQuery({
-    queryKey: ["budgets"],
-    queryFn: () => api<Budget[]>("/budgets"),
+    queryKey: ["budgets", shown],
+    queryFn: () => api<Budget[]>(`/budgets?period=${shown}`),
   });
   const subcategories = useQuery({
     queryKey: ["subcategories"],
     queryFn: () => api<Subcategory[]>("/subcategories"),
   });
 
+  // Invalidate every period: an override changes only `shown`, but a create or
+  // delete affects them all.
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["budgets"] });
 
@@ -36,12 +44,18 @@ export default function BudgetsPage() {
     onSuccess: invalidate,
     onError: setError,
   });
-  const updateLimit = useMutation({
-    mutationFn: (vars: { id: string; monthlyLimit: number }) =>
-      api(`/budgets/${vars.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ monthlyLimit: vars.monthlyLimit }),
+  const setMonthLimit = useMutation({
+    mutationFn: (vars: { id: string; limit: number }) =>
+      api(`/budgets/${vars.id}/periods/${shown}`, {
+        method: "PUT",
+        body: JSON.stringify({ limit: vars.limit }),
       }),
+    onSuccess: invalidate,
+    onError: setError,
+  });
+  const resetMonth = useMutation({
+    mutationFn: (id: string) =>
+      api(`/budgets/${id}/periods/${shown}`, { method: "DELETE" }),
     onSuccess: invalidate,
     onError: setError,
   });
@@ -79,7 +93,9 @@ export default function BudgetsPage() {
         <h2 className="mb-1 font-medium">New budget</h2>
         <p className="mb-3 text-sm text-zinc-500">
           A monthly spending limit for a whole category or a single
-          subcategory. Reimbursements you receive count against the spending.
+          subcategory. This becomes the recurring default; you can override any
+          single month below. Reimbursements you receive count against the
+          spending.
         </p>
         <form onSubmit={onCreate} className="flex flex-wrap items-end gap-3">
           <Field label="Scope">
@@ -114,12 +130,28 @@ export default function BudgetsPage() {
       </Card>
 
       <Card>
-        <h2 className="mb-3 font-medium">
-          This month
-          <span className="ml-2 text-sm font-normal text-zinc-500">
-            resets on the 1st
-          </span>
-        </h2>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <Button
+            variant="ghost"
+            aria-label="Previous month"
+            onClick={() => setPeriod(shiftPeriod(shown, -1))}
+          >
+            ‹
+          </Button>
+          <h2 className="font-medium">{formatPeriod(shown, monthStartDay)}</h2>
+          <Button
+            variant="ghost"
+            aria-label="Next month"
+            onClick={() => setPeriod(shiftPeriod(shown, 1))}
+          >
+            ›
+          </Button>
+          {shown !== currentPeriod && (
+            <Button variant="ghost" onClick={() => setPeriod(null)}>
+              Today
+            </Button>
+          )}
+        </div>
         {budgets.data && budgets.data.length === 0 && (
           <p className="text-sm text-zinc-500">
             No budgets yet — add one above to keep a category in check.
@@ -131,22 +163,31 @@ export default function BudgetsPage() {
               key={budget.id}
               budget={budget}
               currency={currency}
+              monthLabel={formatPeriod(shown, monthStartDay)}
               onEdit={() => {
                 const raw = window.prompt(
-                  "New monthly limit",
-                  (budget.monthlyLimit / 100).toFixed(2),
+                  `Limit for ${formatPeriod(shown, monthStartDay)}`,
+                  (budget.limit / 100).toFixed(2),
                 );
                 if (raw === null) return;
                 const cents = parseAmountToCents(raw);
-                if (cents === null) {
+                if (cents === null || cents < 1) {
                   setError(new Error("Invalid amount"));
                   return;
                 }
                 setError(null);
-                updateLimit.mutate({ id: budget.id, monthlyLimit: cents });
+                setMonthLimit.mutate({ id: budget.id, limit: cents });
               }}
+              onReset={
+                budget.isOverride
+                  ? () => {
+                      setError(null);
+                      resetMonth.mutate(budget.id);
+                    }
+                  : undefined
+              }
               onDelete={() => {
-                if (window.confirm("Delete this budget?")) {
+                if (window.confirm("Delete this budget (all months)?")) {
                   setError(null);
                   remove.mutate(budget.id);
                 }
@@ -162,12 +203,16 @@ export default function BudgetsPage() {
 function BudgetRow({
   budget,
   currency,
+  monthLabel,
   onEdit,
+  onReset,
   onDelete,
 }: {
   budget: Budget;
   currency: string;
+  monthLabel: string;
   onEdit: () => void;
+  onReset?: () => void;
   onDelete: () => void;
 }) {
   const name = budget.subcategory
@@ -176,27 +221,59 @@ function BudgetRow({
   // Clamp both ways: net reimbursements can push percent below zero.
   const width = Math.min(100, Math.max(0, Math.round(budget.percent * 100)));
 
+  // Under budget → green; landed exactly on the limit (a fixed installment like
+  // a TV plan spends its budget in full every month) → blue; over → red.
+  const status = budget.overBudget
+    ? "over"
+    : budget.limit > 0 && budget.spentCents === budget.limit
+      ? "full"
+      : "under";
+  const barColor =
+    status === "over"
+      ? "bg-red-600"
+      : status === "full"
+        ? "bg-blue-600"
+        : "bg-emerald-600";
+
   return (
     <li>
       <div className="mb-1 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
         <span className="font-medium">{name}</span>
         <span className="text-sm tabular-nums text-zinc-500">
           {formatCents(budget.spentCents, currency)} of{" "}
-          {formatCents(budget.monthlyLimit, currency)}
+          {formatCents(budget.limit, currency)}
         </span>
-        {budget.overBudget ? (
+        {budget.isOverride && (
+          <span
+            className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+            title={`Custom for ${monthLabel}; default is ${formatCents(
+              budget.monthlyLimit,
+              currency,
+            )}`}
+          >
+            custom
+          </span>
+        )}
+        {status === "over" ? (
           <span className="text-sm font-medium text-red-600">
             over by {formatCents(-budget.remainingCents, currency)}
           </span>
+        ) : status === "full" ? (
+          <span className="text-sm font-medium text-blue-600">fully used</span>
         ) : (
-          <span className="text-sm text-zinc-400">
+          <span className="text-sm text-emerald-600">
             {formatCents(budget.remainingCents, currency)} left
           </span>
         )}
-        <span className="ml-auto flex gap-1">
+        <span className="ml-auto flex items-center gap-1">
           <Button variant="ghost" onClick={onEdit}>
             Edit
           </Button>
+          {onReset && (
+            <Button variant="ghost" onClick={onReset} title="Revert to default">
+              Reset
+            </Button>
+          )}
           <button
             aria-label="Delete budget"
             className="px-1 text-zinc-400 hover:text-red-600"
@@ -215,9 +292,7 @@ function BudgetRow({
         className="h-2 rounded bg-zinc-100 dark:bg-zinc-800"
       >
         <div
-          className={`h-2 rounded ${
-            budget.overBudget ? "bg-red-600" : "bg-zinc-500"
-          }`}
+          className={`h-2 rounded ${barColor}`}
           style={{ width: `${width}%` }}
         />
       </div>

@@ -11,6 +11,7 @@ import {
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/auth.types';
 import { CreateTransactionDTO } from './dtos/create-transaction.dto';
+import { LinkReimbursementDTO } from './dtos/link-reimbursement.dto';
 import { ListTransactionsQueryDTO } from './dtos/list-transactions.query.dto';
 import { StatsQueryDTO } from './dtos/stats.query.dto';
 import { UpdateTransactionDTO } from './dtos/update-transaction.dto';
@@ -54,6 +55,20 @@ export class TransactionController {
     @Body() body: UpdateTransactionDTO,
   ) {
     return this.transactionService.updateTransaction(user.userId, id, body);
+  }
+
+  /** Links this INCOME to the EXPENSE it reimburses, or unlinks it (null). */
+  @Patch(':id/reimburses')
+  linkReimbursement(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: LinkReimbursementDTO,
+  ) {
+    return this.transactionService.linkReimbursement(
+      user.userId,
+      id,
+      body.parentTransactionId,
+    );
   }
 
   // Declared before @Delete(':id') so the bare path is not read as an id.

@@ -18,6 +18,9 @@ import type {
  */
 const SUB = "sub:";
 const ACC = "acc:";
+// Marks a row an internal move (own-account transfer / currency exchange):
+// commits and moves the balance, but is kept out of income/spending stats.
+const INT = "internal";
 
 const STATUS_STYLE: Record<ImportRowStatus, string> = {
   READY: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
@@ -79,10 +82,22 @@ export function ImportReview({
       api(`/imports/${batchId}/rows/${vars.rowId}`, {
         method: "PATCH",
         body: JSON.stringify(
-          vars.choice.startsWith(ACC)
-            ? { counterAccountId: vars.choice.slice(ACC.length) }
-            : { subcategoryId: vars.choice.slice(SUB.length) },
+          vars.choice === INT
+            ? { excludeFromStats: true }
+            : vars.choice.startsWith(ACC)
+              ? { counterAccountId: vars.choice.slice(ACC.length) }
+              : { subcategoryId: vars.choice.slice(SUB.length) },
         ),
+      }),
+    onSuccess: invalidate,
+  });
+
+  // Saves a row's personal note without touching its categorization.
+  const annotate = useMutation({
+    mutationFn: (vars: { rowId: string; userNote: string }) =>
+      api(`/imports/${batchId}/rows/${vars.rowId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ userNote: vars.userNote }),
       }),
     onSuccess: invalidate,
   });
@@ -106,6 +121,10 @@ export function ImportReview({
   });
   const undo = useMutation({
     mutationFn: () => api(`/imports/${batchId}/undo`, { method: "POST" }),
+    onSuccess: invalidate,
+  });
+  const reopen = useMutation({
+    mutationFn: () => api(`/imports/${batchId}/reopen`, { method: "POST" }),
     onSuccess: invalidate,
   });
   const discard = useMutation({
@@ -132,8 +151,8 @@ export function ImportReview({
     (r) => r.status === "NEEDS_REVIEW" && r.predictedSubcategory !== null,
   );
   const error =
-    commit.error ?? undo.error ?? discard.error ?? correct.error ??
-    acceptAll.error;
+    commit.error ?? undo.error ?? reopen.error ?? discard.error ??
+    correct.error ?? acceptAll.error;
 
   return (
     <Card>
@@ -206,6 +225,14 @@ export function ImportReview({
               Undo import
             </Button>
           )}
+          {data.status === "UNDONE" && (
+            <Button
+              onClick={() => reopen.mutate()}
+              disabled={reopen.isPending}
+            >
+              {reopen.isPending ? "Reopening…" : "Reopen for review"}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -236,6 +263,7 @@ export function ImportReview({
                 editable={pending && row.status !== "DUPLICATE"}
                 subcategories={subcategories.data ?? []}
                 onPick={(choice) => correct.mutate({ rowId: row.id, choice })}
+                onNote={(userNote) => annotate.mutate({ rowId: row.id, userNote })}
                 accounts={(accounts.data ?? []).filter(
                   (a) =>
                     a.id !== data.account.id &&
@@ -258,6 +286,7 @@ function Row({
   subcategories,
   accounts,
   onPick,
+  onNote,
 }: {
   row: ImportRow;
   currency: string;
@@ -265,13 +294,17 @@ function Row({
   subcategories: Subcategory[];
   accounts: Account[];
   onPick: (choice: string) => void;
+  onNote: (userNote: string) => void;
 }) {
   const eligible = subcategories.filter((s) =>
     row.type === "INCOME" ? s.category === "Income" : s.category !== "Income",
   );
   const sign = row.type === "INCOME" ? "+" : "−";
   const duplicate = row.status === "DUPLICATE";
-  const chosen = row.subcategoryId ?? row.counterAccountId;
+  const chosen =
+    row.subcategoryId ??
+    row.counterAccountId ??
+    (row.excludeFromStats ? INT : null);
 
   return (
     <tr
@@ -280,7 +313,36 @@ function Row({
       }`}
     >
       <td className="py-2 pr-3 whitespace-nowrap">{row.date.slice(0, 10)}</td>
-      <td className="py-2 pr-3">{row.description}</td>
+      <td className="py-2 pr-3">
+        {row.description}
+        {/* System note (skip/duplicate/repeat reason) — explains why a row is
+            flagged so a greyed duplicate or a "same as earlier" repeat isn't a
+            mystery. */}
+        {row.note && (
+          <span className="block text-xs text-amber-600">{row.note}</span>
+        )}
+        {/* Capture "what was this for" the moment it is remembered — saved on
+            blur, merged into the transaction's description on commit. */}
+        {editable && (
+          <input
+            defaultValue={row.userNote ?? ""}
+            placeholder="add a note…"
+            maxLength={500}
+            className="mt-0.5 block w-full max-w-56 rounded border border-transparent bg-transparent px-1 py-0.5 text-xs text-zinc-500 placeholder:text-zinc-300 hover:border-zinc-200 focus:border-zinc-400 focus:outline-none dark:placeholder:text-zinc-700 dark:hover:border-zinc-800 dark:focus:border-zinc-600"
+            onBlur={(e) => {
+              if (e.target.value !== (row.userNote ?? "")) {
+                onNote(e.target.value);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+            }}
+          />
+        )}
+        {!editable && row.userNote && (
+          <span className="block text-xs text-zinc-500">{row.userNote}</span>
+        )}
+      </td>
       <td
         className={`py-2 pr-3 text-right whitespace-nowrap ${
           row.type === "INCOME" ? "text-emerald-600" : ""
@@ -293,16 +355,19 @@ function Row({
         {editable ? (
           <Select
             value={
-              row.counterAccountId
-                ? `${ACC}${row.counterAccountId}`
-                : row.subcategoryId
-                  ? `${SUB}${row.subcategoryId}`
-                  : ""
+              row.excludeFromStats
+                ? INT
+                : row.counterAccountId
+                  ? `${ACC}${row.counterAccountId}`
+                  : row.subcategoryId
+                    ? `${SUB}${row.subcategoryId}`
+                    : ""
             }
             onChange={(e) => e.target.value && onPick(e.target.value)}
             className={chosen ? "" : "border-amber-400"}
           >
             <option value="">Pick…</option>
+            <option value={INT}>⊘ Internal move (exclude from stats)</option>
             <optgroup label="Category">
               {eligible.map((s) => (
                 <option key={s.id} value={`${SUB}${s.id}`}>
@@ -322,9 +387,11 @@ function Row({
           </Select>
         ) : (
           <span>
-            {row.counterAccount
-              ? `⇄ ${row.counterAccount.name}`
-              : (row.subcategory?.name ?? "—")}
+            {row.excludeFromStats
+              ? "⊘ Internal"
+              : row.counterAccount
+                ? `⇄ ${row.counterAccount.name}`
+                : (row.subcategory?.name ?? "—")}
           </span>
         )}
         {row.source !== "NONE" && chosen && (

@@ -7,10 +7,11 @@ import type { Prisma, TransactionType } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import { normalizeMerchant } from './normalization';
 
-/** A rule assigns either a subcategory or a transfer counter account. */
+/** A rule assigns a subcategory, a transfer counter account, or marks internal. */
 export type RuleTarget =
-  | { subcategoryId: string; counterAccountId?: never }
-  | { counterAccountId: string; subcategoryId?: never };
+  | { subcategoryId: string; counterAccountId?: never; excludeFromStats?: never }
+  | { counterAccountId: string; subcategoryId?: never; excludeFromStats?: never }
+  | { excludeFromStats: true; subcategoryId?: never; counterAccountId?: never };
 
 export type RuleMatch = RuleTarget & { ruleId: string };
 
@@ -20,6 +21,7 @@ type MatchableRule = {
   type: TransactionType;
   subcategoryId: string | null;
   counterAccountId: string | null;
+  excludeFromStats: boolean;
 };
 
 @Injectable()
@@ -160,6 +162,9 @@ export class RulesService {
       }
     }
     if (!best) return null;
+    if (best.excludeFromStats) {
+      return { excludeFromStats: true, ruleId: best.id };
+    }
     return best.counterAccountId
       ? { counterAccountId: best.counterAccountId, ruleId: best.id }
       : { subcategoryId: best.subcategoryId as string, ruleId: best.id };
@@ -183,6 +188,10 @@ export class RulesService {
     if (normalized === '') return Promise.resolve(null);
     const subcategoryId = target.subcategoryId ?? null;
     const counterAccountId = target.counterAccountId ?? null;
+    const excludeFromStats = target.excludeFromStats ?? false;
+    // Internal rules key on the row's own direction (like subcategory rules):
+    // "Receipt from your account" is always an inflow, "Transfer to your
+    // account" an outflow, so each side learns its own pattern.
     const type: TransactionType = counterAccountId ? 'TRANSFER' : rowType;
     return tx.categorizationRule.upsert({
       where: { userId_pattern_type: { userId, pattern: normalized, type } },
@@ -192,10 +201,16 @@ export class RulesService {
         type,
         subcategoryId,
         counterAccountId,
+        excludeFromStats,
         source: 'MANUAL',
         hitCount: 1,
       },
-      update: { subcategoryId, counterAccountId, hitCount: { increment: 1 } },
+      update: {
+        subcategoryId,
+        counterAccountId,
+        excludeFromStats,
+        hitCount: { increment: 1 },
+      },
     });
   }
 

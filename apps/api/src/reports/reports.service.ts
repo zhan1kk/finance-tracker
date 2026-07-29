@@ -28,12 +28,16 @@ export class ReportsService {
     const shift = periodLabelShiftMonths(monthStartDay);
 
     // Anchor and deltas are both in the base currency so accounts in different
-    // currencies add up (initialBalanceBase / amountBase are the converted values).
+    // currencies add up (initialBalanceBase / amountBase are the converted
+    // values). Accounts flagged out of net worth (a foreign spending pocket)
+    // are excluded from both — the anchor and the flows — so the line tracks
+    // only counted wealth. Their spending still shows in the income/spending
+    // stats, which come from a different query.
     const base =
       (
         await this.prisma.account.aggregate({
           _sum: { initialBalanceBase: true },
-          where: { userId },
+          where: { userId, countInNetWorth: true },
         })
       )._sum.initialBalanceBase ?? 0;
 
@@ -52,7 +56,7 @@ export class ReportsService {
           ELSE 0 END)::bigint AS delta
       FROM "Transaction" t
       JOIN "Account" a ON a."id" = t."accountId"
-      WHERE a."userId" = ${userId}
+      WHERE a."userId" = ${userId} AND a."countInNetWorth" = true
       GROUP BY 1
     `;
     const deltaByMonth = new Map(rows.map((r) => [r.month, Number(r.delta)]));

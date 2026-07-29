@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsDateString,
   IsIn,
   IsInt,
@@ -28,8 +29,12 @@ export class CreateTransactionDTO {
   @Min(1)
   public readonly amount!: number;
 
-  /** Required for INCOME/EXPENSE; must not be set for TRANSFER. */
-  @ValidateIf((dto: CreateTransactionDTO) => dto.type !== 'TRANSFER')
+  /** Required for INCOME/EXPENSE, unless the row is an internal move (which
+   * carries no category); must not be set for TRANSFER. */
+  @ValidateIf(
+    (dto: CreateTransactionDTO) =>
+      dto.type !== 'TRANSFER' && !dto.excludeFromStats,
+  )
   @IsUUID()
   public readonly subcategoryId?: string;
 
@@ -49,4 +54,9 @@ export class CreateTransactionDTO {
   @IsOptional()
   @IsString()
   public readonly description?: string;
+
+  /** Marks an internal move (own-account transfer / exchange): kept out of stats. */
+  @IsOptional()
+  @IsBoolean()
+  public readonly excludeFromStats?: boolean;
 }

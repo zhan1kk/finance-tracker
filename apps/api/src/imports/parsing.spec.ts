@@ -46,6 +46,15 @@ describe('parseDate', () => {
     );
   });
 
+  it('reads two-digit years as 2000–2099 (Kaspi "19.06.26")', () => {
+    expect(parseDate('19.06.26', 'DD.MM.YYYY')?.toISOString()).toBe(
+      '2026-06-19T00:00:00.000Z',
+    );
+    expect(parseDate('01/07/26', 'DD/MM/YYYY')?.toISOString()).toBe(
+      '2026-07-01T00:00:00.000Z',
+    );
+  });
+
   it('rejects invalid or overflowing dates', () => {
     expect(parseDate('31/02/2026', 'DD/MM/YYYY')).toBeNull();
     expect(parseDate('nope', 'ISO')).toBeNull();

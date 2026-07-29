@@ -27,6 +27,16 @@ import type {
 
 const TREND_MONTHS = 6;
 
+// Order the breakdown filter chips predictably (income first, then spend types).
+const BREAKDOWN_CATEGORIES = [
+  "Income",
+  "Expenses",
+  "Bills",
+  "Subscriptions",
+  "Debts",
+  "Savings",
+] as const;
+
 export default function OverviewPage() {
   const { user } = useAuth();
   const monthStartDay = user?.monthStartDay ?? 1;
@@ -165,6 +175,14 @@ export default function OverviewPage() {
         </Card>
       </section>
 
+      {monthStats.data && (
+        <FullBreakdown
+          stats={monthStats.data}
+          currency={currency}
+          monthLabel={formatPeriod(shown, monthStartDay)}
+        />
+      )}
+
       <section>
         <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-zinc-500">
           Accounts
@@ -186,6 +204,11 @@ export default function OverviewPage() {
                 <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-xs dark:bg-zinc-800">
                   {account.type}
                 </span>
+                {!account.countInNetWorth && (
+                  <span className="ml-1.5 text-xs text-zinc-400">
+                    not in net worth
+                  </span>
+                )}
               </p>
               <p className="text-xl font-semibold">
                 {formatCents(account.balance, account.currency)}
@@ -195,5 +218,122 @@ export default function OverviewPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+/**
+ * A collapsed, full picture of the month: every subcategory with income and
+ * spending, filterable by category type. Complements the spending-only bars.
+ */
+function FullBreakdown({
+  stats,
+  currency,
+  monthLabel,
+}: {
+  stats: TransactionStats;
+  currency: string;
+  monthLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState<string>("All");
+
+  const rows = [
+    ...stats.incomeByCategory.map((r) => ({ ...r, kind: "income" as const })),
+    ...stats.byCategory.map((r) => ({ ...r, kind: "expense" as const })),
+  ];
+  // Only offer chips for categories that actually have rows this month.
+  const present = BREAKDOWN_CATEGORIES.filter((c) =>
+    rows.some((r) => r.category === c),
+  );
+  const shown = filter === "All" ? rows : rows.filter((r) => r.category === filter);
+
+  const income = shown
+    .filter((r) => r.kind === "income")
+    .reduce((sum, r) => sum + r.amount, 0);
+  const expense = shown
+    .filter((r) => r.kind === "expense")
+    .reduce((sum, r) => sum + r.amount, 0);
+  const total = filter === "All" ? income - expense : filter === "Income" ? income : expense;
+  const totalLabel =
+    filter === "All"
+      ? "Net (income − spending)"
+      : filter === "Income"
+        ? "Total income"
+        : `${filter} spending`;
+
+  return (
+    <section>
+      <Card>
+        <div className="flex items-center justify-between">
+          <h2 className="font-medium">
+            Full breakdown
+            <span className="ml-2 text-sm font-normal text-zinc-500">
+              {monthLabel}
+            </span>
+          </h2>
+          <Button variant="ghost" onClick={() => setOpen((o) => !o)}>
+            {open ? "Hide" : "Show"}
+          </Button>
+        </div>
+
+        {open && (
+          <div className="mt-3 flex flex-col gap-3">
+            <div className="flex flex-wrap gap-1.5">
+              {["All", ...present].map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setFilter(c)}
+                  className={`rounded-full px-2.5 py-1 text-xs ${
+                    filter === c
+                      ? "bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900"
+                      : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+
+            {shown.length === 0 ? (
+              <p className="text-sm text-zinc-500">Nothing here this month.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+                  {shown.map((r) => (
+                    <tr key={`${r.kind}:${r.subcategoryId}`}>
+                      <td className="py-1.5">{r.name}</td>
+                      <td className="py-1.5">
+                        <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                          {r.category}
+                        </span>
+                      </td>
+                      <td
+                        className={`py-1.5 text-right tabular-nums ${
+                          r.kind === "income" ? "text-emerald-600" : ""
+                        }`}
+                      >
+                        {r.kind === "income" ? "+" : ""}
+                        {formatCents(r.amount, currency)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            <div className="flex justify-between border-t border-zinc-200 pt-2 text-sm font-medium dark:border-zinc-800">
+              <span>{totalLabel}</span>
+              <span
+                className={`tabular-nums ${
+                  filter === "All" && total < 0 ? "text-red-600" : ""
+                }`}
+              >
+                {formatCents(total, currency)}
+              </span>
+            </div>
+          </div>
+        )}
+      </Card>
+    </section>
   );
 }

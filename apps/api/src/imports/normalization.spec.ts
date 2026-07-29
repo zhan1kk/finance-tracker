@@ -5,15 +5,38 @@ describe('normalizeMerchant', () => {
     expect(normalizeMerchant('AMZN Mktp DE*1J4X9AB')).toBe('amzn mktp de');
   });
 
-  it('strips noise tokens and long digit runs', () => {
+  it('strips processing noise and long digit runs', () => {
     expect(normalizeMerchant('POS 1234 SPOTIFY AB12')).toBe('spotify ab12');
-    expect(normalizeMerchant('CARD PAYMENT Albert Heijn 5678')).toBe(
-      'albert heijn',
+    expect(normalizeMerchant('CARD Albert Heijn 5678')).toBe('albert heijn');
+  });
+
+  it('keeps direction words (transfer/payment) that distinguish destinations', () => {
+    // Stripping these collapsed "Transfer to X" and "to X" — two different
+    // destinations — into one un-distinguishable rule, so they are preserved.
+    expect(normalizeMerchant('Transfer to ZHANNUR BOLAT')).toBe(
+      'transfer to zhannur bolat',
+    );
+    expect(normalizeMerchant('to Zhannur Bolat')).toBe('to zhannur bolat');
+    expect(normalizeMerchant('Payment from KAMILA JUSUPOVA')).toBe(
+      'payment from kamila jusupova',
     );
   });
 
   it('collapses punctuation and whitespace', () => {
     expect(normalizeMerchant('  Bol.com   B.V. ')).toBe('bol com');
+  });
+
+  it('keeps non-Latin (Cyrillic/Kazakh) counterparty names distinct', () => {
+    // Stripping non-ASCII collapsed every named transfer to "transfers" — false
+    // duplicates and one rule matching everyone. Kaspi statements name people in
+    // Cyrillic, so those letters must survive normalization.
+    expect(normalizeMerchant('Transfers Темирлан Н.')).toBe(
+      'transfers темирлан',
+    );
+    expect(normalizeMerchant('Transfers Диас Д.')).toBe('transfers диас');
+    expect(normalizeMerchant('Transfers Темирлан Н.')).not.toBe(
+      normalizeMerchant('Transfers Диас Д.'),
+    );
   });
 });
 

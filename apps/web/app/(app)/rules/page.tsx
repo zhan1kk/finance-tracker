@@ -142,9 +142,11 @@ export default function RulesPage() {
                     )}
                   </td>
                   <td className="py-2 pr-3">
-                    {rule.counterAccount
-                      ? `⇄ ${rule.counterAccount.name}`
-                      : (rule.subcategory?.name ?? "—")}
+                    {rule.excludeFromStats
+                      ? "⊘ Internal (excluded)"
+                      : rule.counterAccount
+                        ? `⇄ ${rule.counterAccount.name}`
+                        : (rule.subcategory?.name ?? "—")}
                   </td>
                   <td className="py-2 pr-3 text-right tabular-nums text-zinc-500">
                     {rule.hitCount}

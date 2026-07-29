@@ -28,6 +28,10 @@ export type Account = {
   /** Minor currency units (cents). */
   balance: number;
   initialBalance: number;
+  /** Whether the account is part of the base-currency net worth. */
+  countInNetWorth: boolean;
+  /** Pinned accounts sort to the top of the list, separated from the rest. */
+  pinned: boolean;
 };
 
 export type ExchangeRate = {
@@ -80,12 +84,17 @@ export type Transaction = {
   subcategoryId: string | null;
   subcategory: Subcategory | null;
   counterAccountId: string | null;
+  /** Internal move (own-account transfer / exchange): balance moves, excluded from stats. */
+  excludeFromStats: boolean;
   parentTransactionId: string | null;
   reimbursements: Omit<Transaction, 'subcategory' | 'reimbursements'>[];
   /** Present on create responses: non-blocking "unusual amount" warning. */
   outlier?: { direction: 'high' | 'low'; medianCents: number } | null;
   /** Present on create responses: the (source) account's balance after booking. */
   balanceAfter?: number;
+  /** Account balance after this transaction; present only when the list is
+   * filtered to a single account (for reconciliation against a bank statement). */
+  runningBalance?: number;
 };
 
 export type TransactionList = {
@@ -113,6 +122,8 @@ export type CategoryStat = {
 export type TransactionStats = {
   monthly: MonthlyStat[];
   byCategory: CategoryStat[];
+  /** Income per subcategory in cents (excludes reimbursements). */
+  incomeByCategory: CategoryStat[];
 };
 
 export type TelegramSettings = {
@@ -169,12 +180,16 @@ export type ImportRow = {
   source: CategorizationSource;
   corrected: boolean;
   note: string | null;
+  /** The user's own annotation, merged into the transaction on commit. */
+  userNote: string | null;
   subcategoryId: string | null;
   subcategory: Subcategory | null;
   predictedSubcategory: { id: string; name: string } | null;
   /** Set instead of subcategoryId when the row is a transfer between own accounts. */
   counterAccountId: string | null;
   counterAccount: { id: string; name: string } | null;
+  /** Marked an internal move (own-account transfer / exchange), excluded from stats. */
+  excludeFromStats: boolean;
 };
 
 export type ImportBatch = {
@@ -245,11 +260,13 @@ export type CategorizationRule = {
   type: TransactionType;
   source: CategorizationSource;
   hitCount: number;
-  /** Exactly one of these targets is set. */
+  /** Exactly one target is set: a subcategory, a counter account, or excludeFromStats. */
   subcategoryId: string | null;
   subcategory: { id: string; name: string } | null;
   counterAccountId: string | null;
   counterAccount: { id: string; name: string } | null;
+  /** True for a learned "internal move" rule (no subcategory/counter account). */
+  excludeFromStats: boolean;
 };
 
 export type AccuracyTally = {
@@ -290,7 +307,14 @@ export const BUDGETABLE_CATEGORIES = [
 
 export type Budget = {
   id: string;
+  /** Recurring default limit, used for any month without an override. */
   monthlyLimit: number;
+  /** Financial-month label this row is computed for, e.g. "2026-06". */
+  period: string;
+  /** Effective limit for `period` (override if set, else monthlyLimit). */
+  limit: number;
+  /** True when `period` has its own limit that differs from the base. */
+  isOverride: boolean;
   subcategoryId: string | null;
   category: TransactionCategory | null;
   subcategory: { id: string; name: string; category: TransactionCategory } | null;
