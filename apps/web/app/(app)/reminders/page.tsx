@@ -1,12 +1,15 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { Button, Card, ErrorText } from "@/components/ui";
+import { useState, type FormEvent } from "react";
+import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { formatCents, parseAmountToCents } from "@/lib/format";
 import { runJob } from "@/lib/poll-job";
-import { formatCents } from "@/lib/format";
-import type { Reminder } from "@/lib/types";
+import type { Reminder, Subcategory } from "@/lib/types";
+
+const CADENCES = ["weekly", "monthly", "quarterly", "yearly", "one-off"];
 
 function formatDue(iso: string | null): string {
   if (!iso) return "no date";
@@ -19,6 +22,8 @@ function formatDue(iso: string | null): string {
 
 export default function RemindersPage() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const baseCurrency = user?.baseCurrency ?? "EUR";
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -26,9 +31,27 @@ export default function RemindersPage() {
     queryKey: ["reminders"],
     queryFn: () => api<Reminder[]>("/reminders"),
   });
+  const subcategories = useQuery({
+    queryKey: ["subcategories"],
+    queryFn: () => api<Subcategory[]>("/subcategories"),
+  });
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["reminders"] });
+
+  const create = useMutation({
+    mutationFn: (body: Record<string, unknown>) =>
+      api<Reminder>("/reminders", { method: "POST", body: JSON.stringify(body) }),
+    onSuccess: invalidate,
+    onError: setError,
+  });
+
+  const markPaid = useMutation({
+    mutationFn: (id: string) =>
+      api(`/reminders/${id}/paid`, { method: "POST" }),
+    onSuccess: invalidate,
+    onError: setError,
+  });
 
   const scan = useMutation({
     mutationFn: () =>
@@ -62,6 +85,44 @@ export default function RemindersPage() {
     onError: setError,
   });
 
+  const onCreate = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setError(null);
+    setNotice(null);
+    const form = new FormData(e.currentTarget);
+    const label = String(form.get("label") || "").trim();
+    if (!label) {
+      setError(new Error("Give the reminder a name"));
+      return;
+    }
+    const amountRaw = String(form.get("amount") || "").trim();
+    const amountCents = amountRaw ? parseAmountToCents(amountRaw) : undefined;
+    if (amountRaw && amountCents === null) {
+      setError(new Error("Invalid amount — e.g. 12.50"));
+      return;
+    }
+    const instRaw = String(form.get("installmentsTotal") || "").trim();
+    const installmentsTotal = instRaw ? Number(instRaw) : undefined;
+    if (
+      instRaw &&
+      (!Number.isInteger(installmentsTotal) || (installmentsTotal ?? 0) < 2)
+    ) {
+      setError(new Error("Installments must be a whole number of 2 or more"));
+      return;
+    }
+    create.mutate({
+      label,
+      subcategoryId: String(form.get("subcategoryId") || "") || undefined,
+      dueDate: String(form.get("dueDate") || "") || undefined,
+      amountCents: amountCents ?? undefined,
+      currency: amountCents != null ? baseCurrency : undefined,
+      cadence: String(form.get("cadence") || "") || undefined,
+      installmentsTotal: installmentsTotal ?? undefined,
+      note: String(form.get("note") || "").trim() || undefined,
+    });
+    e.currentTarget.reset();
+  };
+
   const open = reminders.data?.filter((r) => !r.done) ?? [];
   const done = reminders.data?.filter((r) => r.done) ?? [];
 
@@ -78,14 +139,37 @@ export default function RemindersPage() {
           {r.cadence}
         </span>
       )}
+      {r.subcategory && (
+        <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+          {r.subcategory.name}
+        </span>
+      )}
       <span className="text-sm text-zinc-500">next · {formatDue(r.dueDate)}</span>
       {r.amountCents != null && (
         <span className="text-sm tabular-nums text-zinc-500">
           · {formatCents(r.amountCents, r.currency ?? "EUR")}
         </span>
       )}
+      {r.installmentsTotal != null && (
+        <span className="text-xs font-medium text-zinc-500">
+          {r.installmentsPaid ?? 0}/{r.installmentsTotal} paid
+        </span>
+      )}
       {r.note && <span className="text-xs text-zinc-400">— {r.note}</span>}
       <span className="ml-auto flex items-center gap-1">
+        {r.installmentsTotal != null &&
+          !r.done &&
+          (r.installmentsPaid ?? 0) < r.installmentsTotal && (
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setError(null);
+                markPaid.mutate(r.id);
+              }}
+            >
+              Mark paid
+            </Button>
+          )}
         <Button
           variant="ghost"
           onClick={() => {
@@ -133,6 +217,55 @@ export default function RemindersPage() {
           <p className="text-sm text-zinc-500">{notice}</p>
         )}
         <ErrorText error={error} />
+      </Card>
+
+      <Card>
+        <h2 className="mb-3 font-medium">Add a reminder</h2>
+        <form onSubmit={onCreate} className="flex flex-wrap items-end gap-3">
+          <Field label="What">
+            <Input name="label" required placeholder="Netflix" className="w-40" />
+          </Field>
+          <Field label="Category">
+            <Select name="subcategoryId" defaultValue="">
+              <option value="">—</option>
+              {(subcategories.data ?? []).map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} ({s.category})
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Amount">
+            <Input name="amount" placeholder="12.50" className="w-24" />
+          </Field>
+          <Field label="Next payment">
+            <Input name="dueDate" type="date" className="w-40" />
+          </Field>
+          <Field label="Repeats">
+            <Select name="cadence" defaultValue="">
+              <option value="">—</option>
+              {CADENCES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Installments">
+            <Input
+              name="installmentsTotal"
+              placeholder="e.g. 3"
+              inputMode="numeric"
+              className="w-20"
+            />
+          </Field>
+          <Field label="Note">
+            <Input name="note" placeholder="optional" className="w-40" />
+          </Field>
+          <Button type="submit" disabled={create.isPending}>
+            Add
+          </Button>
+        </form>
       </Card>
 
       <Card>

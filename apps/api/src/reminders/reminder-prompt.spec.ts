@@ -24,37 +24,52 @@ describe('looksLikeReminder', () => {
 });
 
 describe('coerceExtractedReminders', () => {
-  it('keeps valid rows and normalizes fields', () => {
+  it('keeps valid rows, normalizes fields, and reads N/M installments', () => {
     expect(
       coerceExtractedReminders([
         {
           index: 1,
-          label: '  TV Tax ',
-          dueDate: '2026-09-15',
-          amount: 55,
-          cadence: 'One-Off',
+          label: '  ImmoScout ',
+          dueDate: '2026-07-09',
+          amount: 34.99,
+          cadence: 'Monthly',
+          installmentsTotal: 3,
+          installmentsPaid: 1,
           note: '',
         },
-        { index: 2, label: 'ImmoScout', amount: '850', cadence: 'monthly' },
+        { index: 2, label: 'TV Tax', amount: '55', cadence: 'quarterly' },
       ]),
     ).toEqual([
       {
         index: 1,
-        label: 'TV Tax',
-        dueDate: '2026-09-15',
-        amount: 55,
-        cadence: 'one-off',
+        label: 'ImmoScout',
+        dueDate: '2026-07-09',
+        amount: 34.99,
+        cadence: 'monthly',
+        installmentsTotal: 3,
+        installmentsPaid: 1,
         note: null,
       },
       {
         index: 2,
-        label: 'ImmoScout',
+        label: 'TV Tax',
         dueDate: null,
-        amount: 850,
-        cadence: 'monthly',
+        amount: 55,
+        cadence: 'quarterly',
+        installmentsTotal: null,
+        installmentsPaid: null,
         note: null,
       },
     ]);
+  });
+
+  it('ignores an installment total below 2 and clamps paid to it', () => {
+    const [a, b] = coerceExtractedReminders([
+      { index: 1, label: 'x', installmentsTotal: 1, installmentsPaid: 1 },
+      { index: 2, label: 'y', installmentsTotal: 3, installmentsPaid: 9 },
+    ]);
+    expect(a).toMatchObject({ installmentsTotal: null, installmentsPaid: null });
+    expect(b).toMatchObject({ installmentsTotal: 3, installmentsPaid: 3 });
   });
 
   it('drops rows without an index or label, and bad dates', () => {
@@ -65,7 +80,16 @@ describe('coerceExtractedReminders', () => {
         { index: 3, label: 'bad date', dueDate: 'soon' },
       ]),
     ).toEqual([
-      { index: 3, label: 'bad date', dueDate: null, amount: null, cadence: null, note: null },
+      {
+        index: 3,
+        label: 'bad date',
+        dueDate: null,
+        amount: null,
+        cadence: null,
+        installmentsTotal: null,
+        installmentsPaid: null,
+        note: null,
+      },
     ]);
     expect(coerceExtractedReminders(null)).toEqual([]);
   });

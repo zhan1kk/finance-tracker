@@ -2061,4 +2061,59 @@ describe('API (e2e)', () => {
       expect(await getBalance(accountId)).toBeLessThan(100_000);
     });
   });
+
+  describe('reminders', () => {
+    const addReminder = (body: Record<string, unknown>, expected = 201) =>
+      request(http)
+        .post('/reminders')
+        .set('Authorization', `Bearer ${token}`)
+        .send(body)
+        .expect(expected);
+
+    it('adds a manual reminder and tracks installments to completion', async () => {
+      const created = await addReminder({
+        label: 'Sofa',
+        dueDate: '2026-08-01',
+        amountCents: 10_000,
+        cadence: 'monthly',
+        installmentsTotal: 3,
+      });
+      const id = (created.body as { id: string }).id;
+      expect(created.body).toMatchObject({
+        installmentsTotal: 3,
+        installmentsPaid: 0,
+        done: false,
+      });
+
+      const pay = () =>
+        request(http)
+          .post(`/reminders/${id}/paid`)
+          .set('Authorization', `Bearer ${token}`)
+          .expect(201);
+
+      // First payment: count up, due date rolls to the next month, still open.
+      const p1 = await pay();
+      expect(p1.body).toMatchObject({ installmentsPaid: 1, done: false });
+      expect((p1.body as { dueDate: string }).dueDate).toContain('2026-09-01');
+
+      await pay();
+      // Final payment completes and auto-dismisses.
+      const p3 = await pay();
+      expect(p3.body).toMatchObject({ installmentsPaid: 3, done: true });
+
+      const list = await request(http)
+        .get('/reminders')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(list.body).toHaveLength(1);
+    });
+
+    it('rejects mark-paid on a non-installment reminder', async () => {
+      const created = await addReminder({ label: 'Netflix', cadence: 'monthly' });
+      await request(http)
+        .post(`/reminders/${(created.body as { id: string }).id}/paid`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(400);
+    });
+  });
 });

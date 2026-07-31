@@ -11,6 +11,8 @@ export type ExtractedReminder = {
   dueDate: string | null;
   amount: number | null;
   cadence: string | null;
+  installmentsTotal: number | null;
+  installmentsPaid: number | null;
   note: string | null;
 };
 
@@ -48,6 +50,8 @@ export const REMINDER_EXTRACTION_SCHEMA = {
           dueDate: { type: 'string' as const },
           amount: { type: 'number' as const },
           cadence: { type: 'string' as const },
+          installmentsTotal: { type: 'integer' as const },
+          installmentsPaid: { type: 'integer' as const },
           note: { type: 'string' as const },
         },
         required: ['index', 'label'],
@@ -67,7 +71,8 @@ For each reminder:
 - dueDate: the next payment date as "YYYY-MM-DD". Resolve relative hints against the transaction's own date ("next in Sep" → the first September after it; "monthly" → one month later). Omit if truly unknown.
 - amount: the expected amount as a number. If the hint states one, use it; otherwise use the transaction's amount.
 - cadence: "monthly", "quarterly", "weekly", "yearly", or "one-off".
-- note: any extra detail such as "2 of 3 payments left". May be empty.
+- installmentsTotal / installmentsPaid: for a fixed-length plan written "N/M" (e.g. "1/3 payment"), set installmentsTotal to M and installmentsPaid to N (this payment already happened). Omit both when there is no such count.
+- note: any extra detail. May be empty.
 
 Return only the reminders array. Do not invent reminders for rows with no future-payment hint.`;
 
@@ -105,14 +110,30 @@ export function coerceExtractedReminders(raw: unknown): ExtractedReminder[] {
         : null;
     const note =
       typeof r.note === 'string' && r.note.trim() !== '' ? r.note.trim() : null;
+    // A valid installment plan needs a total of at least 2; paid clamps to it.
+    const total = toInt(r.installmentsTotal);
+    const installmentsTotal = total != null && total >= 2 ? total : null;
+    const paid = toInt(r.installmentsPaid);
+    const installmentsPaid =
+      installmentsTotal != null
+        ? Math.max(0, Math.min(paid ?? 0, installmentsTotal))
+        : null;
     out.push({
       index,
       label,
       dueDate,
       amount: amount != null && Number.isFinite(amount) ? amount : null,
       cadence,
+      installmentsTotal,
+      installmentsPaid,
       note,
     });
   }
   return out;
+}
+
+function toInt(v: unknown): number | null {
+  const n =
+    typeof v === 'number' ? v : v != null && v !== '' ? Number(v) : Number.NaN;
+  return Number.isInteger(n) ? n : null;
 }

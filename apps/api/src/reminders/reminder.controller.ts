@@ -10,6 +10,7 @@ import {
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/auth.types';
 import { JobsService } from '../jobs/jobs.service';
+import { CreateReminderDTO } from './dtos/create-reminder.dto';
 import { UpdateReminderDTO } from './dtos/update-reminder.dto';
 import { ReminderService } from './reminder.service';
 
@@ -25,6 +26,12 @@ export class ReminderController {
     return this.reminderService.list(user.userId);
   }
 
+  /** Add a reminder by hand (subscription/bill). */
+  @Post()
+  create(@CurrentUser() user: AuthUser, @Body() body: CreateReminderDTO) {
+    return this.reminderService.create(user.userId, body);
+  }
+
   /**
    * Scan recent transaction descriptions (local Ollama) for upcoming payments.
    * Runs in the background — returns a job id to poll.
@@ -35,6 +42,12 @@ export class ReminderController {
       this.reminderService.scan(user.userId),
     );
     return { jobId };
+  }
+
+  /** Record the next installment as paid (advances the plan, auto-completes). */
+  @Post(':id/paid')
+  markPaid(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.reminderService.markPaid(user.userId, id);
   }
 
   @Patch(':id')

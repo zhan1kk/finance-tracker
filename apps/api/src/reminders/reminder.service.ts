@@ -1,8 +1,17 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
+import type { CreateReminderDTO } from './dtos/create-reminder.dto';
 import { ReminderExtractionService } from './reminder-extraction.service';
 import { looksLikeReminder, type ReminderCandidate } from './reminder-prompt';
+
+const REMINDER_INCLUDE = {
+  subcategory: { select: { id: true, name: true, category: true } },
+} satisfies Prisma.ReminderInclude;
 
 // Fetch a bounded, recent window to scan — enough to cover the latest imports
 // without loading a whole history, and the model only sees the hint-matching
@@ -22,6 +31,74 @@ export class ReminderService {
     return this.prisma.reminder.findMany({
       where: { userId },
       orderBy: [{ done: 'asc' }, { dueDate: 'asc' }, { createdAt: 'asc' }],
+      include: REMINDER_INCLUDE,
+    });
+  }
+
+  /** Add a reminder by hand (e.g. a subscription or bill). */
+  async create(userId: string, input: CreateReminderDTO) {
+    if (input.subcategoryId) {
+      const subcategory = await this.prisma.subcategory.findFirst({
+        where: { id: input.subcategoryId, userId },
+        select: { id: true },
+      });
+      if (!subcategory) {
+        throw new NotFoundException(
+          `Subcategory with id ${input.subcategoryId} was not found`,
+        );
+      }
+    }
+    const isInstallment = input.installmentsTotal != null;
+    return this.prisma.reminder.create({
+      data: {
+        userId,
+        label: input.label,
+        subcategoryId: input.subcategoryId ?? null,
+        dueDate: input.dueDate ? new Date(input.dueDate) : null,
+        amountCents: input.amountCents ?? null,
+        currency: input.currency ?? null,
+        cadence: input.cadence ?? null,
+        installmentsTotal: input.installmentsTotal ?? null,
+        // Paid count only means something for an installment plan.
+        installmentsPaid: isInstallment ? (input.installmentsPaid ?? 0) : null,
+        note: input.note ?? null,
+      },
+      include: REMINDER_INCLUDE,
+    });
+  }
+
+  /**
+   * Records the next installment as paid: bumps the count, moves the due date to
+   * the next occurrence, and auto-completes the reminder once every payment is
+   * in. Only valid on installment reminders.
+   */
+  async markPaid(userId: string, id: string) {
+    const reminder = await this.prisma.reminder.findFirst({
+      where: { id, userId },
+    });
+    if (!reminder) {
+      throw new NotFoundException(`Reminder with id ${id} was not found`);
+    }
+    if (reminder.installmentsTotal == null) {
+      throw new BadRequestException(
+        'This reminder is not an installment plan',
+      );
+    }
+    const paid = Math.min(
+      (reminder.installmentsPaid ?? 0) + 1,
+      reminder.installmentsTotal,
+    );
+    const done = paid >= reminder.installmentsTotal;
+    // Advance to the next payment date unless we're finished.
+    const dueDate =
+      !done && reminder.dueDate && reminder.cadence
+        ? advanceDate(reminder.dueDate, reminder.cadence)
+        : reminder.dueDate;
+
+    return this.prisma.reminder.update({
+      where: { id },
+      data: { installmentsPaid: paid, done, dueDate },
+      include: REMINDER_INCLUDE,
     });
   }
 
@@ -84,6 +161,8 @@ export class ReminderService {
             amountCents,
             currency: source.account.currency,
             cadence: r.cadence,
+            installmentsTotal: r.installmentsTotal,
+            installmentsPaid: r.installmentsTotal != null ? r.installmentsPaid : null,
             note: r.note,
             sourceTransactionId: source.id,
           },
@@ -125,4 +204,26 @@ export class ReminderService {
       throw new NotFoundException(`Reminder with id ${id} was not found`);
     }
   }
+}
+
+/** Moves a date forward by one cadence period; unknown cadence → unchanged. */
+function advanceDate(date: Date, cadence: string): Date {
+  const d = new Date(date);
+  switch (cadence) {
+    case 'weekly':
+      d.setUTCDate(d.getUTCDate() + 7);
+      break;
+    case 'monthly':
+      d.setUTCMonth(d.getUTCMonth() + 1);
+      break;
+    case 'quarterly':
+      d.setUTCMonth(d.getUTCMonth() + 3);
+      break;
+    case 'yearly':
+      d.setUTCFullYear(d.getUTCFullYear() + 1);
+      break;
+    default:
+      break;
+  }
+  return d;
 }

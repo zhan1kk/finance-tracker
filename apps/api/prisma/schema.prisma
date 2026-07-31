@@ -154,6 +154,7 @@ model Subcategory {
   chosenImportRows    ImportRow[]          @relation("ChosenSubcategory")
   recurringRules      RecurringRule[]
   budgets             Budget[]
+  reminders           Reminder[]
 
   @@unique([userId, name])
 }
@@ -485,6 +486,11 @@ model Reminder {
   currency    String?
   /// Free-text cadence label ("monthly", "quarterly", "one-off").
   cadence     String?
+  /// For a fixed-length installment plan (e.g. "1/3"): total number of payments
+  /// and how many are done. Both null for ongoing/one-off reminders. When
+  /// installmentsPaid reaches installmentsTotal the reminder auto-completes.
+  installmentsTotal Int?
+  installmentsPaid  Int?
   /// Extra detail ("2 of 3 payments left").
   note        String?
   /// Dismissed / handled.
@@ -495,8 +501,12 @@ model Reminder {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  /// Optional category, mainly for manually-added reminders (subscriptions/bills).
+  subcategoryId String?
+  subcategory   Subcategory? @relation(fields: [subcategoryId], references: [id], onDelete: SetNull)
+
   /// The transaction whose description it came from; also the re-scan dedupe key
-  /// (one reminder per source transaction).
+  /// (one reminder per source transaction). Null for manually-added reminders.
   sourceTransactionId String?      @unique
   sourceTransaction   Transaction? @relation(fields: [sourceTransactionId], references: [id], onDelete: SetNull)
 

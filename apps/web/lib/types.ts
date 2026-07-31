@@ -278,8 +278,13 @@ export type Reminder = {
   currency: string | null;
   /** "monthly" / "quarterly" / "one-off" / … */
   cadence: string | null;
+  /** Fixed-length installment plan: total payments and how many are done. */
+  installmentsTotal: number | null;
+  installmentsPaid: number | null;
   note: string | null;
   done: boolean;
+  subcategoryId: string | null;
+  subcategory: { id: string; name: string; category: TransactionCategory } | null;
   sourceTransactionId: string | null;
   createdAt: string;
 };
