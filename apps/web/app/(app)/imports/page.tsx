@@ -7,6 +7,7 @@ import { ImportReview } from "@/components/import-review";
 import { SpreadsheetImport } from "@/components/spreadsheet-import";
 import { Button, Card, ErrorText, Field, Select } from "@/components/ui";
 import { api } from "@/lib/api";
+import { runJob } from "@/lib/poll-job";
 import {
   type Account,
   type ColumnMapping,
@@ -139,10 +140,12 @@ function NewImport({ onImported }: { onImported: (batchId: string) => void }) {
   // rows, which then flow through the same review screen as a CSV.
   const createPdf = useMutation({
     mutationFn: (vars: { filename: string; pdfBase64: string }) =>
-      api<ImportResult>("/imports/pdf", {
-        method: "POST",
-        body: JSON.stringify({ accountId, ...vars }),
-      }),
+      runJob<ImportResult>(() =>
+        api<{ jobId: string }>("/imports/pdf", {
+          method: "POST",
+          body: JSON.stringify({ accountId, ...vars }),
+        }),
+      ),
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: ["import-batches"] });
       setSkipped(result.skipped.length);
@@ -196,19 +199,20 @@ function NewImport({ onImported }: { onImported: (batchId: string) => void }) {
             ref={fileInput}
             type="file"
             accept=".csv,text/csv"
+            disabled={!accountId}
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) void onFile(file);
             }}
-            className="text-sm file:mr-3 file:rounded-md file:border file:border-zinc-300 file:bg-white file:px-3 file:py-1.5 file:text-sm dark:file:border-zinc-700 dark:file:bg-zinc-900"
+            className="text-sm file:mr-3 file:rounded-md file:border file:border-zinc-300 file:bg-white file:px-3 file:py-1.5 file:text-sm disabled:opacity-50 dark:file:border-zinc-700 dark:file:bg-zinc-900"
           />
         </Field>
-        <Field label="PDF file (Ollama)">
+        <Field label="PDF file">
           <input
             ref={pdfInput}
             type="file"
             accept=".pdf,application/pdf"
-            disabled={createPdf.isPending}
+            disabled={!accountId || createPdf.isPending}
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) void onPdfFile(file);
@@ -217,6 +221,12 @@ function NewImport({ onImported }: { onImported: (batchId: string) => void }) {
           />
         </Field>
       </div>
+
+      {!accountId && (
+        <p className="mt-2 text-sm text-zinc-400">
+          Pick an account first, then choose a CSV or PDF file.
+        </p>
+      )}
 
       {createPdf.isPending && (
         <p className="mt-3 text-sm text-amber-600">

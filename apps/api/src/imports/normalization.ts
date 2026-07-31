@@ -30,9 +30,16 @@ const NOISE_TOKENS = new Set([
 
 /**
  * Reduces a raw statement description to a stable merchant key: lowercase,
- * everything after a `*` dropped (card processor refs), long digit runs and
- * noise tokens removed, punctuation collapsed to single spaces. Deterministic,
- * so it doubles as the basis for the dedupe hash and rule matching.
+ * noise tokens and long digit runs removed, punctuation collapsed to single
+ * spaces. The card-processor ref (`*NNNN`) is kept as a trailing token, not
+ * dropped. Deterministic, so it doubles as the basis for the dedupe hash and
+ * rule matching.
+ *
+ * Card refs are preserved because they are often the ONLY thing distinguishing
+ * two otherwise-identical descriptions — "Apple Pay top-up by *4397" (one card)
+ * vs "…*4808" (another) — so dropping the segment made them un-ruleable. They
+ * are pulled out first and re-appended after cleaning so they survive the
+ * digit-run filter without crowding out the merchant name.
  *
  * Letters of any script are kept (`\p{L}`), not just a–z: statements name
  * counterparties in Cyrillic, Kazakh, etc. Stripping non-ASCII would collapse
@@ -40,22 +47,28 @@ const NOISE_TOKENS = new Set([
  * false duplicates, and one learned rule firing on every counterparty.
  */
 export function normalizeMerchant(raw: string): string {
-  const beforeStar = raw.split('*')[0];
-  const tokens = beforeStar
+  const cardRefs = [...raw.matchAll(/\*([a-z0-9]+)/gi)].map((m) =>
+    m[1].toLowerCase(),
+  );
+  const tokens = raw
     .toLowerCase()
+    // Drop the raw "*ref" here — the captured refs are re-added at the end.
+    .replace(/\*[a-z0-9]+/gi, ' ')
     .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
     .split(/\s+/)
     .filter((token) => {
       if (token === '') return false;
       if (NOISE_TOKENS.has(token)) return false;
-      // Drop pure-digit runs of 3+ (reference/card fragments), keep short ones.
+      // Drop pure-digit runs of 3+ (reference/date fragments), keep short ones.
       if (/^\d+$/.test(token) && token.length >= 3) return false;
       return true;
     });
   // Single-char tokens are usually legal-entity noise ("B.V." → "b v"); drop
   // them, but keep them if that would empty the key ("H&M" → "h m").
   const multiChar = tokens.filter((token) => token.length > 1);
-  return (multiChar.length > 0 ? multiChar : tokens).join(' ').trim();
+  const base = (multiChar.length > 0 ? multiChar : tokens).join(' ').trim();
+  // Re-append card refs so they distinguish, without displacing the merchant.
+  return cardRefs.length > 0 ? `${base} ${cardRefs.join(' ')}`.trim() : base;
 }
 
 /**

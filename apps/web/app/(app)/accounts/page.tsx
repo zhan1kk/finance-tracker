@@ -7,34 +7,8 @@ import { TelegramCard } from "@/components/telegram-card";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api, downloadFile } from "@/lib/api";
 import { formatCents, parseSignedAmountToCents } from "@/lib/format";
-import {
-  ACCOUNT_TYPES,
-  CURRENCIES,
-  type Account,
-  type AccountType,
-} from "@/lib/types";
-
-// A colour per account type so kinds are distinguishable at a glance — a tinted
-// type badge plus a matching left stripe on the card.
-const TYPE_BADGE: Record<AccountType, string> = {
-  checking: "bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300",
-  savings: "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
-  cash: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
-  credit: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
-  investment:
-    "bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300",
-  crypto:
-    "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300",
-};
-
-const TYPE_ACCENT: Record<AccountType, string> = {
-  checking: "border-l-sky-400",
-  savings: "border-l-amber-400",
-  cash: "border-l-emerald-400",
-  credit: "border-l-red-400",
-  investment: "border-l-violet-400",
-  crypto: "border-l-orange-400",
-};
+import { TYPE_ACCENT, TYPE_BADGE } from "@/lib/account-style";
+import { ACCOUNT_TYPES, CURRENCIES, type Account } from "@/lib/types";
 
 export default function AccountsPage() {
   const queryClient = useQueryClient();
@@ -141,7 +115,7 @@ export default function AccountsPage() {
         {/* Negative is a credit account's normal state (debt owed), so the red
             warning tint applies to the other types only. */}
         <p
-          className={`text-lg ${
+          className={`text-lg tabular-nums ${
             account.balance < 0 && account.type !== "credit"
               ? "text-red-600"
               : ""
@@ -255,6 +229,15 @@ export default function AccountsPage() {
         </form>
         <ErrorText error={error} />
       </Card>
+
+      {accounts.isLoading && (
+        <p className="text-sm text-zinc-500">Loading accounts…</p>
+      )}
+      {accounts.data?.length === 0 && (
+        <p className="text-sm text-zinc-500">
+          No accounts yet — add your first one above.
+        </p>
+      )}
 
       {pinned.length > 0 && (
         <section>

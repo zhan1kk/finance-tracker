@@ -16,6 +16,8 @@ import { ImportsModule } from './imports/imports.module';
 import { RecurringModule } from './recurring/recurring.module';
 import { BudgetModule } from './budgets/budget.module';
 import { ReportsModule } from './reports/reports.module';
+import { ReminderModule } from './reminders/reminder.module';
+import { JobsModule } from './jobs/jobs.module';
 
 @Module({
   imports: [
@@ -40,6 +42,8 @@ import { ReportsModule } from './reports/reports.module';
     RecurringModule,
     BudgetModule,
     ReportsModule,
+    ReminderModule,
+    JobsModule,
   ],
   controllers: [AppController],
   providers: [

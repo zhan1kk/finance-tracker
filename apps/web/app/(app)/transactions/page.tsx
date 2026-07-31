@@ -232,6 +232,16 @@ export default function TransactionsPage() {
                   }}
                 />
               ))}
+              {transactions.isLoading && (
+                <tr>
+                  <td
+                    colSpan={singleAccount ? 7 : 6}
+                    className="py-6 text-center text-zinc-500"
+                  >
+                    Loading…
+                  </td>
+                </tr>
+              )}
               {transactions.data?.items.length === 0 && (
                 <tr>
                   <td

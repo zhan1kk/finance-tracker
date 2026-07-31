@@ -1,0 +1,77 @@
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import {
+  buildReminderPrompt,
+  coerceExtractedReminders,
+  type ExtractedReminder,
+  type ReminderCandidate,
+  REMINDER_EXTRACTION_SCHEMA,
+  REMINDER_SYSTEM_PROMPT,
+} from './reminder-prompt';
+
+const REQUEST_TIMEOUT_MS = 120_000;
+// Ollama's default context is small; the candidate list plus prompt needs room.
+const NUM_CTX = 8192;
+
+/**
+ * Reads upcoming-payment reminders out of transaction descriptions with a local
+ * Ollama model. Always uses OLLAMA_BASE_URL / OLLAMA_MODEL, independent of the
+ * CATEGORIZER setting — extraction is a local, private, zero-cost step.
+ */
+@Injectable()
+export class ReminderExtractionService {
+  private readonly logger = new Logger(ReminderExtractionService.name);
+
+  constructor(private readonly config: ConfigService) {}
+
+  async extract(candidates: ReminderCandidate[]): Promise<ExtractedReminder[]> {
+    if (candidates.length === 0) return [];
+    const baseUrl =
+      this.config.get<string>('OLLAMA_BASE_URL') ?? 'http://localhost:11434';
+    const model = this.config.get<string>('OLLAMA_MODEL') ?? 'llama3.1';
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model,
+          stream: false,
+          format: REMINDER_EXTRACTION_SCHEMA,
+          options: { temperature: 0, num_ctx: NUM_CTX },
+          messages: [
+            { role: 'system', content: REMINDER_SYSTEM_PROMPT },
+            { role: 'user', content: buildReminderPrompt(candidates) },
+          ],
+        }),
+      });
+
+      if (!res.ok) {
+        throw new BadRequestException(
+          `Ollama reminder scan failed (HTTP ${res.status}). Is Ollama running and the model "${model}" pulled?`,
+        );
+      }
+
+      const data = (await res.json()) as { message?: { content?: unknown } };
+      const content = data.message?.content;
+      if (typeof content !== 'string') return [];
+      const parsed = JSON.parse(content) as { reminders?: unknown };
+      return coerceExtractedReminders(parsed.reminders);
+    } catch (err) {
+      if (err instanceof BadRequestException) throw err;
+      const message =
+        err instanceof Error && err.name === 'AbortError'
+          ? 'Ollama took too long to scan for reminders (timed out).'
+          : `Ollama reminder scan failed: ${
+              err instanceof Error ? err.message : String(err)
+            }. Is Ollama running at ${baseUrl}?`;
+      this.logger.error(message);
+      throw new BadRequestException(message);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}

@@ -269,6 +269,21 @@ export type CategorizationRule = {
   excludeFromStats: boolean;
 };
 
+export type Reminder = {
+  id: string;
+  label: string;
+  /** ISO date of the next payment, or null if unknown. */
+  dueDate: string | null;
+  amountCents: number | null;
+  currency: string | null;
+  /** "monthly" / "quarterly" / "one-off" / … */
+  cadence: string | null;
+  note: string | null;
+  done: boolean;
+  sourceTransactionId: string | null;
+  createdAt: string;
+};
+
 export type AccuracyTally = {
   predicted: number;
   correct: number;

@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/auth.types';
+import { JobsService } from '../jobs/jobs.service';
 import { ColumnMappingDTO } from './dtos/column-mapping.dto';
 import { CreateImportDTO } from './dtos/create-import.dto';
 import { CreatePdfImportDTO } from './dtos/create-pdf-import.dto';
@@ -25,6 +26,7 @@ export class ImportController {
     private readonly importService: ImportService,
     private readonly mappingService: MappingService,
     private readonly pdfImportService: PdfImportService,
+    private readonly jobs: JobsService,
   ) {}
 
   /** Detect headers + sample rows for building a column mapping. */
@@ -38,10 +40,16 @@ export class ImportController {
     return this.importService.createImport(user.userId, body);
   }
 
-  /** Extract a PDF statement (local Ollama) into a review batch. */
+  /**
+   * Extract a PDF statement (local Ollama) into a review batch. Runs in the
+   * background — returns a job id to poll, since extraction can take a minute.
+   */
   @Post('pdf')
   importPdf(@CurrentUser() user: AuthUser, @Body() body: CreatePdfImportDTO) {
-    return this.pdfImportService.importPdf(user.userId, body);
+    const jobId = this.jobs.start(user.userId, () =>
+      this.pdfImportService.importPdf(user.userId, body),
+    );
+    return { jobId };
   }
 
   @Get()

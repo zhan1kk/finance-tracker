@@ -9,6 +9,7 @@ import {
   NetWorthChart,
 } from "@/components/charts";
 import { Button, Card } from "@/components/ui";
+import { TYPE_ACCENT, TYPE_BADGE } from "@/lib/account-style";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatCents } from "@/lib/format";
@@ -22,6 +23,7 @@ import type {
   Account,
   MonthlyStat,
   NetWorthPoint,
+  Reminder,
   TransactionStats,
 } from "@/lib/types";
 
@@ -74,6 +76,11 @@ export default function OverviewPage() {
     queryKey: ["stats", "net-worth"],
     queryFn: () => api<NetWorthPoint[]>("/reports/net-worth?months=12"),
   });
+  const reminders = useQuery({
+    queryKey: ["reminders"],
+    queryFn: () => api<Reminder[]>("/reminders"),
+  });
+  const upcoming = (reminders.data ?? []).filter((r) => !r.done).slice(0, 4);
 
   const income =
     monthStats.data?.monthly.reduce((sum, m) => sum + m.income, 0) ?? 0;
@@ -183,6 +190,46 @@ export default function OverviewPage() {
         />
       )}
 
+      {upcoming.length > 0 && (
+        <Card>
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="font-medium">Upcoming</h2>
+            <Link href="/reminders" className="text-sm text-zinc-500 underline">
+              All reminders
+            </Link>
+          </div>
+          <ul className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-900">
+            {upcoming.map((r) => (
+              <li
+                key={r.id}
+                className="flex flex-wrap items-center gap-x-2 py-1.5 text-sm"
+              >
+                <span className="font-medium">{r.label}</span>
+                {r.cadence && (
+                  <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                    {r.cadence}
+                  </span>
+                )}
+                <span className="text-zinc-500">
+                  next ·{" "}
+                  {r.dueDate
+                    ? new Date(r.dueDate).toLocaleDateString(undefined, {
+                        day: "numeric",
+                        month: "short",
+                      })
+                    : "no date"}
+                </span>
+                {r.amountCents != null && (
+                  <span className="ml-auto tabular-nums text-zinc-500">
+                    {formatCents(r.amountCents, r.currency ?? currency)}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
       <section>
         <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-zinc-500">
           Accounts
@@ -198,10 +245,15 @@ export default function OverviewPage() {
         )}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {accounts.data?.map((account) => (
-            <Card key={account.id}>
+            <Card
+              key={account.id}
+              className={`border-l-4 ${TYPE_ACCENT[account.type]}`}
+            >
               <p className="text-sm text-zinc-500">
                 {account.name}
-                <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-xs dark:bg-zinc-800">
+                <span
+                  className={`ml-2 rounded px-1.5 py-0.5 text-xs ${TYPE_BADGE[account.type]}`}
+                >
                   {account.type}
                 </span>
                 {!account.countInNetWorth && (
@@ -210,7 +262,13 @@ export default function OverviewPage() {
                   </span>
                 )}
               </p>
-              <p className="text-xl font-semibold">
+              <p
+                className={`text-xl font-semibold tabular-nums ${
+                  account.balance < 0 && account.type !== "credit"
+                    ? "text-red-600"
+                    : ""
+                }`}
+              >
                 {formatCents(account.balance, account.currency)}
               </p>
             </Card>

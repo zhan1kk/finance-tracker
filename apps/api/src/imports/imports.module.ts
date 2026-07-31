@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { JobsModule } from '../jobs/jobs.module';
 import { AnthropicCategorizationProvider } from './categorization/anthropic.provider';
 import { CategorizationService } from './categorization/categorization.service';
 import { HeuristicCategorizationProvider } from './categorization/heuristic.provider';
@@ -19,6 +20,7 @@ import {
 } from './types/import.types';
 
 @Module({
+  imports: [JobsModule],
   controllers: [ImportController, RulesController, SpreadsheetImportController],
   providers: [
     ImportService,

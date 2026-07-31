@@ -1,8 +1,24 @@
 import { dedupeHash, normalizeMerchant } from './normalization';
 
 describe('normalizeMerchant', () => {
-  it('lowercases and drops the card-ref segment after *', () => {
-    expect(normalizeMerchant('AMZN Mktp DE*1J4X9AB')).toBe('amzn mktp de');
+  it('lowercases and keeps the card-ref after * as a trailing token', () => {
+    expect(normalizeMerchant('AMZN Mktp DE*1J4X9AB')).toBe(
+      'amzn mktp de 1j4x9ab',
+    );
+  });
+
+  it('keeps a *card-ref so top-ups from different cards stay distinct', () => {
+    // The card ref is the only thing telling these apart (one funds from Vivid,
+    // the other from Advanzia), so it must survive normalization to be ruleable.
+    expect(normalizeMerchant('Apple Pay top-up by *4397')).toBe(
+      'apple pay top up by 4397',
+    );
+    expect(normalizeMerchant('Apple Pay top-up by *4808')).toBe(
+      'apple pay top up by 4808',
+    );
+    expect(normalizeMerchant('Apple Pay top-up by *4397')).not.toBe(
+      normalizeMerchant('Apple Pay top-up by *4808'),
+    );
   });
 
   it('strips processing noise and long digit runs', () => {
