@@ -1390,6 +1390,69 @@ describe('API (e2e)', () => {
       expect(await getBalance(accountId)).toBe(balanceAfterFirst);
     });
 
+    it('flips a row between income and expense and resets it to review', async () => {
+      const batch = await doImport();
+      const rent = rowFor(batch, 'Rent'); // −800 → EXPENSE, matched to Rent
+      const flipped = await request(http)
+        .post(`/imports/${batch.id}/rows/${rent.id}/flip`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      // Now income, and its old category is cleared so it must be re-reviewed.
+      expect(flipped.body).toMatchObject({
+        type: 'INCOME',
+        status: 'NEEDS_REVIEW',
+        subcategory: null,
+      });
+    });
+
+    it('dedupes a transfer across statements dated a few days apart', async () => {
+      const other = await createAccount(0);
+      // Account A's statement: €100 out to the other account on the 10th.
+      const a = await doImport(
+        ['Date,Amount,Description', '2026-07-10,-100.00,To savings'].join('\n'),
+      );
+      await request(http)
+        .patch(`/imports/${a.id}/rows/${a.rows[0].id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ counterAccountId: other.id })
+        .expect(200);
+      await request(http)
+        .post(`/imports/${a.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      expect(await getBalance(accountId)).toBe(490_000);
+      expect(await getBalance(other.id)).toBe(10_000);
+
+      // The other account's statement shows the same €100 arriving two days later.
+      const bRes = await request(http)
+        .post('/imports')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          accountId: other.id,
+          filename: 'b.csv',
+          csv: ['Date,Amount,Description', '2026-07-12,100.00,From checking'].join(
+            '\n',
+          ),
+          mapping: MAPPING,
+        })
+        .expect(201);
+      const bBatch = (bRes.body as { batch: { id: string; rows: { id: string }[] } })
+        .batch;
+      await request(http)
+        .patch(`/imports/${bBatch.id}/rows/${bBatch.rows[0].id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ counterAccountId: accountId })
+        .expect(200);
+      await request(http)
+        .post(`/imports/${bBatch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      // Recognized as the same movement — balances unchanged, not double-counted.
+      expect(await getBalance(accountId)).toBe(490_000);
+      expect(await getBalance(other.id)).toBe(10_000);
+    });
+
     it('undoes a committed batch, restoring transactions and balance', async () => {
       const batch = await doImport();
       await request(http)

@@ -69,6 +69,11 @@ function mergedDescription(row: {
 // 25,000,000,000), so such a row is skipped with a hint rather than crashing.
 const PG_INT_MAX = 2_147_483_647;
 
+// A transfer usually posts to the two accounts' statements on slightly different
+// days (processing lag), so the "already recorded from the other side" check
+// matches within a few days rather than on the exact date.
+const TRANSFER_DEDUPE_WINDOW_DAYS = 4;
+
 const BATCH_INCLUDE = {
   rows: {
     orderBy: { rowIndex: 'asc' },
@@ -299,6 +304,53 @@ export class ImportService {
   }
 
   /**
+   * Flips a row between income and expense. The sign is inferred from the
+   * statement, but some formats invert it (a credit card writes purchases
+   * unsigned and payments negative), so the extractor can get a row backwards.
+   * Flipping resets its categorization — the old guess was for the other
+   * direction — and re-hashes it for dedup.
+   */
+  async flipRowDirection(userId: string, batchId: string, rowId: string) {
+    const batch = await this.getPendingBatch(userId, batchId);
+    const row = batch.rows.find((r) => r.id === rowId);
+    if (!row) {
+      throw new NotFoundException(`Row with id ${rowId} was not found`);
+    }
+    if (row.status === 'DUPLICATE') {
+      throw new ConflictException('A duplicate row cannot be flipped');
+    }
+    const type: TransactionType = row.type === 'EXPENSE' ? 'INCOME' : 'EXPENSE';
+    return this.prisma.importRow.update({
+      where: { id: rowId },
+      data: {
+        type,
+        dedupeHash: dedupeHash({
+          accountId: batch.accountId,
+          date: row.date,
+          type,
+          amount: row.amount,
+          normalizedDescription: row.normalizedDescription,
+        }),
+        // The previous categorization was for the opposite direction.
+        subcategoryId: null,
+        counterAccountId: null,
+        excludeFromStats: false,
+        predictedSubcategoryId: null,
+        predictionSource: null,
+        confidence: null,
+        source: 'NONE',
+        corrected: false,
+        status: 'NEEDS_REVIEW',
+        note: null,
+      },
+      include: {
+        subcategory: { select: { id: true, name: true, category: true } },
+        counterAccount: { select: { id: true, name: true } },
+      },
+    });
+  }
+
+  /**
    * A transfer target must be another of the user's accounts in the same
    * currency — the ledger has no cross-currency transfer.
    */
@@ -473,11 +525,16 @@ export class ImportService {
     const from = movingOut ? batch.accountId : counterAccountId;
     const to = movingOut ? counterAccountId : batch.accountId;
 
+    const windowMs = TRANSFER_DEDUPE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
     const mirrored = await tx.transaction.findFirst({
       where: {
         type: 'TRANSFER',
         amount: row.amount,
-        date: row.date,
+        // Same movement, allowing for the two statements dating it differently.
+        date: {
+          gte: new Date(row.date.getTime() - windowMs),
+          lte: new Date(row.date.getTime() + windowMs),
+        },
         OR: [
           { accountId: from, counterAccountId: to },
           { accountId: to, counterAccountId: from },

@@ -102,6 +102,14 @@ export function ImportReview({
     onSuccess: invalidate,
   });
 
+  // Flips a row between income and expense (statements with inverted signs, e.g.
+  // a credit card, can be read backwards). Resets the row to review.
+  const flip = useMutation({
+    mutationFn: (rowId: string) =>
+      api(`/imports/${batchId}/rows/${rowId}/flip`, { method: "POST" }),
+    onSuccess: invalidate,
+  });
+
   // Confirms every still-in-review suggestion as-is. Sequential on purpose: a
   // burst of parallel PATCHes against the same batch buys nothing at this size.
   const acceptAll = useMutation({
@@ -264,6 +272,7 @@ export function ImportReview({
                 subcategories={subcategories.data ?? []}
                 onPick={(choice) => correct.mutate({ rowId: row.id, choice })}
                 onNote={(userNote) => annotate.mutate({ rowId: row.id, userNote })}
+                onFlip={() => flip.mutate(row.id)}
                 accounts={(accounts.data ?? []).filter(
                   (a) =>
                     a.id !== data.account.id &&
@@ -287,6 +296,7 @@ function Row({
   accounts,
   onPick,
   onNote,
+  onFlip,
 }: {
   row: ImportRow;
   currency: string;
@@ -295,6 +305,7 @@ function Row({
   accounts: Account[];
   onPick: (choice: string) => void;
   onNote: (userNote: string) => void;
+  onFlip: () => void;
 }) {
   const eligible = subcategories.filter((s) =>
     row.type === "INCOME" ? s.category === "Income" : s.category !== "Income",
@@ -343,13 +354,22 @@ function Row({
           <span className="block text-xs text-zinc-500">{row.userNote}</span>
         )}
       </td>
-      <td
-        className={`py-2 pr-3 text-right whitespace-nowrap ${
-          row.type === "INCOME" ? "text-emerald-600" : ""
-        }`}
-      >
-        {sign}
-        {formatCents(row.amount, currency)}
+      <td className="py-2 pr-3 text-right whitespace-nowrap">
+        <span className={row.type === "INCOME" ? "text-emerald-600" : ""}>
+          {sign}
+          {formatCents(row.amount, currency)}
+        </span>
+        {/* Some statements invert the sign (a credit card writes payments as
+            negative), so the extractor can read a row backwards — flip it. */}
+        {editable && (
+          <button
+            className="ml-1.5 text-xs text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300"
+            title="Flip income/expense"
+            onClick={onFlip}
+          >
+            ⇅
+          </button>
+        )}
       </td>
       <td className="py-2 pr-3">
         {editable ? (

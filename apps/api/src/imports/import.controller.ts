@@ -94,6 +94,16 @@ export class ImportController {
     return this.importService.reviewRow(user.userId, id, rowId, body);
   }
 
+  /** Flip a row between income and expense (for statements with inverted signs). */
+  @Post(':id/rows/:rowId/flip')
+  flipRow(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('rowId') rowId: string,
+  ) {
+    return this.importService.flipRowDirection(user.userId, id, rowId);
+  }
+
   @Post(':id/commit')
   commit(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.importService.commit(user.userId, id);
