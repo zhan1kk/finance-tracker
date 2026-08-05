@@ -1055,12 +1055,15 @@ function TransactionRow({
   const transferIn =
     t.type === "TRANSFER" && t.counterAccountId === filterAccountId;
   const sign = t.type === "INCOME" || transferIn ? "+" : "−";
-  const color =
-    t.type === "INCOME" || transferIn
-      ? "text-emerald-600"
-      : t.type === "TRANSFER"
-        ? "text-zinc-500"
-        : "";
+  // Green is reserved for real money coming in (income, refunds, reimbursements).
+  // Moves between your own accounts — transfers either way, and internal moves —
+  // are grey, so they don't read as earnings.
+  const isRealIncome = t.type === "INCOME" && !t.excludeFromStats;
+  const color = isRealIncome
+    ? "text-emerald-600"
+    : t.type === "TRANSFER" || t.excludeFromStats
+      ? "text-zinc-500"
+      : "";
   // Show a signed amount for transfers only when scoped to one account (so the
   // running balance reads correctly); otherwise keep them sign-less.
   const showSign = t.type !== "TRANSFER" || filterAccountId !== null;

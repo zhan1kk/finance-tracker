@@ -1498,6 +1498,49 @@ describe('API (e2e)', () => {
       expect(await getBalance(other.id)).toBe(10_000);
     });
 
+    it('warns (does not silently merge) when a transfer leg lands a few days apart', async () => {
+      const other = await createAccount(0);
+      const a = await doImport(
+        ['Date,Amount,Description', '2026-07-10,-100.00,To savings'].join('\n'),
+      );
+      await request(http)
+        .patch(`/imports/${a.id}/rows/${a.rows[0].id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ counterAccountId: other.id })
+        .expect(200);
+      await request(http)
+        .post(`/imports/${a.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      // The other account's statement shows the same €100 arriving three days later.
+      const bRes = await request(http)
+        .post('/imports')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          accountId: other.id,
+          filename: 'b.csv',
+          csv: ['Date,Amount,Description', '2026-07-13,100.00,From checking'].join(
+            '\n',
+          ),
+          mapping: MAPPING,
+        })
+        .expect(201);
+      const bBatch = (bRes.body as { batch: { id: string; rows: { id: string }[] } })
+        .batch;
+
+      // Marking it a transfer surfaces a warning note rather than silently
+      // merging (which once dropped genuine repeats) — the user Skips if it's
+      // the same movement, so nothing is lost or double-counted behind the scenes.
+      const reviewed = await request(http)
+        .patch(`/imports/${bBatch.id}/rows/${bBatch.rows[0].id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ counterAccountId: accountId })
+        .expect(200);
+      expect(reviewed.body).toMatchObject({ status: 'READY' });
+      expect(reviewed.body.note).toContain('Possible duplicate');
+    });
+
     it('undoes a committed batch, restoring transactions and balance', async () => {
       const batch = await doImport();
       await request(http)

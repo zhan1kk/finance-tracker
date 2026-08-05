@@ -66,6 +66,13 @@ function mergedDescription(row: {
 // 25,000,000,000), so such a row is skipped with a hint rather than crashing.
 const PG_INT_MAX = 2_147_483_647;
 
+// A transfer posts to its two accounts' statements on the same day when it's
+// instant (Revolut) but a few days apart when it clears through an external
+// bank. Exact-date mirror legs auto-merge at commit; within this many days we
+// don't merge silently (that once killed genuine repeats) — we warn at review
+// so the user can Skip the duplicate leg themselves.
+const TRANSFER_WARN_DAYS = 5;
+
 // Statement states that mean no money actually moved — a reverted, declined, or
 // failed authorization (e.g. Revolut's −€1 Bolt hold that was REVERTED). Skipped
 // at staging so they don't import as real spending. Matched only against
@@ -262,12 +269,18 @@ export class ImportService {
         'Choose only one of a category, a transfer account, or internal',
       );
     }
+    let transferWarning: string | null = null;
     if (asTransfer) {
       await this.assertTransferTarget(
         userId,
         batch.accountId,
         batch.account.currency,
         choice.counterAccountId as string,
+      );
+      transferWarning = await this.nearDateMirrorWarning(
+        batch.accountId,
+        choice.counterAccountId as string,
+        row,
       );
     } else if (asSubcategory) {
       await this.assertOwnSubcategory(userId, choice.subcategoryId as string);
@@ -299,7 +312,7 @@ export class ImportService {
             ? row.source
             : 'MANUAL',
         status: 'READY',
-        note: null,
+        note: transferWarning,
         userNote,
       },
       include: {
@@ -601,6 +614,46 @@ export class ImportService {
    *
    * Returns the two account ids whose balances moved, or null when skipped.
    */
+  /**
+   * A soft warning (never a block) when a row being marked as a transfer looks
+   * like the other leg of one already recorded a few days apart — the
+   * processing-lag case. Exact-date mirrors are excluded because those merge
+   * automatically at commit; this only flags the ambiguous near-date ones, so a
+   * genuine repeat is never dropped silently and a real mirror never slips
+   * through unnoticed. The user decides by Skipping the row or not.
+   */
+  private async nearDateMirrorWarning(
+    batchAccountId: string,
+    counterAccountId: string,
+    row: { date: Date; amount: number; type: TransactionType },
+  ): Promise<string | null> {
+    const movingOut = row.type === 'EXPENSE';
+    const from = movingOut ? batchAccountId : counterAccountId;
+    const to = movingOut ? counterAccountId : batchAccountId;
+    const windowMs = TRANSFER_WARN_DAYS * 24 * 60 * 60 * 1000;
+
+    const near = await this.prisma.transaction.findFirst({
+      where: {
+        type: 'TRANSFER',
+        amount: row.amount,
+        date: {
+          gte: new Date(row.date.getTime() - windowMs),
+          lte: new Date(row.date.getTime() + windowMs),
+        },
+        // Same-date legs auto-merge at commit — no warning needed for those.
+        NOT: { date: row.date },
+        OR: [
+          { accountId: from, counterAccountId: to },
+          { accountId: to, counterAccountId: from },
+        ],
+      },
+      select: { date: true },
+    });
+    if (!near) return null;
+    const on = near.date.toISOString().slice(0, 10);
+    return `Possible duplicate: a matching transfer is already recorded on ${on}. If it's the same movement posted a few days apart, Skip this row.`;
+  }
+
   private async commitTransferRow(
     tx: Prisma.TransactionClient,
     batch: { accountId: string },
