@@ -110,6 +110,17 @@ export function ImportReview({
     onSuccess: invalidate,
   });
 
+  // Drops a row from the import (or restores it) — e.g. a charge that already
+  // exists under a different posting date, which dedup can't catch.
+  const skip = useMutation({
+    mutationFn: (vars: { rowId: string; skipped: boolean }) =>
+      api(`/imports/${batchId}/rows/${vars.rowId}/skip`, {
+        method: "POST",
+        body: JSON.stringify({ skipped: vars.skipped }),
+      }),
+    onSuccess: invalidate,
+  });
+
   // Confirms every still-in-review suggestion as-is. Sequential on purpose: a
   // burst of parallel PATCHes against the same batch buys nothing at this size.
   const acceptAll = useMutation({
@@ -160,7 +171,7 @@ export function ImportReview({
   );
   const error =
     commit.error ?? undo.error ?? reopen.error ?? discard.error ??
-    correct.error ?? acceptAll.error;
+    correct.error ?? acceptAll.error ?? skip.error;
 
   return (
     <Card>
@@ -273,6 +284,7 @@ export function ImportReview({
                 onPick={(choice) => correct.mutate({ rowId: row.id, choice })}
                 onNote={(userNote) => annotate.mutate({ rowId: row.id, userNote })}
                 onFlip={() => flip.mutate(row.id)}
+                onSkip={(skipped) => skip.mutate({ rowId: row.id, skipped })}
                 accounts={(accounts.data ?? []).filter(
                   (a) =>
                     a.id !== data.account.id &&
@@ -297,6 +309,7 @@ function Row({
   onPick,
   onNote,
   onFlip,
+  onSkip,
 }: {
   row: ImportRow;
   currency: string;
@@ -306,12 +319,14 @@ function Row({
   onPick: (choice: string) => void;
   onNote: (userNote: string) => void;
   onFlip: () => void;
+  onSkip: (skipped: boolean) => void;
 }) {
   const eligible = subcategories.filter((s) =>
     row.type === "INCOME" ? s.category === "Income" : s.category !== "Income",
   );
   const sign = row.type === "INCOME" ? "+" : "−";
   const duplicate = row.status === "DUPLICATE";
+  const skipped = row.status === "SKIPPED";
   const chosen =
     row.subcategoryId ??
     row.counterAccountId ??
@@ -320,7 +335,7 @@ function Row({
   return (
     <tr
       className={`border-b border-zinc-100 dark:border-zinc-900 ${
-        duplicate ? "opacity-50" : ""
+        duplicate || skipped ? "opacity-50" : ""
       }`}
     >
       <td className="py-2 pr-3 whitespace-nowrap">{row.date.slice(0, 10)}</td>
@@ -361,7 +376,7 @@ function Row({
         </span>
         {/* Some statements invert the sign (a credit card writes payments as
             negative), so the extractor can read a row backwards — flip it. */}
-        {editable && (
+        {editable && !skipped && (
           <button
             className="ml-1.5 text-xs text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300"
             title="Flip income/expense"
@@ -372,7 +387,7 @@ function Row({
         )}
       </td>
       <td className="py-2 pr-3">
-        {editable ? (
+        {editable && !skipped ? (
           <Select
             value={
               row.excludeFromStats
@@ -436,12 +451,30 @@ function Row({
           </button>
         )}
       </td>
-      <td className="py-2 pr-3">
+      <td className="py-2 pr-3 whitespace-nowrap">
         <span
           className={`rounded px-1.5 py-0.5 text-xs ${STATUS_STYLE[row.status]}`}
         >
           {STATUS_LABEL[row.status]}
         </span>
+        {editable &&
+          (skipped ? (
+            <button
+              className="ml-2 text-xs text-zinc-500 hover:underline"
+              title="Put this row back in the import"
+              onClick={() => onSkip(false)}
+            >
+              Restore
+            </button>
+          ) : (
+            <button
+              className="ml-2 text-xs text-zinc-400 hover:text-red-600"
+              title="Drop this row from the import (e.g. a duplicate under a different date)"
+              onClick={() => onSkip(true)}
+            >
+              ✕ Skip
+            </button>
+          ))}
       </td>
     </tr>
   );

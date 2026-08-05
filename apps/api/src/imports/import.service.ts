@@ -351,6 +351,54 @@ export class ImportService {
   }
 
   /**
+   * Manually drops a row from the import (or restores it). The case dedup can't
+   * catch: a charge that already exists under a different posting date — e.g. an
+   * Amazon order placed on the 26th that settles on the 30th and so lands in the
+   * next statement's window. SKIPPED rows are excluded from the commit; restoring
+   * returns the row to READY if it already carries a decision, else NEEDS_REVIEW.
+   */
+  async setRowSkipped(
+    userId: string,
+    batchId: string,
+    rowId: string,
+    skipped: boolean,
+  ) {
+    const batch = await this.getPendingBatch(userId, batchId);
+    const row = batch.rows.find((r) => r.id === rowId);
+    if (!row) {
+      throw new NotFoundException(`Row with id ${rowId} was not found`);
+    }
+    // A duplicate is already auto-excluded; there is nothing to toggle.
+    if (row.status === 'DUPLICATE') {
+      throw new ConflictException(
+        'This row is already flagged as a duplicate and will not be imported',
+      );
+    }
+
+    const hasDecision =
+      row.subcategoryId !== null ||
+      row.counterAccountId !== null ||
+      row.excludeFromStats;
+    const status = skipped
+      ? 'SKIPPED'
+      : hasDecision
+        ? 'READY'
+        : 'NEEDS_REVIEW';
+
+    return this.prisma.importRow.update({
+      where: { id: rowId },
+      data: {
+        status,
+        note: skipped ? 'Skipped — won’t be imported' : null,
+      },
+      include: {
+        subcategory: { select: { id: true, name: true, category: true } },
+        counterAccount: { select: { id: true, name: true } },
+      },
+    });
+  }
+
+  /**
    * A transfer target must be another of the user's accounts in the same
    * currency — the ledger has no cross-currency transfer.
    */

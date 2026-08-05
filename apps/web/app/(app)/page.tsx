@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   CategoryDonut,
   MonthlyTrendChart,
@@ -81,6 +81,15 @@ export default function OverviewPage() {
         `/transactions/stats?from=${selected.from}&to=${selected.to}`,
       ),
   });
+  // The month before the one shown, for the "since last month" comparison.
+  const prev = periodRange(shiftPeriod(shown, -1), monthStartDay);
+  const prevStats = useQuery({
+    queryKey: ["stats", prev],
+    queryFn: () =>
+      api<TransactionStats>(
+        `/transactions/stats?from=${prev.from}&to=${prev.to}`,
+      ),
+  });
   const trendStats = useQuery({
     queryKey: ["stats", { from: trendFrom, to: selected.to }],
     queryFn: () =>
@@ -102,6 +111,8 @@ export default function OverviewPage() {
     monthStats.data?.monthly.reduce((sum, m) => sum + m.income, 0) ?? 0;
   const expenses =
     monthStats.data?.monthly.reduce((sum, m) => sum + m.expense, 0) ?? 0;
+  const prevExpenses =
+    prevStats.data?.monthly.reduce((sum, m) => sum + m.expense, 0) ?? 0;
   // All cross-account aggregates are converted to the base currency server-side,
   // so they are always formatted in it (not any single account's currency).
   const currency = user?.baseCurrency ?? "EUR";
@@ -192,6 +203,16 @@ export default function OverviewPage() {
           </Card>
         </div>
       </section>
+
+      {monthStats.data && prevStats.data && (
+        <SpendingInsights
+          current={monthStats.data.byCategory}
+          previous={prevStats.data.byCategory}
+          curTotal={expenses}
+          prevTotal={prevExpenses}
+          currency={currency}
+        />
+      )}
 
       <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <Card>
@@ -326,6 +347,90 @@ export default function OverviewPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+/**
+ * A couple of plain-language takeaways comparing the shown month to the one
+ * before it: overall spend, and the single biggest category mover. Skips tiny
+ * wiggles so it only speaks up when there's something worth noticing.
+ */
+function SpendingInsights({
+  current,
+  previous,
+  curTotal,
+  prevTotal,
+  currency,
+}: {
+  current: TransactionStats["byCategory"];
+  previous: TransactionStats["byCategory"];
+  curTotal: number;
+  prevTotal: number;
+  currency: string;
+}) {
+  const prevById = new Map(previous.map((r) => [r.subcategoryId, r.amount]));
+  const movers = current
+    .map((r) => {
+      const before = prevById.get(r.subcategoryId) ?? 0;
+      return { name: r.name, cur: r.amount, before, delta: r.amount - before };
+    })
+    // Ignore anything that moved less than €5 — not worth a callout.
+    .filter((m) => Math.abs(m.delta) >= 500)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+  const lines: ReactNode[] = [];
+
+  if (prevTotal > 0 && curTotal > 0) {
+    const pct = Math.round(((curTotal - prevTotal) / prevTotal) * 100);
+    if (pct !== 0) {
+      lines.push(
+        <>
+          You&apos;ve spent{" "}
+          <strong>
+            {Math.abs(pct)}% {pct > 0 ? "more" : "less"}
+          </strong>{" "}
+          than last month ({formatCents(prevTotal, currency)} →{" "}
+          {formatCents(curTotal, currency)}).
+        </>,
+      );
+    }
+  }
+
+  const top = movers[0];
+  if (top) {
+    lines.push(
+      top.before === 0 ? (
+        <>
+          <strong>{top.name}</strong> is new this month (
+          {formatCents(top.cur, currency)}).
+        </>
+      ) : (
+        <>
+          <strong>{top.name}</strong> is {top.delta > 0 ? "up" : "down"}{" "}
+          {Math.abs(Math.round((top.delta / top.before) * 100))}% (
+          {top.delta > 0 ? "+" : "−"}
+          {formatCents(Math.abs(top.delta), currency)}).
+        </>
+      ),
+    );
+  }
+
+  if (lines.length === 0) return null;
+
+  return (
+    <Card>
+      <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-zinc-500">
+        Since last month
+      </h2>
+      <ul className="flex flex-col gap-1.5 text-sm text-zinc-700 dark:text-zinc-200">
+        {lines.map((line, i) => (
+          <li key={i} className="flex gap-2">
+            <span className="text-zinc-400">•</span>
+            <span>{line}</span>
+          </li>
+        ))}
+      </ul>
+    </Card>
   );
 }
 

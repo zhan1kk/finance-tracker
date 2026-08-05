@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui";
 import { useAuth } from "@/lib/auth";
 
@@ -39,14 +40,27 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="mx-auto max-w-5xl p-4">
-      <header className="mb-6 flex flex-wrap items-center gap-4">
-        <span className="text-lg font-semibold">Finance Tracker</span>
-        <nav className="flex gap-1">
+      <header className="mb-6 flex flex-col gap-3">
+        <div className="flex items-center gap-3">
+          <span className="text-lg font-semibold">Finance Tracker</span>
+          <div className="ml-auto flex items-center gap-2 text-sm text-zinc-500">
+            <span className="hidden truncate sm:inline">{user.email}</span>
+            <ThemeToggle />
+            <Button
+              variant="ghost"
+              onClick={() => void logout().then(() => router.replace("/login"))}
+            >
+              Sign out
+            </Button>
+          </div>
+        </div>
+        {/* One scrollable row on every width — avoids a 4-row wrap on phones. */}
+        <nav className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
           {NAV.map((item) => (
             <Link
               key={item.href}
               href={item.href}
-              className={`rounded-md px-3 py-1.5 text-sm ${
+              className={`shrink-0 rounded-md px-3 py-1.5 text-sm whitespace-nowrap ${
                 pathname === item.href
                   ? "bg-zinc-200 font-medium dark:bg-zinc-800"
                   : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
@@ -56,15 +70,6 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             </Link>
           ))}
         </nav>
-        <div className="ml-auto flex items-center gap-3 text-sm text-zinc-500">
-          <span className="hidden sm:inline">{user.email}</span>
-          <Button
-            variant="ghost"
-            onClick={() => void logout().then(() => router.replace("/login"))}
-          >
-            Sign out
-          </Button>
-        </div>
       </header>
       {children}
     </div>

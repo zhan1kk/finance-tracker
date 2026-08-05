@@ -16,6 +16,7 @@ import { CreateImportDTO } from './dtos/create-import.dto';
 import { CreatePdfImportDTO } from './dtos/create-pdf-import.dto';
 import { InspectCsvDTO } from './dtos/inspect-csv.dto';
 import { ReviewRowDTO } from './dtos/review-row.dto';
+import { SkipRowDTO } from './dtos/skip-row.dto';
 import { ImportService } from './import.service';
 import { MappingService } from './mapping.service';
 import { PdfImportService } from './pdf/pdf-import.service';
@@ -102,6 +103,17 @@ export class ImportController {
     @Param('rowId') rowId: string,
   ) {
     return this.importService.flipRowDirection(user.userId, id, rowId);
+  }
+
+  /** Drop a row from the import, or restore it (a duplicate dedup can't catch). */
+  @Post(':id/rows/:rowId/skip')
+  skipRow(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('rowId') rowId: string,
+    @Body() body: SkipRowDTO,
+  ) {
+    return this.importService.setRowSkipped(user.userId, id, rowId, body.skipped);
   }
 
   @Post(':id/commit')

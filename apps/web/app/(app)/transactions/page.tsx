@@ -4,7 +4,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api, downloadFile } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { formatCents, parseAmountToCents, todayISO } from "@/lib/format";
+import { periodOf, periodRange, shiftPeriod } from "@/lib/period";
 import type {
   Account,
   Subcategory,
@@ -27,6 +29,8 @@ const PAGE_SIZE = 20;
 
 export default function TransactionsPage() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const monthStartDay = user?.monthStartDay ?? 1;
   const [filters, setFilters] = useState<Filters>({
     type: "",
     accountId: "",
@@ -156,6 +160,32 @@ export default function TransactionsPage() {
   // Extra leading checkbox column widens every full-width cell by one.
   const emptyColSpan = singleAccount ? 8 : 7;
 
+  // One-tap date ranges. Month presets follow the user's financial month (so
+  // "This month" matches the overview); the year preset is the plain calendar
+  // year. Selecting one just fills the From/To fields.
+  const currentPeriod = periodOf(new Date(), monthStartDay);
+  const year = String(new Date().getFullYear());
+  const presets = [
+    { label: "This month", ...periodRange(currentPeriod, monthStartDay) },
+    {
+      label: "Last month",
+      ...periodRange(shiftPeriod(currentPeriod, -1), monthStartDay),
+    },
+    { label: "This year", from: `${year}-01-01`, to: `${year}-12-31` },
+  ];
+  const applyRange = (from: string, to: string) =>
+    setFilters((f) => ({ ...f, from, to, page: 1 }));
+  const activePreset = presets.find(
+    (p) => p.from === filters.from && p.to === filters.to,
+  );
+  const allDates = filters.from === "" && filters.to === "";
+  const chip = (active: boolean) =>
+    `rounded-full px-2.5 py-1 ${
+      active
+        ? "bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900"
+        : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+    }`;
+
   return (
     <main className="flex flex-col gap-6">
       <QuickAdd
@@ -247,6 +277,22 @@ export default function TransactionsPage() {
               Delete all
             </button>
           </span>
+        </div>
+
+        <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="text-zinc-400">Quick range:</span>
+          {presets.map((p) => (
+            <button
+              key={p.label}
+              onClick={() => applyRange(p.from, p.to)}
+              className={chip(activePreset?.label === p.label)}
+            >
+              {p.label}
+            </button>
+          ))}
+          <button onClick={() => applyRange("", "")} className={chip(allDates)}>
+            All dates
+          </button>
         </div>
 
         {selectedItems.length > 0 && (

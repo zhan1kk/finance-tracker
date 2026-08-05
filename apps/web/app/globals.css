@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* Drive `dark:` off an explicit `data-theme` attribute instead of the OS media
+   query, so the theme toggle can override it. A tiny script in the root layout
+   sets `data-theme` (resolving "system" to the OS preference) before first
+   paint, so there is no flash. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -12,11 +18,9 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+:root[data-theme="dark"] {
+  --background: #0a0a0a;
+  --foreground: #ededed;
 }
 
 /* Chart tokens. Series colors are validated (dataviz six checks) against the
@@ -30,14 +34,12 @@
   --chart-axis: #d4d4d8;
   --chart-muted: #71717a;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --chart-series-1: #3987e5;
-    --chart-series-2: #199e70;
-    --chart-surface: #18181b;
-    --chart-grid: #27272a;
-    --chart-axis: #3f3f46;
-  }
+:root[data-theme="dark"] {
+  --chart-series-1: #3987e5;
+  --chart-series-2: #199e70;
+  --chart-surface: #18181b;
+  --chart-grid: #27272a;
+  --chart-axis: #3f3f46;
 }
 
 body {
