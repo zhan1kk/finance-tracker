@@ -336,6 +336,190 @@ export function CategoryBars({
   );
 }
 
+// Colour-vision-deficiency-safe categorical palette (Okabe-Ito), used in a fixed
+// order so a category keeps its colour. "Other" always takes the grey.
+const DONUT_COLORS = [
+  "#0072B2", // blue
+  "#E69F00", // orange
+  "#009E73", // green
+  "#CC79A7", // purple
+  "#56B4E9", // sky
+  "#D55E00", // vermillion
+  "#F0E442", // yellow
+];
+const DONUT_OTHER = "#9AA0A6";
+
+function polar(cx: number, cy: number, radius: number, angle: number): [number, number] {
+  return [cx + radius * Math.cos(angle), cy + radius * Math.sin(angle)];
+}
+
+/** Donut-slice path between two angles (radians), outer radius R, inner r. */
+function arcPath(cx: number, cy: number, R: number, r: number, a0: number, a1: number): string {
+  const large = a1 - a0 > Math.PI ? 1 : 0;
+  const [x1, y1] = polar(cx, cy, R, a0);
+  const [x2, y2] = polar(cx, cy, R, a1);
+  const [x3, y3] = polar(cx, cy, r, a1);
+  const [x4, y4] = polar(cx, cy, r, a0);
+  return `M ${x1} ${y1} A ${R} ${R} 0 ${large} 1 ${x2} ${y2} L ${x3} ${y3} A ${r} ${r} 0 ${large} 0 ${x4} ${y4} Z`;
+}
+
+/**
+ * Expense composition as a donut: one slice per subcategory (top 7, the rest
+ * grouped into "Other"), with a legend carrying the amounts and shares. A 2px
+ * surface ring separates slices; a table view backs it for accessibility.
+ */
+export function CategoryDonut({
+  data,
+  currency,
+}: {
+  data: CategoryStat[];
+  currency: string;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  const [asTable, setAsTable] = useState(false);
+
+  const spending = data.filter((d) => d.amount > 0);
+  if (spending.length === 0) {
+    return (
+      <p className="py-8 text-center text-sm text-zinc-500">
+        No spending in this period yet.
+      </p>
+    );
+  }
+
+  const slices = spending.slice(0, MAX_CATEGORY_ROWS).map((d, i) => ({
+    label: d.name,
+    amount: d.amount,
+    color: DONUT_COLORS[i % DONUT_COLORS.length],
+  }));
+  const tail = spending.slice(MAX_CATEGORY_ROWS);
+  if (tail.length > 0) {
+    slices.push({
+      label: "Other",
+      amount: tail.reduce((s, d) => s + d.amount, 0),
+      color: DONUT_OTHER,
+    });
+  }
+  const total = slices.reduce((s, x) => s + x.amount, 0);
+
+  if (asTable) {
+    return (
+      <div>
+        <div className="mb-2 flex">
+          <TableToggle asTable onToggle={() => setAsTable(false)} />
+        </div>
+        <table className="w-full text-sm">
+          <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+            {slices.map((s) => (
+              <tr key={s.label}>
+                <td className="py-1.5">{s.label}</td>
+                <td className="py-1.5 text-right tabular-nums">
+                  {formatCents(s.amount, currency)}
+                </td>
+                <td className="py-1.5 w-12 text-right tabular-nums text-zinc-400">
+                  {Math.round((s.amount / total) * 100)}%
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  const size = 184;
+  const cx = size / 2;
+  const cy = size / 2;
+  const R = 86;
+  const r = 54;
+  let angle = -Math.PI / 2;
+  const arcs = slices.map((s, i) => {
+    const a0 = angle;
+    const a1 = a0 + (s.amount / total) * Math.PI * 2;
+    angle = a1;
+    return { ...s, i, path: arcPath(cx, cy, R, r, a0, a1) };
+  });
+
+  return (
+    <div>
+      <div className="mb-1 flex">
+        <TableToggle asTable={false} onToggle={() => setAsTable(true)} />
+      </div>
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+        <svg
+          viewBox={`0 0 ${size} ${size}`}
+          width={size}
+          height={size}
+          className="shrink-0"
+          role="img"
+          aria-label="Expense breakdown by category"
+        >
+          {arcs.map((a) => (
+            <path
+              key={a.label}
+              d={a.path}
+              fill={a.color}
+              stroke="var(--chart-surface)"
+              strokeWidth={2}
+              style={{ opacity: hover === null || hover === a.i ? 1 : 0.35 }}
+              onMouseEnter={() => setHover(a.i)}
+              onMouseLeave={() => setHover(null)}
+            />
+          ))}
+          <text
+            x={cx}
+            y={cy - 5}
+            textAnchor="middle"
+            fontSize="9"
+            fill="var(--chart-muted)"
+          >
+            total
+          </text>
+          <text
+            x={cx}
+            y={cy + 11}
+            textAnchor="middle"
+            fontSize="14"
+            fontWeight="600"
+            fill="currentColor"
+          >
+            {formatCentsCompact(total, currency)}
+          </text>
+        </svg>
+        <ul className="flex min-w-44 flex-1 flex-col gap-1">
+          {arcs.map((a) => {
+            const share = Math.round((a.amount / total) * 100);
+            return (
+              <li
+                key={a.label}
+                className="flex items-center gap-2 text-sm"
+                style={{ opacity: hover === null || hover === a.i ? 1 : 0.5 }}
+                onMouseEnter={() => setHover(a.i)}
+                onMouseLeave={() => setHover(null)}
+              >
+                <span
+                  aria-hidden
+                  className="h-3 w-3 shrink-0 rounded-sm"
+                  style={{ backgroundColor: a.color }}
+                />
+                <span className="truncate" title={a.label}>
+                  {a.label}
+                </span>
+                <span className="ml-auto tabular-nums text-zinc-500">
+                  {formatCents(a.amount, currency)}
+                </span>
+                <span className="w-9 shrink-0 text-right text-xs tabular-nums text-zinc-400">
+                  {share}%
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Net worth over time: one series → a 2px line with a 10% area wash, no legend
  * (the card title names it). The y-domain is always anchored to zero so the

@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  api,
   loginRequest,
   logoutRequest,
   registerRequest,
@@ -21,6 +22,8 @@ type AuthContextValue = {
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Update the caller's own reporting preferences (e.g. month start day). */
+  updateProfile: (patch: { monthStartDay?: number }) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -45,6 +48,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     logout: async () => {
       await logoutRequest();
       setUser(null);
+    },
+    updateProfile: async (patch) => {
+      setUser(
+        await api<User>("/auth/me", {
+          method: "PATCH",
+          body: JSON.stringify(patch),
+        }),
+      );
     },
   };
 

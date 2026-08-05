@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";
 import {
-  CategoryBars,
+  CategoryDonut,
   MonthlyTrendChart,
   NetWorthChart,
 } from "@/components/charts";
@@ -40,11 +40,18 @@ const BREAKDOWN_CATEGORIES = [
 ] as const;
 
 export default function OverviewPage() {
-  const { user } = useAuth();
+  const { user, updateProfile } = useAuth();
   const monthStartDay = user?.monthStartDay ?? 1;
   const currentPeriod = periodOf(new Date(), monthStartDay);
   const [period, setPeriod] = useState<string | null>(null);
   const shown = period ?? currentPeriod;
+
+  // Changing the day the financial month starts re-periods every stat; snap the
+  // view back to the current month so the label still matches what's shown.
+  const changeMonthStart = async (day: number) => {
+    await updateProfile({ monthStartDay: day });
+    setPeriod(null);
+  };
 
   const accounts = useQuery({
     queryKey: ["accounts"],
@@ -123,6 +130,23 @@ export default function OverviewPage() {
               Today
             </Button>
           )}
+          <label
+            className="ml-auto flex items-center gap-1.5 text-xs text-zinc-500"
+            title="The day your financial month begins — e.g. 28 runs the 28th to the 27th. 1 = plain calendar months. Short months just end on their last day."
+          >
+            Month starts
+            <select
+              value={monthStartDay}
+              onChange={(e) => void changeMonthStart(Number(e.target.value))}
+              className="rounded border border-zinc-200 bg-transparent px-1 py-0.5 text-xs dark:border-zinc-800"
+            >
+              {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                <option key={d} value={d}>
+                  {d === 1 ? "1st (calendar)" : `${d}`}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Card>
@@ -155,7 +179,10 @@ export default function OverviewPage() {
             </span>
           </h2>
           {monthStats.data && (
-            <CategoryBars data={monthStats.data.byCategory} currency={currency} />
+            <CategoryDonut
+              data={monthStats.data.byCategory}
+              currency={currency}
+            />
           )}
         </Card>
         <Card>
