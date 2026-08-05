@@ -16,6 +16,18 @@ describe('looksLikeReminder', () => {
     }
   });
 
+  it('matches money-owed hints between friends', () => {
+    for (const s of [
+      "125 is Shar's share, need to ask her",
+      'Pasta (shared w Amaani)',
+      "Cake for Chloe's bday, got back from all but Esther",
+      'Shar paid for the tea',
+      "paid for drinks, they'll pay me back",
+    ]) {
+      expect(looksLikeReminder(s)).toBe(true);
+    }
+  });
+
   it('ignores ordinary descriptions and null', () => {
     expect(looksLikeReminder('Albert Heijn groceries')).toBe(false);
     expect(looksLikeReminder('Spotify')).toBe(false);

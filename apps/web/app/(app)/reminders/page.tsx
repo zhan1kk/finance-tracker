@@ -203,10 +203,11 @@ export default function RemindersPage() {
           </Button>
         </div>
         <p className="mb-3 text-sm text-zinc-500">
-          A local model reads your transaction descriptions for future-payment
-          hints (&ldquo;1/3 payment&hellip;&rdquo;, &ldquo;next in Sep&rdquo;,
-          &ldquo;monthly&rdquo;) and lists what&rsquo;s coming up. It never posts
-          anything — just reminds.
+          A local model reads your transaction descriptions for two things:
+          upcoming payments (&ldquo;1/3 payment&hellip;&rdquo;, &ldquo;next in
+          Sep&rdquo;, &ldquo;monthly&rdquo;) and money you owe or are owed
+          (&ldquo;125 is Shar&rsquo;s share, ask her&rdquo;, &ldquo;shared w
+          Amaani&rdquo;). It never posts anything — just reminds.
         </p>
         {scan.isPending && (
           <p className="text-sm text-amber-600">

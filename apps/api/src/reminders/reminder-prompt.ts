@@ -25,12 +25,13 @@ export type ReminderCandidate = {
   description: string;
 };
 
-// Catches the shapes people write future-payment hints in: "1/3 payment",
-// "next payment", "monthly", "by 15.09", "installment/Rate", "due …". Kept
-// deliberately broad — the LLM does the real judging on whatever this lets
-// through, and non-hints are dropped there.
+// Catches the shapes people write hints in — both future payments ("1/3
+// payment", "next payment", "monthly", "by 15.09", "due …") and money owed
+// between friends ("ask her", "owes", "shared w", "split", "paid for", "got
+// back", "pay back"). Kept deliberately broad — the LLM does the real judging
+// on whatever this lets through, and non-hints are dropped there.
 const REMINDER_HINT =
-  /(\d\s*\/\s*\d|next\s+(payment|instal?lment|in|due)|monthly|quarterly|weekly|yearly|annual|instal?lment|\brate\b|by\s+\d{1,2}[.\/]\d{1,2}|\bdue\b|remind)/i;
+  /(\d\s*\/\s*\d|next\s+(payment|instal?lment|in|due)|monthly|quarterly|weekly|yearly|annual|instal?lment|\brate\b|by\s+\d{1,2}[.\/]\d{1,2}|\bdue\b|remind|\bowe|\bask|\bshare|\bsplit|paid\s*for|pay\s*back|paid\s*back|paying\s*back|got\s*back|get\s*back|chip\s*in)/i;
 
 export function looksLikeReminder(description: string | null): boolean {
   return !!description && REMINDER_HINT.test(description);
@@ -61,20 +62,31 @@ export const REMINDER_EXTRACTION_SCHEMA = {
   required: ['reminders'],
 };
 
-export const REMINDER_SYSTEM_PROMPT = `You extract UPCOMING-PAYMENT reminders from bank-transaction descriptions.
+export const REMINDER_SYSTEM_PROMPT = `You read bank-transaction descriptions and extract REMINDERS the person will want to act on later. There are two kinds:
 
-Each input row is a transaction that already happened, but its description may hint at a FUTURE related payment (an installment plan, a monthly bill, "next payment …"). For each row that genuinely describes a future payment, output one reminder; skip rows that don't.
+1) UPCOMING PAYMENT — the description hints at a FUTURE related payment: an installment plan ("1/3 payment"), a recurring bill ("monthly", "next in Sep"), or an explicit due date.
 
-For each reminder:
+2) MONEY OWED between the person and their friends — the description says a friend owes them, or they owe a friend, for a shared or covered cost. Examples: "125 is Shar's share, need to ask her", "shared w Amaani", "got back from all but Esther", "Shar paid for the tea", "paid for drinks, they'll pay me back".
+
+For each row matching either kind, output one reminder; skip rows matching neither. Never invent reminders.
+
+Fields per reminder:
 - index: the row's number, copied exactly.
-- label: a short name of what the payment is for (e.g. "TV Tax", "ImmoScout", "Sofa installment").
-- dueDate: the next payment date as "YYYY-MM-DD". Resolve relative hints against the transaction's own date ("next in Sep" → the first September after it; "monthly" → one month later). Omit if truly unknown.
-- amount: the expected amount as a number. If the hint states one, use it; otherwise use the transaction's amount.
+- label: a short, actionable title.
+  • Upcoming payment: what it's for ("TV Tax", "Sofa installment").
+  • A friend owes THEM (collect it): start with "Ask" and name the person — "Ask Shar for her share", "Ask Esther".
+  • THEY owe a friend (pay it): start with "Pay" and name the person — "Pay Shar back for the tea".
+- amount: the amount as a number.
+  • If the description states the owed amount ("125 is Shar's share"), use it.
+  • If a cost is split with exactly one other person and no amount is stated, use half the transaction amount.
+  • For an upcoming payment, use the stated amount, else the transaction's amount.
+  • Omit only if truly indeterminable.
+- dueDate: "YYYY-MM-DD" for upcoming payments (resolve relative hints against the transaction's date; "monthly" → one month later). Omit for money-owed reminders unless a date is stated.
 - cadence: "monthly", "quarterly", "weekly", "yearly", or "one-off".
-- installmentsTotal / installmentsPaid: for a fixed-length plan written "N/M" (e.g. "1/3 payment"), set installmentsTotal to M and installmentsPaid to N (this payment already happened). Omit both when there is no such count.
-- note: any extra detail. May be empty.
+- installmentsTotal / installmentsPaid: only for a fixed-length plan written "N/M" (e.g. "1/3"), set installmentsTotal to M and installmentsPaid to N. Omit otherwise.
+- note: brief context (what the cost was for). May be empty.
 
-Return only the reminders array. Do not invent reminders for rows with no future-payment hint.`;
+Return only the reminders array.`;
 
 export function buildReminderPrompt(candidates: ReminderCandidate[]): string {
   const lines = candidates.map(
