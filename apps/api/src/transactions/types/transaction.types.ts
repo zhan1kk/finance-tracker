@@ -21,6 +21,8 @@ export type ListTransactionsQuery = {
   to?: string;
   accountId?: string;
   subcategoryId?: string;
+  /** Comma-separated subcategory ids; matches any of them. */
+  subcategoryIds?: string;
   type?: TransactionType;
   search?: string;
   page?: number;

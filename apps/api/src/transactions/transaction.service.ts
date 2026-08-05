@@ -52,7 +52,16 @@ export class TransactionService {
             ],
           }
         : {}),
-      subcategoryId: query.subcategoryId,
+      // A multi-select list (subcategoryIds) takes precedence over the single id.
+      ...(() => {
+        const ids = query.subcategoryIds
+          ?.split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        if (ids && ids.length > 0) return { subcategoryId: { in: ids } };
+        if (query.subcategoryId) return { subcategoryId: query.subcategoryId };
+        return {};
+      })(),
       type: query.type,
       date: {
         gte: query.from ? new Date(query.from) : undefined,

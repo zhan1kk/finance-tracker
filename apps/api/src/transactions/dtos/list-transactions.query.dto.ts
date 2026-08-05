@@ -30,6 +30,11 @@ export class ListTransactionsQueryDTO {
   @IsUUID()
   public readonly subcategoryId?: string;
 
+  /** Comma-separated subcategory ids — filters to any of them (multi-select). */
+  @IsOptional()
+  @IsString()
+  public readonly subcategoryIds?: string;
+
   @IsOptional()
   @IsIn(['INCOME', 'EXPENSE', 'TRANSFER'])
   public readonly type?: TransactionType;

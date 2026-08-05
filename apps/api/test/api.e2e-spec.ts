@@ -1390,6 +1390,50 @@ describe('API (e2e)', () => {
       expect(await getBalance(accountId)).toBe(balanceAfterFirst);
     });
 
+    it('force-includes a duplicate via "import anyway"', async () => {
+      const first = await doImport();
+      await request(http)
+        .patch(`/imports/${first.id}/rows/${rowFor(first, 'SPAR').id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId: await subId('Groceries') })
+        .expect(200);
+      await request(http)
+        .post(`/imports/${first.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      const balanceAfterFirst = await getBalance(accountId);
+
+      // Re-import: the SPAR row is flagged DUPLICATE. Override it, categorize,
+      // and commit — it posts a second time (the −12.50 charge repeats).
+      const second = await doImport();
+      const dup = rowFor(second, 'SPAR');
+      expect(dup.status).toBe('DUPLICATE');
+
+      // reviewRow still refuses a raw duplicate; the override route is the path in.
+      await request(http)
+        .patch(`/imports/${second.id}/rows/${dup.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId: await subId('Groceries') })
+        .expect(409);
+
+      await request(http)
+        .post(`/imports/${second.id}/rows/${dup.id}/include`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      await request(http)
+        .patch(`/imports/${second.id}/rows/${dup.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId: await subId('Groceries') })
+        .expect(200);
+      await request(http)
+        .post(`/imports/${second.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      // The overridden SPAR (−12.50 = 1250 cents) committed despite the match.
+      expect(await getBalance(accountId)).toBe(balanceAfterFirst - 1250);
+    });
+
     it('flips a row between income and expense and resets it to review', async () => {
       const batch = await doImport();
       const rent = rowFor(batch, 'Rent'); // −800 → EXPENSE, matched to Rent
@@ -1405,7 +1449,7 @@ describe('API (e2e)', () => {
       });
     });
 
-    it('dedupes a transfer across statements dated a few days apart', async () => {
+    it('dedupes a transfer recorded from both accounts on the same date', async () => {
       const other = await createAccount(0);
       // Account A's statement: €100 out to the other account on the 10th.
       const a = await doImport(
@@ -1423,14 +1467,15 @@ describe('API (e2e)', () => {
       expect(await getBalance(accountId)).toBe(490_000);
       expect(await getBalance(other.id)).toBe(10_000);
 
-      // The other account's statement shows the same €100 arriving two days later.
+      // The other account's statement shows the same €100 arriving, dated the
+      // same day. (The ±day window was removed, so the mirror match is exact.)
       const bRes = await request(http)
         .post('/imports')
         .set('Authorization', `Bearer ${token}`)
         .send({
           accountId: other.id,
           filename: 'b.csv',
-          csv: ['Date,Amount,Description', '2026-07-12,100.00,From checking'].join(
+          csv: ['Date,Amount,Description', '2026-07-10,100.00,From checking'].join(
             '\n',
           ),
           mapping: MAPPING,

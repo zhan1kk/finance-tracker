@@ -121,6 +121,13 @@ export function ImportReview({
     onSuccess: invalidate,
   });
 
+  // Force-includes a row the importer flagged as a duplicate ("import anyway").
+  const include = useMutation({
+    mutationFn: (rowId: string) =>
+      api(`/imports/${batchId}/rows/${rowId}/include`, { method: "POST" }),
+    onSuccess: invalidate,
+  });
+
   // Confirms every still-in-review suggestion as-is. Sequential on purpose: a
   // burst of parallel PATCHes against the same batch buys nothing at this size.
   const acceptAll = useMutation({
@@ -169,9 +176,12 @@ export function ImportReview({
   const suggested = data.rows.filter(
     (r) => r.status === "NEEDS_REVIEW" && r.predictedSubcategory !== null,
   );
+  const duplicateCount = data.rows.filter(
+    (r) => r.status === "DUPLICATE",
+  ).length;
   const error =
     commit.error ?? undo.error ?? reopen.error ?? discard.error ??
-    correct.error ?? acceptAll.error ?? skip.error;
+    correct.error ?? acceptAll.error ?? skip.error ?? include.error;
 
   return (
     <Card>
@@ -262,6 +272,15 @@ export function ImportReview({
         </p>
       )}
 
+      {pending && duplicateCount > 0 && (
+        <p className="mb-3 text-sm text-zinc-500">
+          {duplicateCount} row{duplicateCount === 1 ? "" : "s"} match a
+          transaction already in your ledger and won&apos;t be imported (greyed
+          below). If one is genuinely a separate charge, use{" "}
+          <span className="font-medium">Import anyway</span>.
+        </p>
+      )}
+
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -279,12 +298,14 @@ export function ImportReview({
                 key={row.id}
                 row={row}
                 currency={currency}
+                pending={pending}
                 editable={pending && row.status !== "DUPLICATE"}
                 subcategories={subcategories.data ?? []}
                 onPick={(choice) => correct.mutate({ rowId: row.id, choice })}
                 onNote={(userNote) => annotate.mutate({ rowId: row.id, userNote })}
                 onFlip={() => flip.mutate(row.id)}
                 onSkip={(skipped) => skip.mutate({ rowId: row.id, skipped })}
+                onInclude={() => include.mutate(row.id)}
                 accounts={(accounts.data ?? []).filter(
                   (a) =>
                     a.id !== data.account.id &&
@@ -303,6 +324,7 @@ export function ImportReview({
 function Row({
   row,
   currency,
+  pending,
   editable,
   subcategories,
   accounts,
@@ -310,9 +332,11 @@ function Row({
   onNote,
   onFlip,
   onSkip,
+  onInclude,
 }: {
   row: ImportRow;
   currency: string;
+  pending: boolean;
   editable: boolean;
   subcategories: Subcategory[];
   accounts: Account[];
@@ -320,6 +344,7 @@ function Row({
   onNote: (userNote: string) => void;
   onFlip: () => void;
   onSkip: (skipped: boolean) => void;
+  onInclude: () => void;
 }) {
   const eligible = subcategories.filter((s) =>
     row.type === "INCOME" ? s.category === "Income" : s.category !== "Income",
@@ -457,6 +482,15 @@ function Row({
         >
           {STATUS_LABEL[row.status]}
         </span>
+        {pending && duplicate && (
+          <button
+            className="ml-2 text-xs font-medium text-emerald-600 hover:underline"
+            title="This is a genuinely separate charge — include it despite the match"
+            onClick={onInclude}
+          >
+            Import anyway
+          </button>
+        )}
         {editable &&
           (skipped ? (
             <button

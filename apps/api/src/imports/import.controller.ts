@@ -116,6 +116,16 @@ export class ImportController {
     return this.importService.setRowSkipped(user.userId, id, rowId, body.skipped);
   }
 
+  /** Force-include a row flagged as a duplicate ("import anyway"). */
+  @Post(':id/rows/:rowId/include')
+  includeRow(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('rowId') rowId: string,
+  ) {
+    return this.importService.overrideDuplicate(user.userId, id, rowId);
+  }
+
   @Post(':id/commit')
   commit(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.importService.commit(user.userId, id);

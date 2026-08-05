@@ -45,9 +45,6 @@ type StagedRow = {
   /** Marked an internal move: commits, moves the balance, excluded from stats. */
   excludeFromStats: boolean;
   note: string | null;
-  /** A repeat of an earlier row in the same file (usually a real second charge);
-   * kept out of auto-categorization so including it is always a conscious act. */
-  isRepeat: boolean;
 };
 
 /**
@@ -69,10 +66,19 @@ function mergedDescription(row: {
 // 25,000,000,000), so such a row is skipped with a hint rather than crashing.
 const PG_INT_MAX = 2_147_483_647;
 
-// A transfer usually posts to the two accounts' statements on slightly different
-// days (processing lag), so the "already recorded from the other side" check
-// matches within a few days rather than on the exact date.
-const TRANSFER_DEDUPE_WINDOW_DAYS = 4;
+// Statement states that mean no money actually moved — a reverted, declined, or
+// failed authorization (e.g. Revolut's −€1 Bolt hold that was REVERTED). Skipped
+// at staging so they don't import as real spending. Matched only against
+// *unmapped* columns (a bank's "State"/"Status"), never the mapped description,
+// to avoid mistaking a merchant named "Failed" for a status.
+const SKIP_STATES = new Set([
+  'REVERTED',
+  'REVERSED',
+  'DECLINED',
+  'FAILED',
+  'CANCELLED',
+  'CANCELED',
+]);
 
 const BATCH_INCLUDE = {
   rows: {
@@ -399,6 +405,38 @@ export class ImportService {
   }
 
   /**
+   * Force-includes a row flagged as a duplicate ("import anyway"). The user is
+   * asserting it's a genuinely separate charge that only looks like one already
+   * in the ledger, so its dedupe hash is salted to be unique — it won't be
+   * re-skipped at commit, and it won't shadow a real future duplicate. Returns
+   * it to NEEDS_REVIEW so a category is chosen before it commits.
+   */
+  async overrideDuplicate(userId: string, batchId: string, rowId: string) {
+    const batch = await this.getPendingBatch(userId, batchId);
+    const row = batch.rows.find((r) => r.id === rowId);
+    if (!row) {
+      throw new NotFoundException(`Row with id ${rowId} was not found`);
+    }
+    if (row.status !== 'DUPLICATE') {
+      throw new ConflictException(
+        'Only a row flagged as a duplicate can be force-included',
+      );
+    }
+    return this.prisma.importRow.update({
+      where: { id: rowId },
+      data: {
+        status: 'NEEDS_REVIEW',
+        dedupeHash: `${row.dedupeHash}:incl:${row.id.slice(0, 8)}`,
+        note: 'Kept as a real charge — pick a category to include it',
+      },
+      include: {
+        subcategory: { select: { id: true, name: true, category: true } },
+        counterAccount: { select: { id: true, name: true } },
+      },
+    });
+  }
+
+  /**
    * A transfer target must be another of the user's accounts in the same
    * currency — the ledger has no cross-currency transfer.
    */
@@ -465,6 +503,10 @@ export class ImportService {
         const deltas = new Map<string, number>();
         const bump = (accountId: string, amount: number) =>
           deltas.set(accountId, (deltas.get(accountId) ?? 0) + amount);
+        // Transfers this commit has already posted — so the mirror check only
+        // matches a leg that was *already in the ledger*, never a second copy
+        // from the same statement (two identical transfers seconds apart).
+        const postedTransferIds: string[] = [];
 
         for (const row of committable) {
           if (alreadyCommitted.has(row.dedupeHash)) {
@@ -478,7 +520,13 @@ export class ImportService {
             continue;
           }
           if (row.counterAccountId) {
-            const posted = await this.commitTransferRow(tx, batch, row, convert);
+            const posted = await this.commitTransferRow(
+              tx,
+              batch,
+              row,
+              convert,
+              postedTransferIds,
+            );
             if (posted) {
               bump(posted.from, -row.amount);
               bump(posted.to, row.amount);
@@ -567,22 +615,21 @@ export class ImportService {
       counterAccountId: string | null;
     },
     convert: (date: Date, amount: number) => number,
+    postedTransferIds: string[],
   ): Promise<{ from: string; to: string } | null> {
     const counterAccountId = row.counterAccountId as string;
     const movingOut = row.type === 'EXPENSE';
     const from = movingOut ? batch.accountId : counterAccountId;
     const to = movingOut ? counterAccountId : batch.accountId;
 
-    const windowMs = TRANSFER_DEDUPE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
     const mirrored = await tx.transaction.findFirst({
       where: {
         type: 'TRANSFER',
         amount: row.amount,
-        // Same movement, allowing for the two statements dating it differently.
-        date: {
-          gte: new Date(row.date.getTime() - windowMs),
-          lte: new Date(row.date.getTime() + windowMs),
-        },
+        date: row.date,
+        // Only a leg that predates this commit counts — never a second identical
+        // transfer this same statement is posting.
+        id: { notIn: postedTransferIds },
         OR: [
           { accountId: from, counterAccountId: to },
           { accountId: to, counterAccountId: from },
@@ -613,6 +660,7 @@ export class ImportService {
         dedupeHash: row.dedupeHash,
       },
     });
+    postedTransferIds.push(transaction.id);
     await tx.importRow.update({
       where: { id: row.id },
       data: { transactionId: transaction.id, status: 'COMMITTED' },
@@ -832,6 +880,23 @@ export class ImportService {
         return;
       }
 
+      // Drop rows whose (unmapped) state column marks them as never booked.
+      const stateHit = Object.entries(raw).find(
+        ([col, val]) =>
+          col !== mapping.dateColumn &&
+          col !== mapping.amountColumn &&
+          col !== mapping.descriptionColumn &&
+          SKIP_STATES.has(String(val).trim().toUpperCase()),
+      );
+      if (stateHit) {
+        skipped.push({
+          rowIndex,
+          reason: `not booked (status: ${String(stateHit[1]).trim()})`,
+          raw,
+        });
+        return;
+      }
+
       const isExpense = mapping.negativeIsExpense
         ? signedAmount < 0
         : signedAmount > 0;
@@ -864,7 +929,6 @@ export class ImportService {
         counterAccountId: null,
         excludeFromStats: false,
         note: null,
-        isRepeat: false,
       });
     });
 
@@ -872,13 +936,13 @@ export class ImportService {
   }
 
   /**
-   * Flags rows that collide on dedupe hash. A match against an *already
-   * committed* transaction is a hard DUPLICATE — the re-import case, excluded
-   * so a re-uploaded statement can't double-count. A repeat *within this same
-   * file* is different: the bank listing a charge twice usually means it
-   * happened twice (two identical tickets bought together), so it stays
-   * includable — surfaced for review, kept out of auto-categorization so it is
-   * never silently committed. Leave it untouched to skip it.
+   * Flags rows that match a transaction *already in the ledger* as DUPLICATE —
+   * the re-import case, excluded so a re-uploaded statement can't double-count.
+   * The user can still force-include one via "import anyway" (see
+   * {@link overrideDuplicate}). Rows that merely repeat *within this same file*
+   * are left alone: a statement listing an identical charge twice (two €300
+   * top-ups seconds apart, a bought-together pair of tickets) almost always
+   * means it really happened twice, so both stay includable.
    */
   private async dedupe(accountId: string, staged: StagedRow[]) {
     const existing = await this.prisma.transaction.findMany({
@@ -891,18 +955,10 @@ export class ImportService {
     const committed = new Set(
       existing.map((t) => t.dedupeHash).filter((h): h is string => h !== null),
     );
-    const seenInBatch = new Set<string>();
     for (const row of staged) {
       if (committed.has(row.dedupeHash)) {
         row.status = 'DUPLICATE';
         row.note = 'Already imported in a previous statement';
-      } else if (seenInBatch.has(row.dedupeHash)) {
-        row.status = 'NEEDS_REVIEW';
-        row.isRepeat = true;
-        row.note =
-          'Same as an earlier row in this file — categorize it to include (a real second charge), or leave it to skip';
-      } else {
-        seenInBatch.add(row.dedupeHash);
       }
     }
   }
@@ -912,10 +968,9 @@ export class ImportService {
     staged: StagedRow[],
     threshold: number,
   ) {
-    // Repeats are excluded alongside duplicates: auto-categorizing one could
-    // promote it to READY and silently commit a possible double charge, so
-    // including a repeat must always be a deliberate pick in review.
-    const pending = staged.filter((r) => r.status !== 'DUPLICATE' && !r.isRepeat);
+    // Only duplicates (rows already in the ledger) skip categorization; an
+    // in-file repeat is a real charge and gets auto-categorized like any other.
+    const pending = staged.filter((r) => r.status !== 'DUPLICATE');
     if (pending.length === 0) return;
 
     const subcategories = await this.prisma.subcategory.findMany({

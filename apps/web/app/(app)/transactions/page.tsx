@@ -19,6 +19,7 @@ import type {
 type Filters = {
   type: string;
   accountId: string;
+  subcategoryIds: string[];
   search: string;
   from: string;
   to: string;
@@ -34,6 +35,7 @@ export default function TransactionsPage() {
   const [filters, setFilters] = useState<Filters>({
     type: "",
     accountId: "",
+    subcategoryIds: [],
     search: "",
     from: "",
     to: "",
@@ -62,6 +64,8 @@ export default function TransactionsPage() {
   });
   if (filters.type) params.set("type", filters.type);
   if (filters.accountId) params.set("accountId", filters.accountId);
+  if (filters.subcategoryIds.length > 0)
+    params.set("subcategoryIds", filters.subcategoryIds.join(","));
   if (filters.search) params.set("search", filters.search);
   if (filters.from) params.set("from", filters.from);
   if (filters.to) params.set("to", filters.to);
@@ -223,6 +227,15 @@ export default function TransactionsPage() {
                 </option>
               ))}
             </Select>
+          </Field>
+          <Field label="Category">
+            <CategoryFilter
+              subcategories={subcategories.data ?? []}
+              selected={filters.subcategoryIds}
+              onChange={(ids) =>
+                setFilters({ ...filters, subcategoryIds: ids, page: 1 })
+              }
+            />
           </Field>
           <Field label="From">
             <Input
@@ -761,6 +774,84 @@ function Pager({
         Last »
       </Button>
     </div>
+  );
+}
+
+/**
+ * Multi-select category filter. Native <details> disclosure so open/close needs
+ * no state; the panel lists every category (grouped) with checkboxes, and the
+ * transaction count above the table reflects the selection.
+ */
+function CategoryFilter({
+  subcategories,
+  selected,
+  onChange,
+}: {
+  subcategories: Subcategory[];
+  selected: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const selectedSet = new Set(selected);
+  const toggle = (id: string) =>
+    onChange(
+      selectedSet.has(id) ? selected.filter((x) => x !== id) : [...selected, id],
+    );
+
+  // Group by category (Income / Expenses / Bills / …) for scannability.
+  const groups = new Map<string, Subcategory[]>();
+  for (const s of subcategories) {
+    const list = groups.get(s.category) ?? [];
+    list.push(s);
+    groups.set(s.category, list);
+  }
+
+  return (
+    <details className="relative">
+      <summary className="flex h-9 w-40 cursor-pointer list-none items-center justify-between rounded-md border border-zinc-300 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-900 [&::-webkit-details-marker]:hidden">
+        <span className={selected.length ? "" : "text-zinc-500"}>
+          {selected.length === 0 ? "All" : `${selected.length} selected`}
+        </span>
+        <span className="text-zinc-400">▾</span>
+      </summary>
+      <div className="absolute z-20 mt-1 max-h-72 w-64 overflow-y-auto rounded-md border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="mb-1 flex items-center justify-between px-1">
+          <span className="text-xs text-zinc-400">
+            {selected.length} selected
+          </span>
+          {selected.length > 0 && (
+            <button
+              className="text-xs text-zinc-500 hover:underline"
+              onClick={() => onChange([])}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        {[...groups.entries()].map(([category, subs]) => (
+          <div key={category} className="mb-1">
+            <p className="px-1 pt-1 text-xs font-medium text-zinc-400">
+              {category}
+            </p>
+            {subs.map((s) => (
+              <label
+                key={s.id}
+                className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedSet.has(s.id)}
+                  onChange={() => toggle(s.id)}
+                />
+                {s.name}
+              </label>
+            ))}
+          </div>
+        ))}
+        {subcategories.length === 0 && (
+          <p className="px-1 text-xs text-zinc-400">No categories.</p>
+        )}
+      </div>
+    </details>
   );
 }
 
