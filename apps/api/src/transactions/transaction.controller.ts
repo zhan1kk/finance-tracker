@@ -10,9 +10,14 @@ import {
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/auth.types';
+import {
+  BulkDeleteTransactionsDTO,
+  BulkUpdateTransactionsDTO,
+} from './dtos/bulk-transactions.dto';
 import { CreateTransactionDTO } from './dtos/create-transaction.dto';
 import { LinkReimbursementDTO } from './dtos/link-reimbursement.dto';
 import { ListTransactionsQueryDTO } from './dtos/list-transactions.query.dto';
+import { SplitTransactionDTO } from './dtos/split-transaction.dto';
 import { StatsQueryDTO } from './dtos/stats.query.dto';
 import { UpdateTransactionDTO } from './dtos/update-transaction.dto';
 import { TransactionService } from './transaction.service';
@@ -46,6 +51,38 @@ export class TransactionController {
     @Body() body: CreateTransactionDTO,
   ) {
     return this.transactionService.createTransaction(user.userId, body);
+  }
+
+  /** Splits one INCOME/EXPENSE into parts that add up to the original amount. */
+  @Post(':id/split')
+  splitTransaction(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: SplitTransactionDTO,
+  ) {
+    return this.transactionService.splitTransaction(user.userId, id, body.parts);
+  }
+
+  /** Applies a category and/or the internal flag to many rows at once. */
+  // Declared before @Patch(':id') so 'bulk' is not captured as an id.
+  @Patch('bulk')
+  bulkUpdate(
+    @CurrentUser() user: AuthUser,
+    @Body() body: BulkUpdateTransactionsDTO,
+  ) {
+    return this.transactionService.bulkUpdate(user.userId, body.ids, {
+      subcategoryId: body.subcategoryId,
+      excludeFromStats: body.excludeFromStats,
+    });
+  }
+
+  /** Deletes many rows at once, reversing each one's balance effect. */
+  @Post('bulk-delete')
+  bulkDelete(
+    @CurrentUser() user: AuthUser,
+    @Body() body: BulkDeleteTransactionsDTO,
+  ) {
+    return this.transactionService.bulkDelete(user.userId, body.ids);
   }
 
   @Patch(':id')

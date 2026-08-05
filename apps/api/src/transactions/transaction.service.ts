@@ -11,10 +11,12 @@ import { PrismaService } from '../prisma.service';
 import type { TransactionCategory } from '../subcategories/types/subcategory.types';
 import { checkOutlier, type OutlierVerdict } from './outlier';
 import type {
+  BulkUpdateInput,
   CategoryStat,
   CreateTransactionInput,
   ListTransactionsQuery,
   MonthlyStat,
+  SplitPartInput,
   StatsQuery,
   TransactionStats,
   TransactionType,
@@ -479,6 +481,195 @@ export class TransactionService {
         data: { balance: { increment: -delta } },
       }),
     ]);
+  }
+
+  /**
+   * Splits one INCOME/EXPENSE into several parts that add up to the original,
+   * each with its own category — e.g. a supermarket charge that is part
+   * Groceries, part Household, or a group bill split into "my share" and a
+   * "shared / owed to me" bucket. The first part reuses the original row (so
+   * its import link and any reimbursements survive); the rest become siblings
+   * on the same account and date. Because the parts sum to the original amount,
+   * the account balance is unchanged.
+   */
+  async splitTransaction(
+    userId: string,
+    id: string,
+    parts: SplitPartInput[],
+  ) {
+    if (parts.length < 2) {
+      throw new BadRequestException('A split needs at least two parts');
+    }
+
+    const original = await this.prisma.transaction.findFirst({
+      where: { id, account: { userId } },
+      include: { account: { select: { currency: true } } },
+    });
+    if (!original) {
+      throw new NotFoundException(`Transaction with id ${id} was not found`);
+    }
+    if (original.type === 'TRANSFER') {
+      throw new BadRequestException('Transfers cannot be split');
+    }
+
+    const sum = parts.reduce((acc, p) => acc + p.amount, 0);
+    if (sum !== original.amount) {
+      throw new BadRequestException(
+        `Split parts must add up to the original amount (${original.amount}); got ${sum}`,
+      );
+    }
+
+    for (const part of parts) {
+      if (part.subcategoryId) {
+        const sub = await this.getOwnSubcategory(userId, part.subcategoryId);
+        this.ensureCategoryMatchesType(original.type, sub.category);
+      } else if (!part.excludeFromStats) {
+        throw new BadRequestException(
+          'Each split part needs a category, or must be marked internal',
+        );
+      }
+    }
+
+    const type = original.type as TransactionType;
+    // amountBase is linear in amount at a fixed date/rate, so re-converting each
+    // part keeps the base total equal to the original's.
+    const baseFor = (amount: number) =>
+      this.fx.convert(userId, original.account.currency, original.date, amount);
+
+    const [head, ...rest] = parts;
+    const restCreates = await Promise.all(
+      rest.map(async (part) => ({
+        amountBase: await baseFor(part.amount),
+        part,
+      })),
+    );
+
+    const results = await this.prisma.$transaction([
+      this.prisma.transaction.update({
+        where: { id },
+        data: {
+          amount: head.amount,
+          amountBase: await baseFor(head.amount),
+          subcategoryId: head.subcategoryId ?? null,
+          description: head.description ?? original.description,
+          excludeFromStats: head.excludeFromStats ?? false,
+        },
+        include: TRANSACTION_INCLUDE,
+      }),
+      ...restCreates.map(({ amountBase, part }) =>
+        this.prisma.transaction.create({
+          data: {
+            type,
+            date: original.date,
+            amount: part.amount,
+            amountBase,
+            description: part.description ?? original.description,
+            accountId: original.accountId,
+            subcategoryId: part.subcategoryId ?? null,
+            excludeFromStats: part.excludeFromStats ?? false,
+          },
+          include: TRANSACTION_INCLUDE,
+        }),
+      ),
+    ]);
+
+    return results;
+  }
+
+  /**
+   * Applies one category and/or the internal flag to many INCOME/EXPENSE rows
+   * at once — the workhorse for cleaning up a fresh import. Amounts are
+   * untouched, so no balance moves. Transfers are rejected (they carry no
+   * category), and a category is checked against every row's direction.
+   */
+  async bulkUpdate(userId: string, ids: string[], patch: BulkUpdateInput) {
+    if (ids.length === 0) {
+      throw new BadRequestException('No transactions selected');
+    }
+    if (patch.subcategoryId === undefined && patch.excludeFromStats === undefined) {
+      throw new BadRequestException('Nothing to update');
+    }
+
+    const txns = await this.prisma.transaction.findMany({
+      where: { id: { in: ids }, account: { userId } },
+      select: { id: true, type: true },
+    });
+    if (txns.length !== ids.length) {
+      throw new NotFoundException('One or more transactions were not found');
+    }
+    if (txns.some((t) => t.type === 'TRANSFER')) {
+      throw new BadRequestException(
+        'Transfers cannot be categorized or marked internal',
+      );
+    }
+
+    if (patch.subcategoryId !== undefined) {
+      const sub = await this.getOwnSubcategory(userId, patch.subcategoryId);
+      for (const t of txns) {
+        this.ensureCategoryMatchesType(t.type as TransactionType, sub.category);
+      }
+    }
+
+    const { count } = await this.prisma.transaction.updateMany({
+      where: { id: { in: ids }, account: { userId } },
+      data: {
+        subcategoryId: patch.subcategoryId,
+        excludeFromStats: patch.excludeFromStats,
+      },
+    });
+    return { updated: count };
+  }
+
+  /**
+   * Deletes several transactions at once, reversing each one's balance effect
+   * (both legs for a transfer). Rows that are the parent of a reimbursement are
+   * refused as a group, mirroring the single-row guard, so a payback link is
+   * never silently orphaned.
+   */
+  async bulkDelete(userId: string, ids: string[]) {
+    if (ids.length === 0) {
+      throw new BadRequestException('No transactions selected');
+    }
+
+    const txns = await this.prisma.transaction.findMany({
+      where: { id: { in: ids }, account: { userId } },
+      include: { _count: { select: { reimbursements: true } } },
+    });
+    if (txns.length !== ids.length) {
+      throw new NotFoundException('One or more transactions were not found');
+    }
+    const blocked = txns.filter((t) => t._count.reimbursements > 0);
+    if (blocked.length > 0) {
+      throw new ConflictException(
+        `${blocked.length} of the selected transaction(s) have reimbursements linked. Delete those paybacks first.`,
+      );
+    }
+
+    // Net the reversal per account so each account is touched once.
+    const byAccount = new Map<string, number>();
+    const add = (accountId: string, delta: number) =>
+      byAccount.set(accountId, (byAccount.get(accountId) ?? 0) + delta);
+    for (const t of txns) {
+      if (t.type === 'TRANSFER') {
+        add(t.accountId, t.amount);
+        if (t.counterAccountId) add(t.counterAccountId, -t.amount);
+      } else {
+        add(t.accountId, -this.signedDelta(t.type as TransactionType, t.amount));
+      }
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.transaction.deleteMany({
+        where: { id: { in: ids }, account: { userId } },
+      }),
+      ...[...byAccount.entries()].map(([accountId, delta]) =>
+        this.prisma.account.update({
+          where: { id: accountId },
+          data: { balance: { increment: delta } },
+        }),
+      ),
+    ]);
+    return { deleted: txns.length };
   }
 
   /**

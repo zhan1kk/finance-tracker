@@ -34,6 +34,20 @@ export type UpdateTransactionInput = Partial<
   >
 >;
 
+/** One slice of a split: a category (or internal) and the cents it takes. */
+export type SplitPartInput = {
+  amount: number;
+  subcategoryId?: string;
+  description?: string;
+  excludeFromStats?: boolean;
+};
+
+/** Fields a bulk edit can set on many INCOME/EXPENSE rows at once. */
+export type BulkUpdateInput = {
+  subcategoryId?: string;
+  excludeFromStats?: boolean;
+};
+
 export type StatsQuery = {
   from?: string;
   to?: string;

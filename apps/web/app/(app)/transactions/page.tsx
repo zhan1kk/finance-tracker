@@ -35,6 +35,13 @@ export default function TransactionsPage() {
     to: "",
     page: 1,
   });
+  // Rows ticked for a bulk action, and the row (if any) being split. Selection
+  // is scoped to the visible page, so it clears whenever the page or filters
+  // change — the ids in the set always map to rows we can still see and reason
+  // about (their type, direction).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [splitting, setSplitting] = useState<Transaction | null>(null);
+  const [bulkError, setBulkError] = useState<string | null>(null);
 
   const accounts = useQuery({
     queryKey: ["accounts"],
@@ -78,6 +85,40 @@ export default function TransactionsPage() {
     onSuccess: invalidateAll,
   });
 
+  const clearSelection = () => setSelected(new Set());
+
+  const bulkUpdate = useMutation({
+    mutationFn: (body: {
+      ids: string[];
+      subcategoryId?: string;
+      excludeFromStats?: boolean;
+    }) =>
+      api("/transactions/bulk", {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+    onMutate: () => setBulkError(null),
+    onSuccess: () => {
+      clearSelection();
+      invalidateAll();
+    },
+    onError: (e) => setBulkError(e instanceof Error ? e.message : String(e)),
+  });
+
+  const bulkDelete = useMutation({
+    mutationFn: (ids: string[]) =>
+      api("/transactions/bulk-delete", {
+        method: "POST",
+        body: JSON.stringify({ ids }),
+      }),
+    onMutate: () => setBulkError(null),
+    onSuccess: () => {
+      clearSelection();
+      invalidateAll();
+    },
+    onError: (e) => setBulkError(e instanceof Error ? e.message : String(e)),
+  });
+
   const accountName = (id: string | null) =>
     accounts.data?.find((a) => a.id === id)?.name ?? "—";
   const currencyOf = (id: string) =>
@@ -99,6 +140,21 @@ export default function TransactionsPage() {
 
   // A running balance is only meaningful (and only returned) for one account.
   const singleAccount = filters.accountId !== "";
+
+  const items = transactions.data?.items ?? [];
+  const selectedItems = items.filter((t) => selected.has(t.id));
+  const allSelected = items.length > 0 && items.every((t) => selected.has(t.id));
+  const toggleAll = () =>
+    setSelected(allSelected ? new Set() : new Set(items.map((t) => t.id)));
+  const toggleOne = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  // Extra leading checkbox column widens every full-width cell by one.
+  const emptyColSpan = singleAccount ? 8 : 7;
 
   return (
     <main className="flex flex-col gap-6">
@@ -193,6 +249,39 @@ export default function TransactionsPage() {
           </span>
         </div>
 
+        {selectedItems.length > 0 && (
+          <SelectionBar
+            selected={selectedItems}
+            subcategories={subcategories.data ?? []}
+            busy={bulkUpdate.isPending || bulkDelete.isPending}
+            error={bulkError}
+            onCategorize={(subcategoryId) =>
+              bulkUpdate.mutate({
+                ids: selectedItems.map((t) => t.id),
+                subcategoryId,
+              })
+            }
+            onInternal={() =>
+              bulkUpdate.mutate({
+                ids: selectedItems.map((t) => t.id),
+                excludeFromStats: true,
+              })
+            }
+            onDelete={() => {
+              if (
+                window.confirm(
+                  `Delete ${selectedItems.length} transaction${
+                    selectedItems.length === 1 ? "" : "s"
+                  }? Balances are reversed. This cannot be undone.`,
+                )
+              ) {
+                bulkDelete.mutate(selectedItems.map((t) => t.id));
+              }
+            }}
+            onClear={clearSelection}
+          />
+        )}
+
         {lastPage > 1 && (
           <div className="mb-2">
             <Pager page={filters.page} lastPage={lastPage} onGo={goToPage} />
@@ -203,6 +292,19 @@ export default function TransactionsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-200 text-left text-zinc-500 dark:border-zinc-800">
+                <th className="w-8 py-2 pr-2">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all on this page"
+                    checked={allSelected}
+                    ref={(el) => {
+                      if (el)
+                        el.indeterminate =
+                          selectedItems.length > 0 && !allSelected;
+                    }}
+                    onChange={toggleAll}
+                  />
+                </th>
                 <th className="py-2 pr-3 font-medium">Date</th>
                 <th className="py-2 pr-3 font-medium">Category</th>
                 <th className="py-2 pr-3 font-medium">Description</th>
@@ -215,7 +317,7 @@ export default function TransactionsPage() {
               </tr>
             </thead>
             <tbody>
-              {transactions.data?.items.map((t) => (
+              {items.map((t) => (
                 <TransactionRow
                   key={t.id}
                   transaction={t}
@@ -224,6 +326,9 @@ export default function TransactionsPage() {
                   currencyOf={currencyOf}
                   filterAccountId={singleAccount ? filters.accountId : null}
                   subcategories={subcategories.data ?? []}
+                  selected={selected.has(t.id)}
+                  onToggleSelect={() => toggleOne(t.id)}
+                  onSplit={() => setSplitting(t)}
                   onChange={invalidateAll}
                   onDelete={() => {
                     if (window.confirm("Delete this transaction?")) {
@@ -235,7 +340,7 @@ export default function TransactionsPage() {
               {transactions.isLoading && (
                 <tr>
                   <td
-                    colSpan={singleAccount ? 7 : 6}
+                    colSpan={emptyColSpan}
                     className="py-6 text-center text-zinc-500"
                   >
                     Loading…
@@ -245,7 +350,7 @@ export default function TransactionsPage() {
               {transactions.data?.items.length === 0 && (
                 <tr>
                   <td
-                    colSpan={singleAccount ? 7 : 6}
+                    colSpan={emptyColSpan}
                     className="py-6 text-center text-zinc-500"
                   >
                     No transactions match.
@@ -262,7 +367,315 @@ export default function TransactionsPage() {
           </div>
         )}
       </Card>
+
+      {splitting && (
+        <SplitDialog
+          transaction={splitting}
+          currency={currencyOf(splitting.accountId)}
+          subcategories={subcategories.data ?? []}
+          onClose={() => setSplitting(null)}
+          onDone={() => {
+            setSplitting(null);
+            invalidateAll();
+          }}
+        />
+      )}
     </main>
+  );
+}
+
+/** Sticky toolbar shown while rows are ticked: categorize, mark internal, or
+ * delete the whole selection at once. */
+function SelectionBar({
+  selected,
+  subcategories,
+  busy,
+  error,
+  onCategorize,
+  onInternal,
+  onDelete,
+  onClear,
+}: {
+  selected: Transaction[];
+  subcategories: Subcategory[];
+  busy: boolean;
+  error: string | null;
+  onCategorize: (subcategoryId: string) => void;
+  onInternal: () => void;
+  onDelete: () => void;
+  onClear: () => void;
+}) {
+  const hasTransfer = selected.some((t) => t.type === "TRANSFER");
+  const allIncome = selected.every((t) => t.type === "INCOME");
+  const allExpense = selected.every((t) => t.type === "EXPENSE");
+  // One category can only apply to rows of a single direction (and never to a
+  // transfer), so categorize is offered only for a same-direction selection.
+  const canCategorize = !hasTransfer && (allIncome || allExpense);
+  const eligible = subcategories.filter((s) =>
+    allIncome ? s.category === "Income" : s.category !== "Income",
+  );
+
+  return (
+    <div className="mb-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-800/40">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-medium">
+          {selected.length} selected
+        </span>
+        {canCategorize ? (
+          <Select
+            defaultValue=""
+            disabled={busy}
+            onChange={(e) => {
+              if (e.target.value) onCategorize(e.target.value);
+              e.target.value = "";
+            }}
+          >
+            <option value="">Categorize…</option>
+            {eligible.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </Select>
+        ) : (
+          <span
+            className="text-zinc-400"
+            title="Select rows of a single direction (all income or all expense, no transfers) to categorize them together."
+          >
+            Categorize (same direction only)
+          </span>
+        )}
+        <Button
+          variant="ghost"
+          disabled={busy || hasTransfer}
+          onClick={onInternal}
+          title={
+            hasTransfer
+              ? "Transfers can't be marked internal."
+              : "Exclude from income/spending stats."
+          }
+        >
+          Mark internal
+        </Button>
+        <Button variant="danger" disabled={busy} onClick={onDelete}>
+          Delete
+        </Button>
+        <button
+          className="ml-auto text-zinc-500 hover:underline"
+          onClick={onClear}
+        >
+          Clear
+        </button>
+      </div>
+      {error && <p className="mt-1.5 text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+type SplitPart = {
+  amount: string;
+  subcategoryId: string;
+  description: string;
+  internal: boolean;
+};
+
+/** Splits one expense/income into parts that must add up to the original. Used
+ * for mixed charges (part groceries, part household) and shared bills (my share
+ * + a "owed to me" bucket that a later payback reimburses). */
+function SplitDialog({
+  transaction: t,
+  currency,
+  subcategories,
+  onClose,
+  onDone,
+}: {
+  transaction: Transaction;
+  currency: string;
+  subcategories: Subcategory[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const eligible = subcategories.filter((s) =>
+    t.type === "INCOME" ? s.category === "Income" : s.category !== "Income",
+  );
+  const firstEligible = eligible[0]?.id ?? "";
+  const [parts, setParts] = useState<SplitPart[]>([
+    {
+      amount: (t.amount / 100).toFixed(2),
+      subcategoryId: t.subcategoryId ?? firstEligible,
+      description: "",
+      internal: t.excludeFromStats,
+    },
+    { amount: "", subcategoryId: firstEligible, description: "", internal: false },
+  ]);
+  const [error, setError] = useState<string | null>(null);
+
+  const cents = (s: string) => parseAmountToCents(s) ?? 0;
+  const allocated = parts.reduce((sum, p) => sum + cents(p.amount), 0);
+  const remaining = t.amount - allocated;
+
+  const setPart = (i: number, patch: Partial<SplitPart>) =>
+    setParts((prev) => prev.map((p, j) => (j === i ? { ...p, ...patch } : p)));
+  const addPart = () =>
+    setParts((prev) => [
+      ...prev,
+      {
+        // Pre-fill the leftover so the split closes out in one keystroke.
+        amount: remaining > 0 ? (remaining / 100).toFixed(2) : "",
+        subcategoryId: firstEligible,
+        description: "",
+        internal: false,
+      },
+    ]);
+  const removePart = (i: number) =>
+    setParts((prev) => prev.filter((_, j) => j !== i));
+
+  const split = useMutation({
+    mutationFn: (body: { parts: Record<string, unknown>[] }) =>
+      api(`/transactions/${t.id}/split`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: onDone,
+    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+  });
+
+  const submit = () => {
+    setError(null);
+    if (parts.length < 2) {
+      setError("A split needs at least two parts.");
+      return;
+    }
+    for (const p of parts) {
+      if (parseAmountToCents(p.amount) === null || cents(p.amount) < 1) {
+        setError("Every part needs an amount (e.g. 12.50).");
+        return;
+      }
+      if (!p.internal && !p.subcategoryId) {
+        setError("Every part needs a category, or mark it internal.");
+        return;
+      }
+    }
+    if (remaining !== 0) {
+      setError(
+        `Parts must add up to ${formatCents(t.amount, currency)} — ${
+          remaining > 0 ? formatCents(remaining, currency) + " left" : "over by " + formatCents(-remaining, currency)
+        }.`,
+      );
+      return;
+    }
+    split.mutate({
+      parts: parts.map((p) => ({
+        amount: cents(p.amount),
+        subcategoryId: p.internal ? undefined : p.subcategoryId,
+        description: p.description || undefined,
+        excludeFromStats: p.internal || undefined,
+      })),
+    });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="mt-12 w-full max-w-xl rounded-lg border border-zinc-200 bg-white p-4 shadow-xl dark:border-zinc-800 dark:bg-zinc-900"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-baseline justify-between">
+          <h2 className="font-medium">
+            Split {formatCents(t.amount, currency)}
+            {t.description ? ` · ${t.description}` : ""}
+          </h2>
+          <button
+            className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300"
+            onClick={onClose}
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          {parts.map((p, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2">
+              <Input
+                value={p.amount}
+                inputMode="decimal"
+                placeholder="0.00"
+                className="w-24 text-right"
+                onChange={(e) => setPart(i, { amount: e.target.value })}
+              />
+              <Select
+                value={p.subcategoryId}
+                disabled={p.internal}
+                className="min-w-[9rem]"
+                onChange={(e) => setPart(i, { subcategoryId: e.target.value })}
+              >
+                {eligible.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </Select>
+              <Input
+                value={p.description}
+                placeholder="note (optional)"
+                className="flex-1"
+                onChange={(e) => setPart(i, { description: e.target.value })}
+              />
+              <label className="flex items-center gap-1 text-xs text-zinc-500">
+                <input
+                  type="checkbox"
+                  checked={p.internal}
+                  onChange={(e) => setPart(i, { internal: e.target.checked })}
+                />
+                internal
+              </label>
+              <button
+                className="text-zinc-400 hover:text-red-600 disabled:opacity-30"
+                disabled={parts.length <= 2}
+                onClick={() => removePart(i)}
+                aria-label="Remove part"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-3 flex items-center gap-3 text-sm">
+          <button className="text-emerald-600 hover:underline" onClick={addPart}>
+            + Add part
+          </button>
+          <span
+            className={
+              remaining === 0
+                ? "text-zinc-400"
+                : "font-medium text-amber-600"
+            }
+          >
+            {remaining === 0
+              ? "adds up ✓"
+              : remaining > 0
+                ? `${formatCents(remaining, currency)} left`
+                : `over by ${formatCents(-remaining, currency)}`}
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              onClick={submit}
+              disabled={split.isPending || remaining !== 0}
+            >
+              Split
+            </Button>
+          </div>
+        </div>
+        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      </div>
+    </div>
   );
 }
 
@@ -404,6 +817,9 @@ function TransactionRow({
   currencyOf,
   filterAccountId,
   subcategories,
+  selected,
+  onToggleSelect,
+  onSplit,
   onChange,
   onDelete,
 }: {
@@ -415,6 +831,9 @@ function TransactionRow({
    * balance column and orients a transfer's sign to that account. */
   filterAccountId: string | null;
   subcategories: Subcategory[];
+  selected: boolean;
+  onToggleSelect: () => void;
+  onSplit: () => void;
   onChange: () => void;
   onDelete: () => void;
 }) {
@@ -512,6 +931,14 @@ function TransactionRow({
   if (editing) {
     return (
       <tr className="border-b border-zinc-100 align-top dark:border-zinc-900">
+        <td className="py-2 pr-2">
+          <input
+            type="checkbox"
+            aria-label="Select transaction"
+            checked={selected}
+            onChange={onToggleSelect}
+          />
+        </td>
         <td className="py-2 pr-3">
           <Input
             type="date"
@@ -604,6 +1031,14 @@ function TransactionRow({
 
   return (
     <tr className="border-b border-zinc-100 dark:border-zinc-900">
+      <td className="py-2 pr-2">
+        <input
+          type="checkbox"
+          aria-label="Select transaction"
+          checked={selected}
+          onChange={onToggleSelect}
+        />
+      </td>
       <td className="py-2 pr-3 whitespace-nowrap">{t.date.slice(0, 10)}</td>
       <td className="py-2 pr-3">
         {t.type === "TRANSFER" ? (
@@ -669,6 +1104,15 @@ function TransactionRow({
           >
             Edit
           </button>
+          {t.type !== "TRANSFER" && (
+            <button
+              aria-label="Split transaction"
+              className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300"
+              onClick={onSplit}
+            >
+              Split
+            </button>
+          )}
           <button
             aria-label="Delete transaction"
             className="text-zinc-400 hover:text-red-600"

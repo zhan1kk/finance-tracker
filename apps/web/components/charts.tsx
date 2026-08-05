@@ -432,11 +432,15 @@ export function CategoryDonut({
   const cy = size / 2;
   const R = 86;
   const r = 54;
-  let angle = -Math.PI / 2;
+  // Cumulative start angle per slice (12 o'clock origin), derived without a
+  // render-scope mutable so each render is a pure function of `slices`.
+  const START = -Math.PI / 2;
   const arcs = slices.map((s, i) => {
-    const a0 = angle;
+    const before = slices
+      .slice(0, i)
+      .reduce((sum, p) => sum + p.amount, 0);
+    const a0 = START + (before / total) * Math.PI * 2;
     const a1 = a0 + (s.amount / total) * Math.PI * 2;
-    angle = a1;
     return { ...s, i, path: arcPath(cx, cy, R, r, a0, a1) };
   });
 

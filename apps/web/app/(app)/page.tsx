@@ -24,6 +24,7 @@ import type {
   MonthlyStat,
   NetWorthPoint,
   Reminder,
+  TransactionList,
   TransactionStats,
 } from "@/lib/types";
 
@@ -56,6 +57,14 @@ export default function OverviewPage() {
   const accounts = useQuery({
     queryKey: ["accounts"],
     queryFn: () => api<Account[]>("/accounts"),
+  });
+
+  // A cheap "has this user ever recorded anything?" probe (total only) that
+  // drives the onboarding prompt once at least one account exists.
+  const anyTx = useQuery({
+    queryKey: ["transactions", { probe: true }],
+    queryFn: () => api<TransactionList>("/transactions?pageSize=1"),
+    enabled: (accounts.data?.length ?? 0) > 0,
   });
 
   // Ask for exactly the selected period, and a window ending with it for the trend.
@@ -104,8 +113,22 @@ export default function OverviewPage() {
     return { month, income: stat?.income ?? 0, expense: stat?.expense ?? 0 };
   });
 
+  const noAccounts = accounts.data?.length === 0;
+  const noTransactions =
+    !noAccounts && anyTx.data !== undefined && anyTx.data.total === 0;
+
+  // First run: skip the empty dashboard and walk the user through setup.
+  if (noAccounts) {
+    return (
+      <main className="flex flex-col gap-6">
+        <Onboarding step={1} />
+      </main>
+    );
+  }
+
   return (
     <main className="flex flex-col gap-6">
+      {noTransactions && <Onboarding step={2} />}
       <section>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <Button
@@ -303,6 +326,89 @@ export default function OverviewPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+const PRIMARY_LINK =
+  "inline-block rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300";
+const GHOST_LINK =
+  "inline-block rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800";
+
+/**
+ * First-run guide. Step 1 (no accounts) replaces the empty dashboard; step 2
+ * (accounts, but nothing recorded yet) sits above it as a nudge. Keeps a new
+ * user from landing on a wall of empty charts.
+ */
+function Onboarding({ step }: { step: 1 | 2 }) {
+  const steps = [
+    {
+      title: "Create an account",
+      body: "Add a bank account, card, or cash wallet to track.",
+      done: step > 1,
+    },
+    {
+      title: "Add your transactions",
+      body: "Import a statement (CSV or PDF), or type a few in by hand.",
+      done: false,
+    },
+    {
+      title: "Make it yours",
+      body: "Set monthly budgets, bill reminders, and your financial month.",
+      done: false,
+    },
+  ];
+  const current = step === 1 ? 0 : 1;
+
+  return (
+    <Card>
+      <h2 className="text-lg font-semibold">
+        {step === 1 ? "Welcome 👋 Let's get you set up" : "You're almost set"}
+      </h2>
+      <p className="mt-1 text-sm text-zinc-500">
+        {step === 1
+          ? "Three quick steps and your dashboard fills itself in."
+          : "Add some transactions and the charts below come to life."}
+      </p>
+      <ol className="mt-4 flex flex-col gap-4">
+        {steps.map((s, i) => (
+          <li key={s.title} className="flex items-start gap-3">
+            <span
+              className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
+                s.done
+                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                  : i === current
+                    ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                    : "bg-zinc-100 text-zinc-400 dark:bg-zinc-800"
+              }`}
+            >
+              {s.done ? "✓" : i + 1}
+            </span>
+            <div className="flex-1">
+              <p className="font-medium">{s.title}</p>
+              <p className="text-sm text-zinc-500">{s.body}</p>
+              {i === current && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {i === 0 ? (
+                    <Link href="/accounts" className={PRIMARY_LINK}>
+                      Add an account
+                    </Link>
+                  ) : (
+                    <>
+                      <Link href="/imports" className={PRIMARY_LINK}>
+                        Import a statement
+                      </Link>
+                      <Link href="/transactions" className={GHOST_LINK}>
+                        Add manually
+                      </Link>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </Card>
   );
 }
 
