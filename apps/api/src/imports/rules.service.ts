@@ -241,7 +241,7 @@ export class RulesService {
 /**
  * A rule pattern is matched (as a substring) against a row's *normalized*
  * merchant, so it must be reduced the exact same way — otherwise a user-typed
- * "Transfer from KAMILA JUSUPOVA" keeps the noise word "transfer" that the
+ * "Transfer from MARIA SANTOS" keeps the noise word "transfer" that the
  * description drops, and could never match. Reusing normalizeMerchant keeps
  * patterns and descriptions in one vocabulary. Idempotent, so re-normalizing an
  * already-normalized learned pattern is a no-op.

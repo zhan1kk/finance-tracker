@@ -100,12 +100,12 @@ describe('scanBudgetWorkbook', () => {
       B1: 'INCOME',
       B3: 'SOURCE',
       D3: 'EXPECTED',
-      B4: "Kamila's Salary",
+      B4: "Jordan's Salary",
       D4: '2000',
     });
     const { entries } = scanBudgetWorkbook([income]);
     expect(entries[0]).toMatchObject({
-      name: "Kamila's Salary",
+      name: "Jordan's Salary",
       category: 'Income',
     });
   });
@@ -201,8 +201,8 @@ describe('findDuplicateHints', () => {
       entry('Era', 1),
       entry('Dias', 1),
       entry('Groceries', 4),
-      entry("Kamila's Salary", 2),
-      entry("Kamila's paycheck", 1),
+      entry("Jordan's Salary", 2),
+      entry("Jordan's paycheck", 1),
     ]);
     expect(hints.size).toBe(0);
   });

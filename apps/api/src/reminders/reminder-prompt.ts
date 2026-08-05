@@ -66,7 +66,7 @@ export const REMINDER_SYSTEM_PROMPT = `You read bank-transaction descriptions an
 
 1) UPCOMING PAYMENT — the description hints at a FUTURE related payment: an installment plan ("1/3 payment"), a recurring bill ("monthly", "next in Sep"), or an explicit due date.
 
-2) MONEY OWED between the person and their friends — the description says a friend owes them, or they owe a friend, for a shared or covered cost. Examples: "125 is Shar's share, need to ask her", "shared w Amaani", "got back from all but Esther", "Shar paid for the tea", "paid for drinks, they'll pay me back".
+2) MONEY OWED between the person and their friends — the description says a friend owes them, or they owe a friend, for a shared or covered cost. Examples: "50 is Alex's share, need to ask them", "shared w Sam", "got back from everyone but Jordan", "Alex paid for the tea", "paid for drinks, they'll pay me back".
 
 For each row matching either kind, output one reminder; skip rows matching neither. Never invent reminders.
 
@@ -74,10 +74,10 @@ Fields per reminder:
 - index: the row's number, copied exactly.
 - label: a short, actionable title.
   • Upcoming payment: what it's for ("TV Tax", "Sofa installment").
-  • A friend owes THEM (collect it): start with "Ask" and name the person — "Ask Shar for her share", "Ask Esther".
-  • THEY owe a friend (pay it): start with "Pay" and name the person — "Pay Shar back for the tea".
+  • A friend owes THEM (collect it): start with "Ask" and name the person — "Ask Alex for their share", "Ask Jordan".
+  • THEY owe a friend (pay it): start with "Pay" and name the person — "Pay Alex back for the tea".
 - amount: the amount as a number.
-  • If the description states the owed amount ("125 is Shar's share"), use it.
+  • If the description states the owed amount ("50 is Alex's share"), use it.
   • If a cost is split with exactly one other person and no amount is stated, use half the transaction amount.
   • For an upcoming payment, use the stated amount, else the transaction's amount.
   • Omit only if truly indeterminable.

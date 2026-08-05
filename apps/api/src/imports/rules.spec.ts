@@ -21,27 +21,27 @@ const rule = (
 describe('RulesService.match', () => {
   // The real case: two people's names, where one is a substring of the joint one.
   const set = [
-    rule('r1', 'kamila jusupova', 'TRANSFER', { counterAccountId: 'k-rev' }),
-    rule('r2', 'kamila jusupova zhannur bolat', 'TRANSFER', {
+    rule('r1', 'maria santos', 'TRANSFER', { counterAccountId: 'k-rev' }),
+    rule('r2', 'maria santos john smith', 'TRANSFER', {
       counterAccountId: 'joint',
     }),
-    rule('r3', 'zhannur bolat', 'INCOME', {
+    rule('r3', 'john smith', 'INCOME', {
       subcategoryId: 'blocked-account',
     }),
   ];
 
   it('prefers the longest pattern, so the joint account beats either name', () => {
     expect(
-      rules.match(set, 'from kamila jusupova zhannur bolat', 'INCOME'),
+      rules.match(set, 'from maria santos john smith', 'INCOME'),
     ).toEqual({ counterAccountId: 'joint', ruleId: 'r2' });
   });
 
   it('matches each name on its own', () => {
-    expect(rules.match(set, 'from kamila jusupova', 'INCOME')).toEqual({
+    expect(rules.match(set, 'from maria santos', 'INCOME')).toEqual({
       counterAccountId: 'k-rev',
       ruleId: 'r1',
     });
-    expect(rules.match(set, 'from zhannur bolat', 'INCOME')).toEqual({
+    expect(rules.match(set, 'from john smith', 'INCOME')).toEqual({
       subcategoryId: 'blocked-account',
       ruleId: 'r3',
     });
@@ -77,13 +77,13 @@ describe('RulesService.match', () => {
 
   it('applies transfer rules to either direction', () => {
     const transfer = [
-      rule('t', 'kamila jusupova', 'TRANSFER', { counterAccountId: 'k-rev' }),
+      rule('t', 'maria santos', 'TRANSFER', { counterAccountId: 'k-rev' }),
     ];
-    expect(rules.match(transfer, 'to kamila jusupova', 'EXPENSE')).toEqual({
+    expect(rules.match(transfer, 'to maria santos', 'EXPENSE')).toEqual({
       counterAccountId: 'k-rev',
       ruleId: 't',
     });
-    expect(rules.match(transfer, 'from kamila jusupova', 'INCOME')).toEqual({
+    expect(rules.match(transfer, 'from maria santos', 'INCOME')).toEqual({
       counterAccountId: 'k-rev',
       ruleId: 't',
     });
@@ -107,20 +107,20 @@ describe('RulesService.match', () => {
   // have to be reduced by the same normalizer for the substring test to work.
   it('matches a rule typed the way the statement reads it', () => {
     const typed = [
-      rule('r1', normalizePattern('Transfer from KAMILA JUSUPOVA'), 'TRANSFER', {
+      rule('r1', normalizePattern('Transfer from MARIA SANTOS'), 'TRANSFER', {
         counterAccountId: 'k-rev',
       }),
       rule(
         'r2',
-        normalizePattern('Transfer from KAMILA JUSUPOVA & ZHANNUR BOLAT'),
+        normalizePattern('Transfer from MARIA SANTOS & JOHN SMITH'),
         'TRANSFER',
         { counterAccountId: 'joint' },
       ),
     ];
     const joint = normalizeMerchant(
-      'Transfer from KAMILA JUSUPOVA & ZHANNUR BOLAT',
+      'Transfer from MARIA SANTOS & JOHN SMITH',
     );
-    const hers = normalizeMerchant('Transfer from KAMILA JUSUPOVA');
+    const hers = normalizeMerchant('Transfer from MARIA SANTOS');
 
     expect(rules.match(typed, joint, 'INCOME')).toMatchObject({
       counterAccountId: 'joint',

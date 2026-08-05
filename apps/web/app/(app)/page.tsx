@@ -105,7 +105,18 @@ export default function OverviewPage() {
     queryKey: ["reminders"],
     queryFn: () => api<Reminder[]>("/reminders"),
   });
-  const upcoming = (reminders.data ?? []).filter((r) => !r.done).slice(0, 4);
+  // "Due soon" = open reminders dated within the next 10 days (or overdue),
+  // soonest first — a small nudge on the dashboard for what needs acting on.
+  const DUE_SOON_DAYS = 10;
+  const now = new Date().getTime();
+  const upcoming = (reminders.data ?? [])
+    .filter((r) => {
+      if (r.done || !r.dueDate) return false;
+      const days = (new Date(r.dueDate).getTime() - now) / 86_400_000;
+      return days <= DUE_SOON_DAYS;
+    })
+    .sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? ""))
+    .slice(0, 6);
 
   const income =
     monthStats.data?.monthly.reduce((sum, m) => sum + m.income, 0) ?? 0;
@@ -264,39 +275,52 @@ export default function OverviewPage() {
       {upcoming.length > 0 && (
         <Card>
           <div className="mb-2 flex items-center justify-between">
-            <h2 className="font-medium">Upcoming</h2>
+            <h2 className="font-medium">
+              Due soon
+              <span className="ml-2 text-sm font-normal text-zinc-500">
+                next {DUE_SOON_DAYS} days
+              </span>
+            </h2>
             <Link href="/reminders" className="text-sm text-zinc-500 underline">
               All reminders
             </Link>
           </div>
           <ul className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-900">
-            {upcoming.map((r) => (
-              <li
-                key={r.id}
-                className="flex flex-wrap items-center gap-x-2 py-1.5 text-sm"
-              >
-                <span className="font-medium">{r.label}</span>
-                {r.cadence && (
-                  <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                    {r.cadence}
+            {upcoming.map((r) => {
+              const days = Math.round(
+                (new Date(r.dueDate as string).getTime() - now) / 86_400_000,
+              );
+              const when =
+                days < 0
+                  ? `${-days}d overdue`
+                  : days === 0
+                    ? "today"
+                    : days === 1
+                      ? "tomorrow"
+                      : `in ${days}d`;
+              return (
+                <li
+                  key={r.id}
+                  className="flex flex-wrap items-center gap-x-2 py-1.5 text-sm"
+                >
+                  <span className="font-medium">{r.label}</span>
+                  <span
+                    className={days < 0 ? "text-red-600" : "text-zinc-500"}
+                  >
+                    {when} ·{" "}
+                    {new Date(r.dueDate as string).toLocaleDateString(undefined, {
+                      day: "numeric",
+                      month: "short",
+                    })}
                   </span>
-                )}
-                <span className="text-zinc-500">
-                  next ·{" "}
-                  {r.dueDate
-                    ? new Date(r.dueDate).toLocaleDateString(undefined, {
-                        day: "numeric",
-                        month: "short",
-                      })
-                    : "no date"}
-                </span>
-                {r.amountCents != null && (
-                  <span className="ml-auto tabular-nums text-zinc-500">
-                    {formatCents(r.amountCents, r.currency ?? currency)}
-                  </span>
-                )}
-              </li>
-            ))}
+                  {r.amountCents != null && (
+                    <span className="ml-auto tabular-nums text-zinc-500">
+                      {formatCents(r.amountCents, r.currency ?? currency)}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </Card>
       )}

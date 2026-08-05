@@ -286,6 +286,12 @@ export type Reminder = {
   subcategoryId: string | null;
   subcategory: { id: string; name: string; category: TransactionCategory } | null;
   sourceTransactionId: string | null;
+  /** The transaction the reminder was read from (present on scanned ones). */
+  sourceTransaction: {
+    id: string;
+    type: TransactionType;
+    description: string | null;
+  } | null;
   createdAt: string;
 };
 

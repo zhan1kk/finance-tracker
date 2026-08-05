@@ -29,12 +29,12 @@ describe('normalizeMerchant', () => {
   it('keeps direction words (transfer/payment) that distinguish destinations', () => {
     // Stripping these collapsed "Transfer to X" and "to X" — two different
     // destinations — into one un-distinguishable rule, so they are preserved.
-    expect(normalizeMerchant('Transfer to ZHANNUR BOLAT')).toBe(
-      'transfer to zhannur bolat',
+    expect(normalizeMerchant('Transfer to JOHN SMITH')).toBe(
+      'transfer to john smith',
     );
-    expect(normalizeMerchant('to Zhannur Bolat')).toBe('to zhannur bolat');
-    expect(normalizeMerchant('Payment from KAMILA JUSUPOVA')).toBe(
-      'payment from kamila jusupova',
+    expect(normalizeMerchant('to John Smith')).toBe('to john smith');
+    expect(normalizeMerchant('Payment from MARIA SANTOS')).toBe(
+      'payment from maria santos',
     );
   });
 

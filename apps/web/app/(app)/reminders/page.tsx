@@ -1,15 +1,96 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatCents, parseAmountToCents } from "@/lib/format";
 import { runJob } from "@/lib/poll-job";
-import type { Reminder, Subcategory } from "@/lib/types";
+import type {
+  Reminder,
+  Subcategory,
+  Transaction,
+  TransactionList,
+} from "@/lib/types";
 
 const CADENCES = ["weekly", "monthly", "quarterly", "yearly", "one-off"];
+
+/**
+ * Searches the user's incomes so they can pick the one that paid back an
+ * "Ask …" reminder. Selecting it reimburses the reminder's source expense and
+ * marks the reminder done.
+ */
+function IncomePicker({
+  currency,
+  pending,
+  onPick,
+  onCancel,
+}: {
+  currency: string;
+  pending: boolean;
+  onPick: (transactionId: string) => void;
+  onCancel: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [debounced, setDebounced] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(search.trim()), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const results = useQuery({
+    queryKey: ["reminder-income-search", debounced],
+    queryFn: () =>
+      api<TransactionList>(
+        `/transactions?type=INCOME&pageSize=12${
+          debounced ? `&search=${encodeURIComponent(debounced)}` : ""
+        }`,
+      ),
+  });
+
+  const label = (t: Transaction) =>
+    `${t.date.slice(0, 10)} · ${t.description || t.subcategory?.name || "income"} · ${formatCents(t.amount, currency)}`;
+
+  return (
+    <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-800 dark:bg-zinc-800/40">
+      <p className="mb-1 text-xs text-zinc-500">
+        Which income paid this back? Linking it reimburses the original expense
+        and marks this done.
+      </p>
+      <Input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="search income (name, amount)…"
+        className="w-full text-sm"
+        autoFocus
+      />
+      <div className="mt-1 max-h-40 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-800">
+        {results.data?.items.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            disabled={pending}
+            className="block w-full px-2 py-1 text-left text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
+            onClick={() => onPick(t.id)}
+          >
+            {label(t)}
+          </button>
+        ))}
+        {results.data?.items.length === 0 && (
+          <p className="px-2 py-1 text-xs text-zinc-400">no matching income</p>
+        )}
+      </div>
+      <button
+        type="button"
+        className="mt-1 text-xs text-zinc-500 hover:underline"
+        onClick={onCancel}
+      >
+        cancel
+      </button>
+    </div>
+  );
+}
 
 function formatDue(iso: string | null): string {
   if (!iso) return "no date";
@@ -26,6 +107,8 @@ export default function RemindersPage() {
   const baseCurrency = user?.baseCurrency ?? "EUR";
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // The reminder whose "Received" income picker is open, if any.
+  const [settling, setSettling] = useState<string | null>(null);
 
   const reminders = useQuery({
     queryKey: ["reminders"],
@@ -50,6 +133,23 @@ export default function RemindersPage() {
     mutationFn: (id: string) =>
       api(`/reminders/${id}/paid`, { method: "POST" }),
     onSuccess: invalidate,
+    onError: setError,
+  });
+
+  // Links the income that paid back an "Ask …" reminder: reimburses the source
+  // expense and marks the reminder done. Touches transactions + stats too.
+  const linkPayment = useMutation({
+    mutationFn: (vars: { id: string; transactionId: string }) =>
+      api(`/reminders/${vars.id}/link-payment`, {
+        method: "POST",
+        body: JSON.stringify({ transactionId: vars.transactionId }),
+      }),
+    onSuccess: () => {
+      setSettling(null);
+      void queryClient.invalidateQueries({ queryKey: ["reminders"] });
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["stats"] });
+    },
     onError: setError,
   });
 
@@ -157,6 +257,21 @@ export default function RemindersPage() {
       )}
       {r.note && <span className="text-xs text-zinc-400">— {r.note}</span>}
       <span className="ml-auto flex items-center gap-1">
+        {/* A friend owes them ("Ask …" read from an expense): settle it by
+            linking the income that paid it back. */}
+        {!r.done &&
+          r.sourceTransaction?.type === "EXPENSE" &&
+          /^ask/i.test(r.label) && (
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setError(null);
+                setSettling(settling === r.id ? null : r.id);
+              }}
+            >
+              Received
+            </Button>
+          )}
         {r.installmentsTotal != null &&
           !r.done &&
           (r.installmentsPaid ?? 0) < r.installmentsTotal && (
@@ -190,6 +305,18 @@ export default function RemindersPage() {
           ×
         </button>
       </span>
+      {settling === r.id && (
+        <div className="w-full">
+          <IncomePicker
+            currency={r.currency ?? baseCurrency}
+            pending={linkPayment.isPending}
+            onPick={(transactionId) =>
+              linkPayment.mutate({ id: r.id, transactionId })
+            }
+            onCancel={() => setSettling(null)}
+          />
+        </div>
+      )}
     </li>
   );
 
@@ -205,9 +332,9 @@ export default function RemindersPage() {
         <p className="mb-3 text-sm text-zinc-500">
           A local model reads your transaction descriptions for two things:
           upcoming payments (&ldquo;1/3 payment&hellip;&rdquo;, &ldquo;next in
-          Sep&rdquo;, &ldquo;monthly&rdquo;) and money you owe or are owed
-          (&ldquo;125 is Shar&rsquo;s share, ask her&rdquo;, &ldquo;shared w
-          Amaani&rdquo;). It never posts anything — just reminds.
+          Sep&rdquo;, &ldquo;monthly&rdquo;) and money you owe or are owed (a
+          friend&rsquo;s share of a bill, an IOU you jotted down). It never posts
+          anything — just reminds.
         </p>
         {scan.isPending && (
           <p className="text-sm text-amber-600">

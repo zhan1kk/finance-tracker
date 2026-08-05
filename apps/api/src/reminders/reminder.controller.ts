@@ -11,6 +11,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/auth.types';
 import { JobsService } from '../jobs/jobs.service';
 import { CreateReminderDTO } from './dtos/create-reminder.dto';
+import { LinkPaymentDTO } from './dtos/link-payment.dto';
 import { UpdateReminderDTO } from './dtos/update-reminder.dto';
 import { ReminderService } from './reminder.service';
 
@@ -48,6 +49,16 @@ export class ReminderController {
   @Post(':id/paid')
   markPaid(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.reminderService.markPaid(user.userId, id);
+  }
+
+  /** Settle an "Ask …" reminder by linking the income that paid it back. */
+  @Post(':id/link-payment')
+  linkPayment(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: LinkPaymentDTO,
+  ) {
+    return this.reminderService.linkPayment(user.userId, id, body.transactionId);
   }
 
   @Patch(':id')
