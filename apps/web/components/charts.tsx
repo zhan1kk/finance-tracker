@@ -363,10 +363,22 @@ function arcPath(cx: number, cy: number, R: number, r: number, a0: number, a1: n
   return `M ${x1} ${y1} A ${R} ${R} 0 ${large} 1 ${x2} ${y2} L ${x3} ${y3} A ${r} ${r} 0 ${large} 0 ${x4} ${y4} Z`;
 }
 
+// Spend types the donut can filter to, in a stable display order.
+const SPENDING_CATEGORY_ORDER = [
+  "Expenses",
+  "Bills",
+  "Subscriptions",
+  "Debts",
+  "Savings",
+];
+
 /**
  * Expense composition as a donut: one slice per subcategory (top 7, the rest
- * grouped into "Other"), with a legend carrying the amounts and shares. A 2px
- * surface ring separates slices; a table view backs it for accessibility.
+ * grouped into "Other"), with a legend carrying the amounts and shares. Chips
+ * scope it to a single spend type (Bills, Subscriptions, …) so you can see the
+ * split *within* one; "View as table" — or clicking the Other slice — expands
+ * every subcategory, so nothing stays hidden inside Other. A 2px surface ring
+ * separates slices; the table view also backs it for accessibility.
  */
 export function CategoryDonut({
   data,
@@ -377,47 +389,78 @@ export function CategoryDonut({
 }) {
   const [hover, setHover] = useState<number | null>(null);
   const [asTable, setAsTable] = useState(false);
+  const [filter, setFilter] = useState<string>("All");
 
-  const spending = data.filter((d) => d.amount > 0);
+  // Spend types actually present this period, in a stable order.
+  const present = SPENDING_CATEGORY_ORDER.filter((c) =>
+    data.some((d) => d.category === c && d.amount > 0),
+  );
+  const active = filter !== "All" && present.includes(filter) ? filter : "All";
+  const scoped =
+    active === "All" ? data : data.filter((d) => d.category === active);
+  const spending = scoped
+    .filter((d) => d.amount > 0)
+    .sort((a, b) => b.amount - a.amount);
+
+  const chip = (on: boolean) =>
+    `rounded-full px-2.5 py-1 text-xs ${
+      on
+        ? "bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900"
+        : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+    }`;
+
+  const controls = (
+    <div className="mb-2 flex flex-wrap items-center gap-1.5">
+      {present.length > 1 &&
+        ["All", ...present].map((c) => (
+          <button
+            key={c}
+            onClick={() => setFilter(c)}
+            className={chip(active === c)}
+          >
+            {c === "All" ? "All spending" : c}
+          </button>
+        ))}
+      <TableToggle asTable={asTable} onToggle={() => setAsTable(!asTable)} />
+    </div>
+  );
+
   if (spending.length === 0) {
     return (
-      <p className="py-8 text-center text-sm text-zinc-500">
-        No spending in this period yet.
-      </p>
+      <div>
+        {present.length > 0 && controls}
+        <p className="py-8 text-center text-sm text-zinc-500">
+          No spending {active === "All" ? "in this period" : `in ${active}`} yet.
+        </p>
+      </div>
     );
   }
 
-  const slices = spending.slice(0, MAX_CATEGORY_ROWS).map((d, i) => ({
-    label: d.name,
-    amount: d.amount,
-    color: DONUT_COLORS[i % DONUT_COLORS.length],
-  }));
-  const tail = spending.slice(MAX_CATEGORY_ROWS);
-  if (tail.length > 0) {
-    slices.push({
-      label: "Other",
-      amount: tail.reduce((s, d) => s + d.amount, 0),
-      color: DONUT_OTHER,
-    });
-  }
-  const total = slices.reduce((s, x) => s + x.amount, 0);
+  const total = spending.reduce((s, d) => s + d.amount, 0);
 
+  // The table view is the *full* breakdown — every subcategory, so whatever the
+  // donut folded into "Other" is spelled out here.
   if (asTable) {
     return (
       <div>
-        <div className="mb-2 flex">
-          <TableToggle asTable onToggle={() => setAsTable(false)} />
-        </div>
+        {controls}
         <table className="w-full text-sm">
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
-            {slices.map((s) => (
-              <tr key={s.label}>
-                <td className="py-1.5">{s.label}</td>
+            {spending.map((d) => (
+              <tr key={d.subcategoryId}>
+                <td className="py-1.5">{d.name}</td>
+                {active === "All" && (
+                  <td className="py-1.5">
+                    <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                      {d.category}
+                    </span>
+                  </td>
+                )}
                 <td className="py-1.5 text-right tabular-nums">
-                  {formatCents(s.amount, currency)}
+                  {formatCents(d.amount, currency)}
                 </td>
-                <td className="py-1.5 w-12 text-right tabular-nums text-zinc-400">
-                  {Math.round((s.amount / total) * 100)}%
+                <td className="w-12 py-1.5 text-right tabular-nums text-zinc-400">
+                  {Math.round((d.amount / total) * 100)}%
                 </td>
               </tr>
             ))}
@@ -425,6 +468,22 @@ export function CategoryDonut({
         </table>
       </div>
     );
+  }
+
+  const slices = spending.slice(0, MAX_CATEGORY_ROWS).map((d, i) => ({
+    label: d.name,
+    amount: d.amount,
+    color: DONUT_COLORS[i % DONUT_COLORS.length],
+    isOther: false,
+  }));
+  const tail = spending.slice(MAX_CATEGORY_ROWS);
+  if (tail.length > 0) {
+    slices.push({
+      label: "Other",
+      amount: tail.reduce((s, d) => s + d.amount, 0),
+      color: DONUT_OTHER,
+      isOther: true,
+    });
   }
 
   const size = 184;
@@ -446,9 +505,7 @@ export function CategoryDonut({
 
   return (
     <div>
-      <div className="mb-1 flex">
-        <TableToggle asTable={false} onToggle={() => setAsTable(true)} />
-      </div>
+      {controls}
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
         <svg
           viewBox={`0 0 ${size} ${size}`}
@@ -465,9 +522,13 @@ export function CategoryDonut({
               fill={a.color}
               stroke="var(--chart-surface)"
               strokeWidth={2}
-              style={{ opacity: hover === null || hover === a.i ? 1 : 0.35 }}
+              style={{
+                opacity: hover === null || hover === a.i ? 1 : 0.35,
+                cursor: a.isOther ? "pointer" : "default",
+              }}
               onMouseEnter={() => setHover(a.i)}
               onMouseLeave={() => setHover(null)}
+              onClick={a.isOther ? () => setAsTable(true) : undefined}
             />
           ))}
           <text
@@ -493,14 +554,8 @@ export function CategoryDonut({
         <ul className="flex min-w-44 flex-1 flex-col gap-1">
           {arcs.map((a) => {
             const share = Math.round((a.amount / total) * 100);
-            return (
-              <li
-                key={a.label}
-                className="flex items-center gap-2 text-sm"
-                style={{ opacity: hover === null || hover === a.i ? 1 : 0.5 }}
-                onMouseEnter={() => setHover(a.i)}
-                onMouseLeave={() => setHover(null)}
-              >
+            const inner = (
+              <>
                 <span
                   aria-hidden
                   className="h-3 w-3 shrink-0 rounded-sm"
@@ -508,6 +563,7 @@ export function CategoryDonut({
                 />
                 <span className="truncate" title={a.label}>
                   {a.label}
+                  {a.isOther ? ` (${tail.length})` : ""}
                 </span>
                 <span className="ml-auto tabular-nums text-zinc-500">
                   {formatCents(a.amount, currency)}
@@ -515,6 +571,33 @@ export function CategoryDonut({
                 <span className="w-9 shrink-0 text-right text-xs tabular-nums text-zinc-400">
                   {share}%
                 </span>
+              </>
+            );
+            const dim = { opacity: hover === null || hover === a.i ? 1 : 0.5 };
+            // "Other" is a button that opens the full table, so its contents
+            // aren't hidden; the rest are plain legend rows.
+            return a.isOther ? (
+              <li key={a.label}>
+                <button
+                  className="flex w-full items-center gap-2 text-sm hover:text-zinc-700 dark:hover:text-zinc-200"
+                  style={dim}
+                  title="See everything grouped into Other"
+                  onMouseEnter={() => setHover(a.i)}
+                  onMouseLeave={() => setHover(null)}
+                  onClick={() => setAsTable(true)}
+                >
+                  {inner}
+                </button>
+              </li>
+            ) : (
+              <li
+                key={a.label}
+                className="flex items-center gap-2 text-sm"
+                style={dim}
+                onMouseEnter={() => setHover(a.i)}
+                onMouseLeave={() => setHover(null)}
+              >
+                {inner}
               </li>
             );
           })}

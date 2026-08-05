@@ -350,10 +350,19 @@ export default function OverviewPage() {
   );
 }
 
+// Insight thresholds: a mover must clear both a money floor and a share of the
+// change, so €4 wiggles and 3% drifts stay quiet.
+const INSIGHT_MIN_DELTA = 1000; // €10
+const INSIGHT_MIN_PCT = 15;
+const INSIGHT_MAX_MOVERS = 8;
+
 /**
- * A couple of plain-language takeaways comparing the shown month to the one
- * before it: overall spend, and the single biggest category mover. Skips tiny
- * wiggles so it only speaks up when there's something worth noticing.
+ * Plain-language takeaways comparing the shown month to the one before it:
+ * overall spend, then the biggest category movers. Only categories present in
+ * *both* months count — a one-off like "Gift €0 → €300" is occasional, not a
+ * monthly trend, so it's skipped rather than shouted about. Collapsed to the
+ * single biggest mover; "Show more" reveals the rest (up to eight). This is
+ * exact arithmetic, not an LLM guess — no hallucinated numbers, always instant.
  */
 function SpendingInsights({
   current,
@@ -368,54 +377,59 @@ function SpendingInsights({
   prevTotal: number;
   currency: string;
 }) {
+  const [expanded, setExpanded] = useState(false);
+
   const prevById = new Map(previous.map((r) => [r.subcategoryId, r.amount]));
   const movers = current
     .map((r) => {
       const before = prevById.get(r.subcategoryId) ?? 0;
-      return { name: r.name, cur: r.amount, before, delta: r.amount - before };
+      const delta = r.amount - before;
+      return {
+        name: r.name,
+        before,
+        delta,
+        pct: before > 0 ? Math.round((delta / before) * 100) : 0,
+      };
     })
-    // Ignore anything that moved less than €5 — not worth a callout.
-    .filter((m) => Math.abs(m.delta) >= 500)
-    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+    // Present in both months (skip occasional one-offs), and a real move:
+    // both a money floor and a percentage floor.
+    .filter(
+      (m) =>
+        m.before > 0 &&
+        Math.abs(m.delta) >= INSIGHT_MIN_DELTA &&
+        Math.abs(m.pct) >= INSIGHT_MIN_PCT,
+    )
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, INSIGHT_MAX_MOVERS);
 
-  const lines: ReactNode[] = [];
+  const overall =
+    prevTotal > 0 && curTotal > 0 && curTotal !== prevTotal ? (
+      <>
+        You&apos;ve spent{" "}
+        <strong>
+          {Math.abs(Math.round(((curTotal - prevTotal) / prevTotal) * 100))}%{" "}
+          {curTotal > prevTotal ? "more" : "less"}
+        </strong>{" "}
+        than last month ({formatCents(prevTotal, currency)} →{" "}
+        {formatCents(curTotal, currency)}).
+      </>
+    ) : null;
 
-  if (prevTotal > 0 && curTotal > 0) {
-    const pct = Math.round(((curTotal - prevTotal) / prevTotal) * 100);
-    if (pct !== 0) {
-      lines.push(
-        <>
-          You&apos;ve spent{" "}
-          <strong>
-            {Math.abs(pct)}% {pct > 0 ? "more" : "less"}
-          </strong>{" "}
-          than last month ({formatCents(prevTotal, currency)} →{" "}
-          {formatCents(curTotal, currency)}).
-        </>,
-      );
-    }
-  }
+  const moverLines: ReactNode[] = movers.map((m) => (
+    <>
+      <strong>{m.name}</strong> is {m.delta > 0 ? "up" : "down"}{" "}
+      {Math.abs(m.pct)}% ({m.delta > 0 ? "+" : "−"}
+      {formatCents(Math.abs(m.delta), currency)}).
+    </>
+  ));
 
-  const top = movers[0];
-  if (top) {
-    lines.push(
-      top.before === 0 ? (
-        <>
-          <strong>{top.name}</strong> is new this month (
-          {formatCents(top.cur, currency)}).
-        </>
-      ) : (
-        <>
-          <strong>{top.name}</strong> is {top.delta > 0 ? "up" : "down"}{" "}
-          {Math.abs(Math.round((top.delta / top.before) * 100))}% (
-          {top.delta > 0 ? "+" : "−"}
-          {formatCents(Math.abs(top.delta), currency)}).
-        </>
-      ),
-    );
-  }
-
+  const lines: ReactNode[] = [
+    ...(overall ? [overall] : []),
+    ...(expanded ? moverLines : moverLines.slice(0, 1)),
+  ];
   if (lines.length === 0) return null;
+
+  const hiddenCount = moverLines.length - (expanded ? moverLines.length : 1);
 
   return (
     <Card>
@@ -430,6 +444,14 @@ function SpendingInsights({
           </li>
         ))}
       </ul>
+      {moverLines.length > 1 && (
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-2 text-xs text-zinc-500 hover:underline"
+        >
+          {expanded ? "Show less" : `Show ${hiddenCount} more`}
+        </button>
+      )}
     </Card>
   );
 }
