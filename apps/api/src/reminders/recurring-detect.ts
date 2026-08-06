@@ -34,6 +34,9 @@ export type RecurringCandidate = {
   sourceTransactionId: string;
 };
 
+/** One calendar month's worth of a subcategory's charges. */
+type MonthBucket = { date: Date; total: number };
+
 /** Recurring bills among `txns` (already limited to Bills/Subscriptions). */
 export function detectRecurringBills(
   txns: BillTxn[],
@@ -50,12 +53,18 @@ export function detectRecurringBills(
   for (const [subcategoryId, list] of groups) {
     const sorted = [...list].sort((a, b) => a.date.getTime() - b.date.getTime());
     const latest = sorted[sorted.length - 1];
-    const cadence = inferCadence(sorted, latest);
+    // Collapse to one point per calendar month, so a subcategory that lumps
+    // several services (many charges a month, on different days) still reads as
+    // a clean monthly recurrence, and the reminder shows the whole month's total.
+    const months = monthBuckets(sorted);
+    const cadence = inferCadence(months, latest.name);
     if (!cadence) continue;
     out.push({
       subcategoryId,
       label: latest.name,
-      amountCents: latest.amount,
+      // The most recent month's total — right for both a single bill and a
+      // lumped "all subscriptions" subcategory.
+      amountCents: months[months.length - 1].total,
       currency: latest.currency,
       cadence,
       nextDate: nextAfter(latest.date, cadence, now),
@@ -65,25 +74,38 @@ export function detectRecurringBills(
   return out;
 }
 
+/** Collapses charges to one bucket per calendar month (earliest date, summed). */
+function monthBuckets(sorted: BillTxn[]): MonthBucket[] {
+  const byMonth = new Map<string, MonthBucket>();
+  for (const t of sorted) {
+    const key = `${t.date.getUTCFullYear()}-${t.date.getUTCMonth()}`;
+    const bucket = byMonth.get(key);
+    if (bucket) bucket.total += t.amount;
+    else byMonth.set(key, { date: t.date, total: t.amount });
+  }
+  return [...byMonth.values()].sort((a, b) => a.date.getTime() - b.date.getTime());
+}
+
 /**
- * The cadence a group repeats on, or null if it isn't a clean recurrence. The
- * ±5-day tolerance (for payments that slip when a balance is short) is baked
- * into the interval bands: monthly = 30±5, quarterly = 90±5.
+ * The cadence a subcategory repeats on, or null if it isn't a clean recurrence.
+ * Works off one point per month; the ±5-day tolerance (for payments that slip
+ * when a balance is short) is baked into the bands: monthly = 30±5, quarterly
+ * = 90±5.
  */
 function inferCadence(
-  sorted: BillTxn[],
-  latest: BillTxn,
+  months: MonthBucket[],
+  name: string,
 ): 'monthly' | 'quarterly' | null {
-  if (sorted.length >= 2) {
+  if (months.length >= 2) {
     const intervals: number[] = [];
-    for (let i = 1; i < sorted.length; i++) {
-      intervals.push((sorted[i].date.getTime() - sorted[i - 1].date.getTime()) / DAY);
+    for (let i = 1; i < months.length; i++) {
+      intervals.push((months[i].date.getTime() - months[i - 1].date.getTime()) / DAY);
     }
     const med = median(intervals);
     if (med >= 25 && med <= 35) return 'monthly';
     if (med >= 85 && med <= 95) return 'quarterly';
   }
-  if (OBVIOUS_MONTHLY.test(latest.name)) return 'monthly';
+  if (OBVIOUS_MONTHLY.test(name)) return 'monthly';
   return null;
 }
 

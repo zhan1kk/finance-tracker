@@ -244,6 +244,9 @@ export class ReminderService {
         account: { is: { userId } },
         type: 'EXPENSE',
         excludeFromStats: false,
+        // A charge already posted by a recurring rule is handled there — don't
+        // detect it as a "new" recurring bill and nag twice.
+        recurringRuleId: null,
         date: { gte: since },
         subcategory: { is: { category: { in: ['Bills', 'Subscriptions'] } } },
       },

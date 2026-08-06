@@ -58,6 +58,27 @@ describe('detectRecurringBills', () => {
     ).toEqual([]);
   });
 
+  it('handles a lumped subcategory (many charges a month) as monthly, with the month total', () => {
+    const res = detectRecurringBills(
+      [
+        // March: two streaming services on different days.
+        txn({ id: 'n1', subcategoryId: 'subs', name: 'Subscriptions', date: day('2026-03-05'), amount: 999 }),
+        txn({ id: 's1', subcategoryId: 'subs', name: 'Subscriptions', date: day('2026-03-12'), amount: 1_099 }),
+        // April: the same two.
+        txn({ id: 'n2', subcategoryId: 'subs', name: 'Subscriptions', date: day('2026-04-05'), amount: 999 }),
+        txn({ id: 's2', subcategoryId: 'subs', name: 'Subscriptions', date: day('2026-04-12'), amount: 1_099 }),
+      ],
+      now,
+    );
+    expect(res).toHaveLength(1);
+    expect(res[0]).toMatchObject({
+      cadence: 'monthly',
+      amountCents: 999 + 1_099, // the latest month's total
+      label: 'Subscriptions',
+      sourceTransactionId: 's2',
+    });
+  });
+
   it('flags obvious bills (Rent) from a single occurrence', () => {
     const res = detectRecurringBills(
       [

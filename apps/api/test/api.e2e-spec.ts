@@ -2286,11 +2286,15 @@ describe('API (e2e)', () => {
             subcategoryId: sub,
           })
           .expect(201);
-      // Two charges ~a month apart, both recent (within the 12-month window).
-      const prev = new Date();
-      prev.setUTCDate(prev.getUTCDate() - 30);
-      await addExpense(prev.toISOString().slice(0, 10));
-      await addExpense(new Date().toISOString().slice(0, 10));
+      // Two charges ~a month apart in different calendar months, both recent
+      // (33 days apart always crosses a month boundary, whatever today's date).
+      const iso = (daysAgo: number) => {
+        const d = new Date();
+        d.setUTCDate(d.getUTCDate() - daysAgo);
+        return d.toISOString().slice(0, 10);
+      };
+      await addExpense(iso(38));
+      await addExpense(iso(5));
 
       const first = await request(http)
         .post('/reminders/detect-recurring')

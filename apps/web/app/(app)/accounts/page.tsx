@@ -240,9 +240,9 @@ export default function AccountsPage() {
       )}
 
       {pinned.length > 0 && (
-        <section>
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
-            Pinned
+        <section className="rounded-lg border border-amber-200 bg-amber-50/50 p-3 dark:border-amber-900/50 dark:bg-amber-950/20">
+          <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+            <span aria-hidden>★</span> Pinned
           </h3>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {pinned.map(renderAccount)}
@@ -250,9 +250,18 @@ export default function AccountsPage() {
         </section>
       )}
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {unpinned.map(renderAccount)}
-      </div>
+      {unpinned.length > 0 && (
+        <section>
+          {pinned.length > 0 && (
+            <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+              Other accounts
+            </h3>
+          )}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {unpinned.map(renderAccount)}
+          </div>
+        </section>
+      )}
 
       <ExchangeRatesCard />
 
