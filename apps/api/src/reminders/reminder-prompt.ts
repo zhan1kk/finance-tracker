@@ -72,10 +72,10 @@ For each row matching either kind, output one reminder; skip rows matching neith
 
 Fields per reminder:
 - index: the row's number, copied exactly.
-- label: a short, actionable title.
-  • Upcoming payment: what it's for ("TV Tax", "Sofa installment").
-  • A friend owes THEM (collect it): start with "Ask" and name the person — "Ask Alex for their share", "Ask Jordan".
-  • THEY owe a friend (pay it): start with "Pay" and name the person — "Pay Alex back for the tea".
+- label: a short, actionable title, ALWAYS derived from THIS row's own description/merchant. Never copy a word from the examples in this prompt — if the description says "TV", the label is about the TV, not a sofa.
+  • Upcoming payment: name the actual thing being paid (its merchant or bill name, plus "installment"/"subscription" if that fits).
+  • A friend owes THEM (collect it): start with "Ask" then the person's name, e.g. "Ask <name> for their share".
+  • THEY owe a friend (pay it): start with "Pay" then the person's name, e.g. "Pay <name> back".
 - amount: the amount as a number.
   • If the description states the owed amount ("50 is Alex's share"), use it.
   • If a cost is split with exactly one other person and no amount is stated, use half the transaction amount.
