@@ -230,34 +230,6 @@ export type CsvInspection = {
   sample: Record<string, string>[];
 };
 
-// ---- budget spreadsheet onboarding ----
-
-export type SpreadsheetPreviewItem = {
-  name: string;
-  category: TransactionCategory;
-  /** Median of the months that carried a budget; null when none did. */
-  suggestedBudgetCents: number | null;
-  samples: { sheet: string; cents: number }[];
-  monthsSeen: number;
-  budgetable: boolean;
-  existingSubcategory: boolean;
-  existingBudget: boolean;
-  existingCategory: TransactionCategory | null;
-  similarTo: string | null;
-};
-
-export type SpreadsheetPreview = {
-  sheetsScanned: string[];
-  items: SpreadsheetPreviewItem[];
-};
-
-export type SpreadsheetApplyResult = {
-  subcategoriesCreated: number;
-  subcategoriesReused: number;
-  budgetsCreated: number;
-  budgetsUpdated: number;
-  skipped: { name: string; reason: string }[];
-};
 
 export type CategorizationRule = {
   id: string;
@@ -329,13 +301,9 @@ export type RecurringCadence = (typeof RECURRING_CADENCES)[number];
 
 // ---- budgets & reports ----
 
-export const BUDGETABLE_CATEGORIES = [
-  'Expenses',
-  'Bills',
-  'Subscriptions',
-  'Debts',
-  'Savings',
-] as const;
+// Budgets are only for variable spending — Bills/Subscriptions are fixed
+// recurring, Debts are exact payoffs, Savings are goals. All belong elsewhere.
+export const BUDGETABLE_CATEGORIES = ['Expenses'] as const;
 
 export type Budget = {
   id: string;

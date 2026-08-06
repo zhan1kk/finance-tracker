@@ -1937,11 +1937,11 @@ describe('API (e2e)', () => {
 
     it('creates subcategory and category budgets, rejecting bad scope', async () => {
       await createBudget({ monthlyLimit: 10_000, subcategoryId: groceriesId });
-      await createBudget({ monthlyLimit: 50_000, category: 'Bills' });
+      await createBudget({ monthlyLimit: 50_000, category: 'Expenses' });
 
       await createBudget({ monthlyLimit: 1_000 }, 400); // neither scope
       await createBudget(
-        { monthlyLimit: 1_000, subcategoryId: groceriesId, category: 'Bills' },
+        { monthlyLimit: 1_000, subcategoryId: groceriesId, category: 'Expenses' },
         400, // both scopes
       );
       await createBudget(
@@ -1952,8 +1952,12 @@ describe('API (e2e)', () => {
       expect(await listBudgets()).toHaveLength(2);
     });
 
-    it('rejects an Income-scoped budget', async () => {
+    it('rejects budgets outside the Expenses category', async () => {
+      // Income, and non-Expenses spend types (Bills/Debts/Savings), are not budgetable.
       await createBudget({ monthlyLimit: 1_000, subcategoryId: incomeId }, 400);
+      await createBudget({ monthlyLimit: 1_000, category: 'Bills' }, 400);
+      const billsSub = (await createSubcategory('Water Utility', 'Bills')).id;
+      await createBudget({ monthlyLimit: 1_000, subcategoryId: billsSub }, 400);
     });
 
     it('tracks monthly spending, nets reimbursements, and flags over-budget', async () => {

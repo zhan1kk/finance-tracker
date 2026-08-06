@@ -83,8 +83,9 @@ export default function BudgetsPage() {
     e.currentTarget.reset();
   };
 
+  // Budgets are for variable spending only, so offer just Expenses subcategories.
   const spendingSubs = (subcategories.data ?? []).filter(
-    (s) => s.category !== "Income",
+    (s) => s.category === "Expenses",
   );
 
   return (
@@ -92,10 +93,11 @@ export default function BudgetsPage() {
       <Card>
         <h2 className="mb-1 font-medium">New budget</h2>
         <p className="mb-3 text-sm text-zinc-500">
-          A monthly spending limit for a whole category or a single
-          subcategory. This becomes the recurring default; you can override any
-          single month below. Reimbursements you receive count against the
-          spending.
+          A monthly cap on <b>variable spending</b> — all of Expenses, or a
+          single Expenses subcategory. (Bills, Subscriptions, Debts and Savings
+          aren&rsquo;t budgeted — they&rsquo;re fixed or exact; track those with
+          reminders.) This becomes the recurring default; you can override any
+          single month below. Reimbursements count against the spending.
         </p>
         <form onSubmit={onCreate} className="flex flex-wrap items-end gap-3">
           <Field label="Scope">

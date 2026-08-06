@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type FormEvent } from "react";
 import { AccuracyCard } from "@/components/accuracy-card";
 import { ImportReview } from "@/components/import-review";
-import { SpreadsheetImport } from "@/components/spreadsheet-import";
 import { Button, Card, ErrorText, Field, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { runJob } from "@/lib/poll-job";
@@ -43,7 +42,6 @@ export default function ImportsPage() {
   return (
     <main className="flex flex-col gap-6">
       <NewImport onImported={setActiveBatchId} />
-      <SpreadsheetImport />
       <AccuracyCard />
       <History onOpen={setActiveBatchId} />
     </main>

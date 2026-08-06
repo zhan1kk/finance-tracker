@@ -101,6 +101,17 @@ function formatDue(iso: string | null): string {
   });
 }
 
+/**
+ * A reminder's kind, derived from its label: the scanner labels money-owed
+ * reminders "Ask …" (collect) or "Pay … back" (settle); everything else is an
+ * upcoming payment. Used to split the two into separate sections.
+ */
+function reminderKind(label: string): "ask" | "pay" | "payment" {
+  if (/^ask\b/i.test(label)) return "ask";
+  if (/^pay\s/i.test(label)) return "pay";
+  return "payment";
+}
+
 export default function RemindersPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -225,6 +236,8 @@ export default function RemindersPage() {
 
   const open = reminders.data?.filter((r) => !r.done) ?? [];
   const done = reminders.data?.filter((r) => r.done) ?? [];
+  const payments = open.filter((r) => reminderKind(r.label) === "payment");
+  const ious = open.filter((r) => reminderKind(r.label) !== "payment");
 
   const row = (r: Reminder) => (
     <li
@@ -261,7 +274,7 @@ export default function RemindersPage() {
             linking the income that paid it back. */}
         {!r.done &&
           r.sourceTransaction?.type === "EXPENSE" &&
-          /^ask/i.test(r.label) && (
+          reminderKind(r.label) === "ask" && (
             <Button
               variant="ghost"
               onClick={() => {
@@ -319,6 +332,20 @@ export default function RemindersPage() {
       )}
     </li>
   );
+
+  const section = (title: string, subtitle: string, items: Reminder[]) =>
+    items.length === 0 ? null : (
+      <section className="mb-5 last:mb-0">
+        <div className="mb-0.5 flex items-baseline gap-2">
+          <h3 className="text-sm font-semibold tracking-wide text-zinc-700 uppercase dark:text-zinc-300">
+            {title}
+          </h3>
+          <span className="text-xs text-zinc-400">{items.length}</span>
+        </div>
+        <p className="mb-1 text-xs text-zinc-400">{subtitle}</p>
+        <ul className="flex flex-col">{items.map(row)}</ul>
+      </section>
+    );
 
   return (
     <main className="flex flex-col gap-6">
@@ -406,7 +433,16 @@ export default function RemindersPage() {
             import.
           </p>
         )}
-        {open.length > 0 && <ul className="flex flex-col">{open.map(row)}</ul>}
+        {section(
+          "Upcoming payments",
+          "Bills, subscriptions and installments coming due",
+          payments,
+        )}
+        {section(
+          "Money owed",
+          "IOUs — collect a friend's share, or pay one back",
+          ious,
+        )}
         {done.length > 0 && (
           <details className="mt-4">
             <summary className="cursor-pointer text-sm text-zinc-500">

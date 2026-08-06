@@ -138,6 +138,12 @@ export class BudgetService {
       );
     }
 
+    // Budgets cover variable spending only: the Expenses category (Bills,
+    // Subscriptions, Debts and Savings are fixed/exact and tracked elsewhere).
+    if (hasCat && dto.category !== 'Expenses') {
+      throw new BadRequestException('Budgets can only target the Expenses category');
+    }
+
     if (hasSub) {
       const subcategory = await this.prisma.subcategory.findFirst({
         where: { id: dto.subcategoryId, userId },
@@ -147,8 +153,10 @@ export class BudgetService {
           `Subcategory with id ${dto.subcategoryId} was not found`,
         );
       }
-      if (subcategory.category === 'Income') {
-        throw new BadRequestException('Income is not a spending category');
+      if (subcategory.category !== 'Expenses') {
+        throw new BadRequestException(
+          'Budgets can only target the Expenses category',
+        );
       }
     }
 

@@ -12,8 +12,6 @@ import { MappingService } from './mapping.service';
 import { PdfImportService } from './pdf/pdf-import.service';
 import { RulesController } from './rules.controller';
 import { RulesService } from './rules.service';
-import { SpreadsheetImportController } from './spreadsheet/spreadsheet-import.controller';
-import { SpreadsheetImportService } from './spreadsheet/spreadsheet-import.service';
 import {
   CATEGORIZATION_PROVIDER,
   type CategorizationProvider,
@@ -21,14 +19,13 @@ import {
 
 @Module({
   imports: [JobsModule],
-  controllers: [ImportController, RulesController, SpreadsheetImportController],
+  controllers: [ImportController, RulesController],
   providers: [
     ImportService,
     CsvParserService,
     MappingService,
     RulesService,
     CategorizationService,
-    SpreadsheetImportService,
     PdfImportService,
     {
       provide: CATEGORIZATION_PROVIDER,
