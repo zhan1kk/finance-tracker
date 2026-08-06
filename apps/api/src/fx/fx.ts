@@ -9,15 +9,33 @@
 export const BASE_CURRENCY = 'EUR';
 
 /**
- * Built-in fallback rates, used for any date not covered by a user-set rate.
- * The user overrides these per-date via /fx/rates or the Telegram /rate command.
+ * Built-in fallback rates (foreign units per 1 EUR), used for any date not
+ * covered by a user-set or synced rate. Rough seeds only — the real values come
+ * from a rate sync or a manual entry; these just avoid a 1:1 crash pre-sync.
  */
-export const DEFAULT_RATES: Record<string, number> = { KZT: 540 };
+export const DEFAULT_RATES: Record<string, number> = { KZT: 540, USD: 1.08 };
+
+/** Non-base currencies the app supports. */
+export const FOREIGN_CURRENCIES = Object.keys(DEFAULT_RATES);
 
 /** Currencies the UI offers for accounts (base first). */
-export const SUPPORTED_CURRENCIES = [BASE_CURRENCY, ...Object.keys(DEFAULT_RATES)];
+export const SUPPORTED_CURRENCIES = [BASE_CURRENCY, ...FOREIGN_CURRENCIES];
+
+/** Max exchange-fee percentage a user can set — a guard against fat-finger 50s. */
+export const MAX_SPREAD_PCT = 10;
 
 export type RatePoint = { date: Date; rate: number };
+
+/**
+ * Applies an exchange fee to a mid-market rate (foreign per 1 EUR). A 2% fee
+ * means 1 EUR buys ~2% fewer foreign units — your effective buy rate — so
+ * foreign amounts convert to slightly more base currency (the fee is included
+ * in what your money cost you). Clamped to a sane range.
+ */
+export function applySpread(midRate: number, spreadPct: number): number {
+  const pct = Math.min(Math.max(spreadPct, 0), MAX_SPREAD_PCT);
+  return midRate * (1 - pct / 100);
+}
 
 /**
  * The rate in effect for `currency` on `date`: the most recent user-set rate

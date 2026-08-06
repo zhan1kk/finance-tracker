@@ -17,7 +17,7 @@ export const ACCOUNT_TYPES = [
 export type AccountType = (typeof ACCOUNT_TYPES)[number];
 
 /** Currencies the app supports; the first is the base/reporting currency. */
-export const CURRENCIES = ['EUR', 'KZT'] as const;
+export const CURRENCIES = ['EUR', 'KZT', 'USD'] as const;
 export type Currency = (typeof CURRENCIES)[number];
 
 export type Account = {
@@ -49,6 +49,12 @@ export type FxRates = {
   defaultRate: number | null;
   effectiveRate: number;
   rates: ExchangeRate[];
+};
+
+/** Tracked foreign currencies and the exchange-fee spread the user set for each. */
+export type FxPreferences = {
+  baseCurrency: string;
+  currencies: { currency: string; spreadPct: number }[];
 };
 
 export const TRANSACTION_CATEGORIES = [

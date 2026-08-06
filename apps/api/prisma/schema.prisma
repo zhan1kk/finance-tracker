@@ -63,6 +63,7 @@ model User {
   budgets             Budget[]
   exchangeRates       ExchangeRate[]
   reminders           Reminder[]
+  currencyPreferences CurrencyPreference[]
 }
 
 /// A user-set conversion rate from a foreign `currency` to the user's base
@@ -85,6 +86,23 @@ model ExchangeRate {
 
   @@unique([userId, currency, date])
   @@index([userId, currency, date])
+}
+
+/// A foreign currency the user tracks, with the exchange fee ("spread") their
+/// bank charges on it. The spread is applied to fetched mid-market rates so a
+/// synced rate reflects what the user actually gets, not the market mid.
+model CurrencyPreference {
+  id        String   @id @default(uuid())
+  currency  String
+  /// Percentage fee on conversions (0–10). 0 = use mid-market as-is.
+  spreadPct Float    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, currency])
 }
 
 model RefreshToken {

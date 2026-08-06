@@ -1,4 +1,11 @@
-import { BASE_CURRENCY, pickRate, type RatePoint, toBase } from './fx';
+import {
+  applySpread,
+  BASE_CURRENCY,
+  MAX_SPREAD_PCT,
+  pickRate,
+  type RatePoint,
+  toBase,
+} from './fx';
 
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 
@@ -56,5 +63,22 @@ describe('toBase', () => {
   it('tracks the rate: a weaker tenge yields fewer euros', () => {
     expect(toBase(540_000, 'KZT', 540)).toBe(1000);
     expect(toBase(540_000, 'KZT', 600)).toBe(900);
+  });
+});
+
+describe('applySpread', () => {
+  it('lowers the buy rate by the fee (1 EUR buys fewer foreign units)', () => {
+    expect(applySpread(540, 2)).toBeCloseTo(529.2, 5);
+    // Fewer KZT per EUR -> each KZT is worth slightly more when converting.
+    expect(toBase(540_000, 'KZT', applySpread(540, 2))).toBeGreaterThan(1000);
+  });
+
+  it('is a no-op at 0%', () => {
+    expect(applySpread(540, 0)).toBe(540);
+  });
+
+  it('clamps out-of-range fees to the allowed band', () => {
+    expect(applySpread(540, -5)).toBe(540); // clamped to 0
+    expect(applySpread(540, 50)).toBeCloseTo(540 * (1 - MAX_SPREAD_PCT / 100), 5);
   });
 });
