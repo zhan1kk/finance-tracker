@@ -2270,5 +2270,50 @@ describe('API (e2e)', () => {
         .set('Authorization', `Bearer ${token}`)
         .expect(400);
     });
+
+    it('detects a recurring monthly bill and does not duplicate it', async () => {
+      const acc = (await createAccount(100_000)).id;
+      const sub = (await createSubcategory('Mobile Plan', 'Subscriptions')).id;
+      const addExpense = (date: string) =>
+        request(http)
+          .post('/transactions')
+          .set('Authorization', `Bearer ${token}`)
+          .send({
+            accountId: acc,
+            date,
+            type: 'EXPENSE',
+            amount: 1_999,
+            subcategoryId: sub,
+          })
+          .expect(201);
+      // Two charges ~a month apart, both recent (within the 12-month window).
+      const prev = new Date();
+      prev.setUTCDate(prev.getUTCDate() - 30);
+      await addExpense(prev.toISOString().slice(0, 10));
+      await addExpense(new Date().toISOString().slice(0, 10));
+
+      const first = await request(http)
+        .post('/reminders/detect-recurring')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      expect(first.body).toEqual({ created: 1 });
+
+      const list = await request(http)
+        .get('/reminders')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(
+        (list.body as { cadence: string; subcategory: { id: string } | null }[]).some(
+          (r) => r.cadence === 'monthly' && r.subcategory?.id === sub,
+        ),
+      ).toBe(true);
+
+      // Re-running doesn't double up — the subcategory already has a reminder.
+      const second = await request(http)
+        .post('/reminders/detect-recurring')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      expect(second.body).toEqual({ created: 0 });
+    });
   });
 });

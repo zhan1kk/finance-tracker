@@ -9,6 +9,7 @@ import { TransactionService } from '../transactions/transaction.service';
 import type { CreateReminderDTO } from './dtos/create-reminder.dto';
 import { ReminderExtractionService } from './reminder-extraction.service';
 import { looksLikeReminder, type ReminderCandidate } from './reminder-prompt';
+import { detectRecurringBills } from './recurring-detect';
 
 const REMINDER_INCLUDE = {
   subcategory: { select: { id: true, name: true, category: true } },
@@ -226,6 +227,95 @@ export class ReminderService {
       }
     }
     return { scanned: candidates.length, created };
+  }
+
+  /**
+   * Deterministically detects recurring Bills/Subscriptions (same subcategory
+   * repeating monthly or quarterly, ±5 days) and creates an upcoming-payment
+   * reminder for each next occurrence — plus obvious cases (Rent, Deutschland
+   * Ticket) from a single charge. Skips a subcategory that already has an open
+   * reminder or a recurring rule, so it never double-nags. No LLM involved.
+   */
+  async detectRecurring(userId: string): Promise<{ created: number }> {
+    const since = new Date();
+    since.setUTCMonth(since.getUTCMonth() - 12);
+    const txns = await this.prisma.transaction.findMany({
+      where: {
+        account: { is: { userId } },
+        type: 'EXPENSE',
+        excludeFromStats: false,
+        date: { gte: since },
+        subcategory: { is: { category: { in: ['Bills', 'Subscriptions'] } } },
+      },
+      select: {
+        id: true,
+        date: true,
+        amount: true,
+        account: { select: { currency: true } },
+        subcategory: { select: { id: true, name: true } },
+      },
+      orderBy: { date: 'asc' },
+    });
+
+    const bills = txns
+      .filter((t) => t.subcategory !== null)
+      .map((t) => ({
+        id: t.id,
+        date: t.date,
+        amount: t.amount,
+        currency: t.account.currency,
+        subcategoryId: t.subcategory!.id,
+        name: t.subcategory!.name,
+      }));
+    const candidates = detectRecurringBills(bills, new Date());
+    if (candidates.length === 0) return { created: 0 };
+
+    // Don't remind about a subcategory already covered by an open reminder or a
+    // recurring rule that posts it automatically.
+    const [reminded, ruled] = await Promise.all([
+      this.prisma.reminder.findMany({
+        where: { userId, done: false, subcategoryId: { not: null } },
+        select: { subcategoryId: true },
+      }),
+      this.prisma.recurringRule.findMany({
+        where: { userId },
+        select: { subcategoryId: true },
+      }),
+    ]);
+    const covered = new Set<string>([
+      ...reminded.map((r) => r.subcategoryId as string),
+      ...ruled.map((r) => r.subcategoryId),
+    ]);
+
+    let created = 0;
+    for (const c of candidates) {
+      if (covered.has(c.subcategoryId)) continue;
+      try {
+        await this.prisma.reminder.create({
+          data: {
+            userId,
+            label: c.label,
+            dueDate: c.nextDate,
+            amountCents: c.amountCents,
+            currency: c.currency,
+            cadence: c.cadence,
+            subcategoryId: c.subcategoryId,
+            sourceTransactionId: c.sourceTransactionId,
+          },
+        });
+        created++;
+      } catch (err) {
+        // Unique(sourceTransactionId): that occurrence already has a reminder.
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2002'
+        ) {
+          continue;
+        }
+        throw err;
+      }
+    }
+    return { created };
   }
 
   async update(userId: string, id: string, input: { done?: boolean }) {

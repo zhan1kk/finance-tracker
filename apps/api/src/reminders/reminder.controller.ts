@@ -45,6 +45,12 @@ export class ReminderController {
     return { jobId };
   }
 
+  /** Detect recurring bills/subscriptions and add reminders for them (no LLM). */
+  @Post('detect-recurring')
+  detectRecurring(@CurrentUser() user: AuthUser) {
+    return this.reminderService.detectRecurring(user.userId);
+  }
+
   /** Record the next installment as paid (advances the plan, auto-completes). */
   @Post(':id/paid')
   markPaid(@CurrentUser() user: AuthUser, @Param('id') id: string) {

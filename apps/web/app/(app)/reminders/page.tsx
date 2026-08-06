@@ -180,6 +180,22 @@ export default function RemindersPage() {
     onError: setError,
   });
 
+  const detect = useMutation({
+    mutationFn: () =>
+      api<{ created: number }>("/reminders/detect-recurring", {
+        method: "POST",
+      }),
+    onSuccess: (res) => {
+      invalidate();
+      setNotice(
+        res.created > 0
+          ? `Added ${res.created} recurring bill${res.created === 1 ? "" : "s"}.`
+          : "No new recurring bills found in your Bills/Subscriptions.",
+      );
+    },
+    onError: setError,
+  });
+
   const setDone = useMutation({
     mutationFn: (vars: { id: string; done: boolean }) =>
       api(`/reminders/${vars.id}`, {
@@ -352,9 +368,23 @@ export default function RemindersPage() {
       <Card>
         <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-medium">Reminders</h2>
-          <Button onClick={() => scan.mutate()} disabled={scan.isPending}>
-            {scan.isPending ? "Scanning…" : "Scan for reminders"}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setError(null);
+                setNotice(null);
+                detect.mutate();
+              }}
+              disabled={detect.isPending}
+              title="Find bills & subscriptions that repeat monthly/quarterly and remind you"
+            >
+              {detect.isPending ? "Detecting…" : "Detect recurring bills"}
+            </Button>
+            <Button onClick={() => scan.mutate()} disabled={scan.isPending}>
+              {scan.isPending ? "Scanning…" : "Scan for reminders"}
+            </Button>
+          </div>
         </div>
         <p className="mb-3 text-sm text-zinc-500">
           A local model reads your transaction descriptions for two things:
