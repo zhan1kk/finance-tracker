@@ -1333,18 +1333,11 @@ function QuickAdd({
   );
 
   // Candidate parents for a reimbursement (only relevant for INCOME).
-  const recentExpenses = useQuery({
-    queryKey: ["transactions", { recentExpenses: true }],
-    queryFn: () => api<TransactionList>("/transactions?type=EXPENSE&pageSize=15"),
-    enabled: type === "INCOME",
-  });
-
-  const expenseLabel = (t: Transaction) => {
-    const currency =
-      accounts.find((a) => a.id === t.accountId)?.currency ?? "EUR";
-    const what = t.description || t.subcategory?.name || "expense";
-    return `${t.date.slice(0, 10)} · ${what} · ${formatCents(t.amount, currency)}`;
-  };
+  // The expense this income reimburses — chosen via the same description search
+  // as the import review and row editor, so any expense is reachable by name.
+  const [parentId, setParentId] = useState("");
+  const currencyOf = (id: string) =>
+    accounts.find((a) => a.id === id)?.currency ?? "EUR";
 
   const create = useMutation({
     mutationFn: (body: Record<string, unknown>) =>
@@ -1407,7 +1400,6 @@ function QuickAdd({
     } else {
       body.subcategoryId = String(form.get("subcategoryId"));
     }
-    const parentId = String(form.get("parentTransactionId") || "");
     if (type === "INCOME" && !internal && parentId) {
       body.parentTransactionId = parentId;
     }
@@ -1415,6 +1407,7 @@ function QuickAdd({
     window.localStorage.setItem(LAST_DATE_KEY, date);
     e.currentTarget.reset();
     setInternal(false);
+    setParentId("");
   };
 
   return (
@@ -1497,14 +1490,13 @@ function QuickAdd({
         )}
         {type === "INCOME" && !internal && (
           <Field label="Reimburses">
-            <Select name="parentTransactionId" defaultValue="">
-              <option value="">—</option>
-              {recentExpenses.data?.items.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {expenseLabel(t)}
-                </option>
-              ))}
-            </Select>
+            <div className="w-56">
+              <ReimbursePicker
+                value={parentId}
+                currencyOf={currencyOf}
+                onChange={setParentId}
+              />
+            </div>
           </Field>
         )}
         <Field label="Date">
