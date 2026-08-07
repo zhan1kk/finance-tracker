@@ -2320,4 +2320,111 @@ describe('API (e2e)', () => {
       expect(second.body).toEqual({ created: 0 });
     });
   });
+
+  describe('split ledger', () => {
+    const addFriend = async (name: string): Promise<string> => {
+      const res = await request(http)
+        .post('/split/friends')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name })
+        .expect(201);
+      return (res.body as { id: string }).id;
+    };
+    const balances = async () => {
+      const res = await request(http)
+        .get('/split/balances')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      return res.body as {
+        balances: {
+          fromId: string | null;
+          fromName: string;
+          toId: string | null;
+          toName: string;
+          amountCents: number;
+        }[];
+      };
+    };
+
+    it('nets shared expenses and settlements into who-owes-whom', async () => {
+      const alex = await addFriend('Alex');
+      const sam = await addFriend('Sam');
+
+      // You pay 30.00 for dinner, split equally among You, Alex, Sam → 10 each.
+      await request(http)
+        .post('/split/expenses')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          description: 'Dinner',
+          amountCents: 3000,
+          date: '2026-08-01',
+          splitMethod: 'equal',
+          participants: [{}, { friendId: alex }, { friendId: sam }],
+        })
+        .expect(201);
+
+      // Alex pays 12.00 for a taxi, split You + Alex → 6 each. You owe Alex 6.
+      await request(http)
+        .post('/split/expenses')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          description: 'Taxi',
+          amountCents: 1200,
+          date: '2026-08-01',
+          payerFriendId: alex,
+          splitMethod: 'equal',
+          participants: [{}, { friendId: alex }],
+        })
+        .expect(201);
+
+      // Alex owes You 10 − 6 = 4; Sam owes You 10. (You-involving first, big first.)
+      expect((await balances()).balances).toEqual([
+        { fromId: sam, fromName: 'Sam', toId: null, toName: 'You', amountCents: 1000 },
+        { fromId: alex, fromName: 'Alex', toId: null, toName: 'You', amountCents: 400 },
+      ]);
+
+      // Alex settles the 4.00 → only Sam's 10 remains.
+      await request(http)
+        .post('/split/settlements')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ fromFriendId: alex, amountCents: 400 })
+        .expect(201);
+
+      expect((await balances()).balances).toEqual([
+        { fromId: sam, fromName: 'Sam', toId: null, toName: 'You', amountCents: 1000 },
+      ]);
+    });
+
+    it('rejects exact shares that do not add up, and blocks deleting a referenced friend', async () => {
+      const jo = await addFriend('Jo');
+      await request(http)
+        .post('/split/expenses')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          description: 'Bad',
+          amountCents: 1000,
+          date: '2026-08-01',
+          splitMethod: 'exact',
+          participants: [{ amountCents: 400 }, { friendId: jo, amountCents: 400 }],
+        })
+        .expect(400);
+
+      await request(http)
+        .post('/split/expenses')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          description: 'Books',
+          amountCents: 1000,
+          date: '2026-08-01',
+          splitMethod: 'exact',
+          participants: [{ amountCents: 400 }, { friendId: jo, amountCents: 600 }],
+        })
+        .expect(201);
+
+      await request(http)
+        .delete(`/split/friends/${jo}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(409);
+    });
+  });
 });

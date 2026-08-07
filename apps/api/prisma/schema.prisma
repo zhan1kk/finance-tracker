@@ -64,6 +64,76 @@ model User {
   exchangeRates       ExchangeRate[]
   reminders           Reminder[]
   currencyPreferences CurrencyPreference[]
+  friends             Friend[]
+  sharedExpenses      SharedExpense[]
+  settlements         Settlement[]
+}
+
+/// A person the user splits costs with — a name only, not a real app user.
+/// "You" is represented as a null friend id throughout the split ledger.
+model Friend {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+/// A cost someone paid that is shared among several people. `payerFriendId` and
+/// each share's `friendId` are null for "You". Friend ids are validated in the
+/// service (no FK) and a friend can't be deleted while referenced here.
+model SharedExpense {
+  id            String   @id @default(uuid())
+  description   String
+  amountCents   Int
+  currency      String
+  date          DateTime
+  /// Who paid; null = You.
+  payerFriendId String?
+  /// "equal" or "exact" — how the shares were derived (informational).
+  splitMethod   String
+  createdAt     DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  shares SharedExpenseShare[]
+
+  @@index([userId])
+}
+
+/// One participant's slice of a SharedExpense. `friendId` null = You.
+model SharedExpenseShare {
+  id          String @id @default(uuid())
+  friendId    String?
+  amountCents Int
+
+  expenseId String
+  expense   SharedExpense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@index([expenseId])
+}
+
+/// A repayment between two people, reducing a debt. `fromFriendId` /
+/// `toFriendId` are null for You.
+model Settlement {
+  id           String   @id @default(uuid())
+  fromFriendId String?
+  toFriendId   String?
+  amountCents  Int
+  currency     String
+  date         DateTime
+  note         String?
+  createdAt    DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 /// A user-set conversion rate from a foreign `currency` to the user's base

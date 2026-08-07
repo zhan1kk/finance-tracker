@@ -18,6 +18,7 @@ import { BudgetModule } from './budgets/budget.module';
 import { ReportsModule } from './reports/reports.module';
 import { ReminderModule } from './reminders/reminder.module';
 import { JobsModule } from './jobs/jobs.module';
+import { SplitModule } from './split/split.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { JobsModule } from './jobs/jobs.module';
     ReportsModule,
     ReminderModule,
     JobsModule,
+    SplitModule,
   ],
   controllers: [AppController],
   providers: [

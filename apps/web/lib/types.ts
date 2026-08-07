@@ -20,6 +20,51 @@ export type AccountType = (typeof ACCOUNT_TYPES)[number];
 export const CURRENCIES = ['EUR', 'KZT', 'USD'] as const;
 export type Currency = (typeof CURRENCIES)[number];
 
+// ---- split ledger (shared expenses with friends) ----
+
+export type Friend = { id: string; name: string; createdAt: string };
+
+export type SharedExpenseShare = {
+  id: string;
+  /** null = You. */
+  friendId: string | null;
+  amountCents: number;
+};
+
+export type SharedExpense = {
+  id: string;
+  description: string;
+  amountCents: number;
+  currency: string;
+  date: string;
+  /** null = You paid. */
+  payerFriendId: string | null;
+  splitMethod: string;
+  shares: SharedExpenseShare[];
+};
+
+export type Settlement = {
+  id: string;
+  fromFriendId: string | null;
+  toFriendId: string | null;
+  amountCents: number;
+  currency: string;
+  date: string;
+  note: string | null;
+};
+
+export type SplitBalances = {
+  currency: string;
+  /** Each: `fromName` owes `toName` `amountCents`. */
+  balances: {
+    fromId: string | null;
+    fromName: string;
+    toId: string | null;
+    toName: string;
+    amountCents: number;
+  }[];
+};
+
 export type Account = {
   id: string;
   name: string;
