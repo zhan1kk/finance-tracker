@@ -250,6 +250,8 @@ export type CategorizationRule = {
 export type Reminder = {
   id: string;
   label: string;
+  /** payment = bill/subscription; ask = a friend owes you; pay = you owe a friend. */
+  kind: "payment" | "ask" | "pay";
   /** ISO date of the next payment, or null if unknown. */
   dueDate: string | null;
   amountCents: number | null;

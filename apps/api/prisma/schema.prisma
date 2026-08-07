@@ -511,6 +511,10 @@ model Reminder {
   installmentsPaid  Int?
   /// Extra detail ("2 of 3 payments left").
   note        String?
+  /// What the reminder is: "payment" (a bill/subscription/installment coming
+  /// due), "ask" (a friend owes the user), or "pay" (the user owes a friend).
+  /// Drives the payments-vs-IOUs split and the "Received" settle action.
+  kind        String    @default("payment")
   /// Dismissed / handled.
   done        Boolean   @default(false)
   createdAt   DateTime  @default(now())

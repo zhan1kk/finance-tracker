@@ -5,9 +5,13 @@
  * a future payment.
  */
 
+export type ReminderKind = 'payment' | 'ask' | 'pay';
+
 export type ExtractedReminder = {
   index: number;
   label: string;
+  /** payment = a bill/subscription; ask = a friend owes you; pay = you owe a friend. */
+  kind: ReminderKind;
   dueDate: string | null;
   amount: number | null;
   cadence: string | null;
@@ -48,6 +52,10 @@ export const REMINDER_EXTRACTION_SCHEMA = {
         properties: {
           index: { type: 'integer' as const },
           label: { type: 'string' as const },
+          kind: {
+            type: 'string' as const,
+            enum: ['payment', 'ask', 'pay'] as const,
+          },
           dueDate: { type: 'string' as const },
           amount: { type: 'number' as const },
           cadence: { type: 'string' as const },
@@ -76,6 +84,7 @@ Fields per reminder:
   • Upcoming payment: name the actual thing being paid (its merchant or bill name, plus "installment"/"subscription" if that fits).
   • A friend owes THEM (collect it): start with "Ask" then the person's name, e.g. "Ask <name> for their share".
   • THEY owe a friend (pay it): start with "Pay" then the person's name, e.g. "Pay <name> back".
+- kind: "payment" for an upcoming bill/subscription/installment, "ask" when a friend owes them, "pay" when they owe a friend. Must match the label.
 - amount: the amount as a number.
   • If the description states the owed amount ("50 is Alex's share"), use it.
   • If a cost is split with exactly one other person and no amount is stated, use half the transaction amount.
@@ -106,6 +115,7 @@ export function coerceExtractedReminders(raw: unknown): ExtractedReminder[] {
     const index = typeof r.index === 'number' ? r.index : Number(r.index);
     const label = typeof r.label === 'string' ? r.label.trim() : '';
     if (!Number.isInteger(index) || label === '') continue;
+    const kind = coerceKind(r.kind, label);
     const amount =
       typeof r.amount === 'number'
         ? r.amount
@@ -133,6 +143,7 @@ export function coerceExtractedReminders(raw: unknown): ExtractedReminder[] {
     out.push({
       index,
       label,
+      kind,
       dueDate,
       amount: amount != null && Number.isFinite(amount) ? amount : null,
       cadence,
@@ -142,6 +153,20 @@ export function coerceExtractedReminders(raw: unknown): ExtractedReminder[] {
     });
   }
   return out;
+}
+
+/**
+ * The reminder's kind: the model's value if valid, otherwise inferred from the
+ * label (money-owed reminders are prefixed "Ask …" / "Pay …"), defaulting to a
+ * plain payment. Keeps the payments-vs-IOUs split reliable even if the model
+ * omits or mislabels the field.
+ */
+function coerceKind(value: unknown, label: string): ReminderKind {
+  const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (v === 'ask' || v === 'pay' || v === 'payment') return v;
+  if (/^ask\b/i.test(label)) return 'ask';
+  if (/^pay\s/i.test(label)) return 'pay';
+  return 'payment';
 }
 
 function toInt(v: unknown): number | null {

@@ -101,16 +101,6 @@ function formatDue(iso: string | null): string {
   });
 }
 
-/**
- * A reminder's kind, derived from its label: the scanner labels money-owed
- * reminders "Ask …" (collect) or "Pay … back" (settle); everything else is an
- * upcoming payment. Used to split the two into separate sections.
- */
-function reminderKind(label: string): "ask" | "pay" | "payment" {
-  if (/^ask\b/i.test(label)) return "ask";
-  if (/^pay\s/i.test(label)) return "pay";
-  return "payment";
-}
 
 export default function RemindersPage() {
   const queryClient = useQueryClient();
@@ -252,8 +242,8 @@ export default function RemindersPage() {
 
   const open = reminders.data?.filter((r) => !r.done) ?? [];
   const done = reminders.data?.filter((r) => r.done) ?? [];
-  const payments = open.filter((r) => reminderKind(r.label) === "payment");
-  const ious = open.filter((r) => reminderKind(r.label) !== "payment");
+  const payments = open.filter((r) => r.kind === "payment");
+  const ious = open.filter((r) => r.kind !== "payment");
 
   const row = (r: Reminder) => (
     <li
@@ -290,7 +280,7 @@ export default function RemindersPage() {
             linking the income that paid it back. */}
         {!r.done &&
           r.sourceTransaction?.type === "EXPENSE" &&
-          reminderKind(r.label) === "ask" && (
+          r.kind === "ask" && (
             <Button
               variant="ghost"
               onClick={() => {

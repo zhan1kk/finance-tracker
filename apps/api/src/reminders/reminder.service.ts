@@ -22,7 +22,9 @@ const REMINDER_INCLUDE = {
 // without loading a whole history, and the model only sees the hint-matching
 // subset of these.
 const SCAN_WINDOW = 500;
-const MAX_CANDIDATES = 50;
+// Smaller batches keep the single Ollama generation short — important on a
+// RAM/disk-constrained machine where a long prompt makes the whole system lag.
+const MAX_CANDIDATES = 25;
 
 @Injectable()
 export class ReminderService {
@@ -204,6 +206,7 @@ export class ReminderService {
           data: {
             userId,
             label: r.label,
+            kind: r.kind,
             dueDate,
             amountCents,
             currency: source.account.currency,
@@ -298,6 +301,7 @@ export class ReminderService {
           data: {
             userId,
             label: c.label,
+            kind: 'payment',
             dueDate: c.nextDate,
             amountCents: c.amountCents,
             currency: c.currency,

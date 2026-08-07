@@ -55,6 +55,7 @@ describe('coerceExtractedReminders', () => {
       {
         index: 1,
         label: 'ImmoScout',
+        kind: 'payment',
         dueDate: '2026-07-09',
         amount: 34.99,
         cadence: 'monthly',
@@ -65,6 +66,7 @@ describe('coerceExtractedReminders', () => {
       {
         index: 2,
         label: 'TV Tax',
+        kind: 'payment',
         dueDate: null,
         amount: 55,
         cadence: 'quarterly',
@@ -73,6 +75,16 @@ describe('coerceExtractedReminders', () => {
         note: null,
       },
     ]);
+  });
+
+  it('sets kind from the model, or infers it from the label prefix', () => {
+    const rows = coerceExtractedReminders([
+      { index: 1, label: 'Ask Alex for their share', kind: 'ask' },
+      { index: 2, label: 'Pay Sam back' }, // no kind → inferred from "Pay "
+      { index: 3, label: 'Ask Jordan' }, // no kind → inferred from "Ask"
+      { index: 4, label: 'Netflix', kind: 'nonsense' }, // bad kind → default
+    ]);
+    expect(rows.map((r) => r.kind)).toEqual(['ask', 'pay', 'ask', 'payment']);
   });
 
   it('ignores an installment total below 2 and clamps paid to it', () => {
@@ -95,6 +107,7 @@ describe('coerceExtractedReminders', () => {
       {
         index: 3,
         label: 'bad date',
+        kind: 'payment',
         dueDate: null,
         amount: null,
         cadence: null,
