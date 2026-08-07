@@ -15,16 +15,21 @@ import {
   BulkUpdateTransactionsDTO,
 } from './dtos/bulk-transactions.dto';
 import { CreateTransactionDTO } from './dtos/create-transaction.dto';
+import { InsightSummaryDTO } from './dtos/insight-summary.dto';
 import { LinkReimbursementDTO } from './dtos/link-reimbursement.dto';
 import { ListTransactionsQueryDTO } from './dtos/list-transactions.query.dto';
 import { SplitTransactionDTO } from './dtos/split-transaction.dto';
 import { StatsQueryDTO } from './dtos/stats.query.dto';
 import { UpdateTransactionDTO } from './dtos/update-transaction.dto';
+import { InsightSummaryService } from './insight-summary.service';
 import { TransactionService } from './transaction.service';
 
 @Controller('transactions')
 export class TransactionController {
-  constructor(private readonly transactionService: TransactionService) {}
+  constructor(
+    private readonly transactionService: TransactionService,
+    private readonly insightSummary: InsightSummaryService,
+  ) {}
 
   @Get()
   listTransactions(
@@ -38,6 +43,19 @@ export class TransactionController {
   @Get('stats')
   getStats(@CurrentUser() user: AuthUser, @Query() query: StatsQueryDTO) {
     return this.transactionService.getStats(user.userId, query);
+  }
+
+  /** On-demand: phrase the dashboard's exact insight facts into a sentence or two. */
+  @Post('insights/summary')
+  summarizeInsights(
+    @CurrentUser() _user: AuthUser,
+    @Body() body: InsightSummaryDTO,
+  ) {
+    return this.insightSummary.summarize({
+      month: body.month,
+      overall: body.overall ?? null,
+      movers: body.movers,
+    });
   }
 
   @Get(':id')

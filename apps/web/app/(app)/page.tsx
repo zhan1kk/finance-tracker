@@ -1,8 +1,8 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import {
   CategoryDonut,
   MonthlyTrendChart,
@@ -29,6 +29,7 @@ import type {
 } from "@/lib/types";
 
 const TREND_MONTHS = 6;
+const BASELINE_MONTHS = 3;
 
 // Order the breakdown filter chips predictably (income first, then spend types).
 const BREAKDOWN_CATEGORIES = [
@@ -81,13 +82,18 @@ export default function OverviewPage() {
         `/transactions/stats?from=${selected.from}&to=${selected.to}`,
       ),
   });
-  // The month before the one shown, for the "since last month" comparison.
-  const prev = periodRange(shiftPeriod(shown, -1), monthStartDay);
-  const prevStats = useQuery({
-    queryKey: ["stats", prev],
+  // The 3 months before the one shown, as a baseline: summed over the window,
+  // then divided by 3 → the typical monthly spend, which the current month is
+  // compared against. Steadier than a single prior month.
+  const baselineRange = {
+    from: periodRange(shiftPeriod(shown, -BASELINE_MONTHS), monthStartDay).from,
+    to: periodRange(shiftPeriod(shown, -1), monthStartDay).to,
+  };
+  const baselineStats = useQuery({
+    queryKey: ["stats", baselineRange],
     queryFn: () =>
       api<TransactionStats>(
-        `/transactions/stats?from=${prev.from}&to=${prev.to}`,
+        `/transactions/stats?from=${baselineRange.from}&to=${baselineRange.to}`,
       ),
   });
   const trendStats = useQuery({
@@ -122,8 +128,15 @@ export default function OverviewPage() {
     monthStats.data?.monthly.reduce((sum, m) => sum + m.income, 0) ?? 0;
   const expenses =
     monthStats.data?.monthly.reduce((sum, m) => sum + m.expense, 0) ?? 0;
-  const prevExpenses =
-    prevStats.data?.monthly.reduce((sum, m) => sum + m.expense, 0) ?? 0;
+  // Baseline = the 3-month window's totals divided by 3 (typical monthly spend).
+  const baselineExpenses =
+    (baselineStats.data?.monthly.reduce((sum, m) => sum + m.expense, 0) ?? 0) /
+    BASELINE_MONTHS;
+  const baselineByCategory =
+    baselineStats.data?.byCategory.map((r) => ({
+      ...r,
+      amount: r.amount / BASELINE_MONTHS,
+    })) ?? [];
   // All cross-account aggregates are converted to the base currency server-side,
   // so they are always formatted in it (not any single account's currency).
   const currency = user?.baseCurrency ?? "EUR";
@@ -215,13 +228,14 @@ export default function OverviewPage() {
         </div>
       </section>
 
-      {monthStats.data && prevStats.data && (
+      {monthStats.data && baselineStats.data && (
         <SpendingInsights
           current={monthStats.data.byCategory}
-          previous={prevStats.data.byCategory}
+          baseline={baselineByCategory}
           curTotal={expenses}
-          prevTotal={prevExpenses}
+          baselineTotal={baselineExpenses}
           currency={currency}
+          month={formatPeriod(shown, monthStartDay)}
         />
       )}
 
@@ -381,32 +395,33 @@ const INSIGHT_MIN_PCT = 15;
 const INSIGHT_MAX_MOVERS = 8;
 
 /**
- * Plain-language takeaways comparing the shown month to the one before it:
- * overall spend, then the biggest category movers. Only categories present in
- * *both* months count — a one-off like "Gift €0 → €300" is occasional, not a
- * monthly trend, so it's skipped rather than shouted about. Collapsed to the
- * single biggest mover; "Show more" reveals the rest (up to eight). This is
- * exact arithmetic, not an LLM guess — no hallucinated numbers, always instant.
+ * Plain-language takeaways comparing the shown month to your recent norm: the
+ * baseline is the 3-month average (steadier than a single prior month). Overall
+ * spend, then the biggest category movers — only categories with a real baseline
+ * count, so an occasional one-off is skipped rather than shouted about. The
+ * numbers are exact arithmetic (never an LLM guess); the optional "Summarize"
+ * button just rephrases those exact facts into a sentence with the local model.
  */
 function SpendingInsights({
   current,
-  previous,
+  baseline,
   curTotal,
-  prevTotal,
+  baselineTotal,
   currency,
+  month,
 }: {
   current: TransactionStats["byCategory"];
-  previous: TransactionStats["byCategory"];
+  /** Per-subcategory average monthly spend over the baseline window. */
+  baseline: TransactionStats["byCategory"];
   curTotal: number;
-  prevTotal: number;
+  baselineTotal: number;
   currency: string;
+  month: string;
 }) {
-  const [expanded, setExpanded] = useState(false);
-
-  const prevById = new Map(previous.map((r) => [r.subcategoryId, r.amount]));
+  const baseById = new Map(baseline.map((r) => [r.subcategoryId, r.amount]));
   const movers = current
     .map((r) => {
-      const before = prevById.get(r.subcategoryId) ?? 0;
+      const before = baseById.get(r.subcategoryId) ?? 0;
       const delta = r.amount - before;
       return {
         name: r.name,
@@ -415,8 +430,8 @@ function SpendingInsights({
         pct: before > 0 ? Math.round((delta / before) * 100) : 0,
       };
     })
-    // Present in both months (skip occasional one-offs), and a real move:
-    // both a money floor and a percentage floor.
+    // A real baseline (skip occasional one-offs) and a real move — both a money
+    // floor and a percentage floor.
     .filter(
       (m) =>
         m.before > 0 &&
@@ -426,54 +441,89 @@ function SpendingInsights({
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
     .slice(0, INSIGHT_MAX_MOVERS);
 
-  const overall =
-    prevTotal > 0 && curTotal > 0 && curTotal !== prevTotal ? (
-      <>
-        You&apos;ve spent{" "}
-        <strong>
-          {Math.abs(Math.round(((curTotal - prevTotal) / prevTotal) * 100))}%{" "}
-          {curTotal > prevTotal ? "more" : "less"}
-        </strong>{" "}
-        than last month ({formatCents(prevTotal, currency)} →{" "}
-        {formatCents(curTotal, currency)}).
-      </>
-    ) : null;
+  const overallText =
+    baselineTotal > 0 &&
+    curTotal > 0 &&
+    Math.round(curTotal) !== Math.round(baselineTotal)
+      ? `You've spent ${Math.abs(
+          Math.round(((curTotal - baselineTotal) / baselineTotal) * 100),
+        )}% ${
+          curTotal > baselineTotal ? "more" : "less"
+        } than your 3-month average (${formatCents(
+          Math.round(baselineTotal),
+          currency,
+        )} → ${formatCents(curTotal, currency)}).`
+      : null;
+  const moverTexts = movers.map(
+    (m) =>
+      `${m.name} is ${m.delta > 0 ? "up" : "down"} ${Math.abs(m.pct)}% (${
+        m.delta > 0 ? "+" : "−"
+      }${formatCents(Math.abs(m.delta), currency)}) vs its 3-month average.`,
+  );
+  const facts = [...(overallText ? [overallText] : []), ...moverTexts];
 
-  const moverLines: ReactNode[] = movers.map((m) => (
-    <>
-      <strong>{m.name}</strong> is {m.delta > 0 ? "up" : "down"}{" "}
-      {Math.abs(m.pct)}% ({m.delta > 0 ? "+" : "−"}
-      {formatCents(Math.abs(m.delta), currency)}).
-    </>
-  ));
+  const [expanded, setExpanded] = useState(false);
+  const [summary, setSummary] = useState<string | null>(null);
+  const summarize = useMutation({
+    mutationFn: () =>
+      api<{ summary: string | null }>("/transactions/insights/summary", {
+        method: "POST",
+        body: JSON.stringify({
+          month,
+          overall: overallText ?? undefined,
+          movers: moverTexts,
+        }),
+      }),
+    onSuccess: (res) => setSummary(res.summary),
+  });
 
-  const lines: ReactNode[] = [
-    ...(overall ? [overall] : []),
-    ...(expanded ? moverLines : moverLines.slice(0, 1)),
-  ];
-  if (lines.length === 0) return null;
+  if (facts.length === 0) return null;
 
-  const hiddenCount = moverLines.length - (expanded ? moverLines.length : 1);
+  const initial = overallText ? 2 : 1;
+  const visible = expanded ? facts : facts.slice(0, initial);
 
   return (
     <Card>
-      <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-zinc-500">
-        Since last month
-      </h2>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-500">
+          Trends{" "}
+          <span className="font-normal normal-case">· vs 3-month average</span>
+        </h2>
+        <button
+          onClick={() => summarize.mutate()}
+          disabled={summarize.isPending}
+          className="text-xs text-zinc-500 hover:underline disabled:opacity-50"
+          title="Rephrase these exact numbers into a sentence with your local model"
+        >
+          {summarize.isPending ? "Summarizing…" : "✨ Summarize"}
+        </button>
+      </div>
+      {summary && (
+        <p className="mb-2 rounded-md bg-zinc-50 px-3 py-2 text-sm text-zinc-700 dark:bg-zinc-800/40 dark:text-zinc-200">
+          {summary}
+        </p>
+      )}
+      {summarize.error && (
+        <p className="mb-2 text-xs text-amber-600">
+          {summarize.error instanceof Error
+            ? summarize.error.message
+            : "Couldn't generate a summary."}
+        </p>
+      )}
       <ul className="flex flex-col gap-1.5 text-sm text-zinc-700 dark:text-zinc-200">
-        {lines.map((line, i) => (
+        {visible.map((fact, i) => (
           <li key={i} className="flex gap-2">
             <span className="text-zinc-400">•</span>
-            <span>{line}</span>
+            <span>{fact}</span>
           </li>
         ))}
       </ul>
-      {moverLines.length > 1 && (
+      {facts.length > initial && (
         <button
           onClick={() => setExpanded((v) => !v)}
           className="mt-2 text-xs text-zinc-500 hover:underline"
         >
-          {expanded ? "Show less" : `Show ${hiddenCount} more`}
+          {expanded ? "Show less" : `Show ${facts.length - initial} more`}
         </button>
       )}
     </Card>
