@@ -87,6 +87,37 @@ const SKIP_STATES = new Set([
   'CANCELED',
 ]);
 
+// For statement formats with no status column, a reversal shows up as two rows:
+// the charge and an equal, opposite-signed entry from the same merchant a day
+// or two later. We don't auto-remove them — a genuine refund you *want* to keep
+// looks identical — so we just note both so the reviewer can Skip the pair if
+// it truly cancels out.
+const REVERSAL_WINDOW_DAYS = 3;
+
+/** Notes rows that look like the two halves of a reversal (charge + refund). */
+function flagReversalPairs(staged: StagedRow[]): void {
+  const windowMs = REVERSAL_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const day = (d: Date) => d.toISOString().slice(0, 10);
+  for (let i = 0; i < staged.length; i++) {
+    const a = staged[i];
+    if (a.status === 'DUPLICATE' || a.note) continue;
+    for (let j = i + 1; j < staged.length; j++) {
+      const b = staged[j];
+      if (b.status === 'DUPLICATE' || b.note) continue;
+      if (
+        a.type !== b.type &&
+        a.amount === b.amount &&
+        a.normalizedDescription === b.normalizedDescription &&
+        Math.abs(a.date.getTime() - b.date.getTime()) <= windowMs
+      ) {
+        a.note = `Possible reversal: matches an opposite entry on ${day(b.date)} — Skip both if it's a refund that cancels out.`;
+        b.note = `Possible reversal: matches an opposite entry on ${day(a.date)} — Skip both if it's a refund that cancels out.`;
+        break;
+      }
+    }
+  }
+}
+
 const BATCH_INCLUDE = {
   rows: {
     orderBy: { rowIndex: 'asc' },
@@ -140,6 +171,7 @@ export class ImportService {
       dto.accountId,
     );
     await this.dedupe(dto.accountId, staged);
+    flagReversalPairs(staged);
 
     const threshold =
       dto.threshold ??
