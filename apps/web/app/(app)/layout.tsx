@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui";
+import { WELCOME_SEEN_KEY, WelcomeTour } from "@/components/welcome-tour";
 import { useAuth } from "@/lib/auth";
 
 const NAV = [
@@ -24,12 +25,25 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  // Auto-open the walkthrough on the first visit (no localStorage flag yet). A
+  // lazy initializer keeps it out of an effect; the tour only renders once the
+  // authenticated shell does, so there's no hydration mismatch.
+  const [tourOpen, setTourOpen] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      !localStorage.getItem(WELCOME_SEEN_KEY),
+  );
 
   useEffect(() => {
     if (!loading && !user) {
       router.replace("/login");
     }
   }, [loading, user, router]);
+
+  const closeTour = () => {
+    setTourOpen(false);
+    localStorage.setItem(WELCOME_SEEN_KEY, "1");
+  };
 
   if (loading || !user) {
     return (
@@ -46,6 +60,13 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           <span className="text-lg font-semibold">Finance Tracker</span>
           <div className="ml-auto flex items-center gap-2 text-sm text-zinc-500">
             <span className="hidden truncate sm:inline">{user.email}</span>
+            <Button
+              variant="ghost"
+              onClick={() => setTourOpen(true)}
+              title="Replay the welcome guide"
+            >
+              Guide
+            </Button>
             <ThemeToggle />
             <Button
               variant="ghost"
@@ -73,6 +94,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         </nav>
       </header>
       {children}
+      {tourOpen && <WelcomeTour onClose={closeTour} />}
     </div>
   );
 }
