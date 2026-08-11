@@ -5,6 +5,8 @@
  * created for the next occurrence. Purely functional for easy testing.
  */
 
+import { extractInstallment } from './reminder-prompt';
+
 const DAY = 86_400_000;
 
 export type BillTxn = {
@@ -16,6 +18,8 @@ export type BillTxn = {
   /** Native minor units (cents). */
   amount: number;
   currency: string;
+  /** The row's description — read for an "N/M" installment marker. */
+  description: string | null;
 };
 
 export type RecurringCandidate = {
@@ -27,6 +31,9 @@ export type RecurringCandidate = {
   nextDate: Date;
   /** The latest occurrence, anchoring the reminder. */
   sourceTransactionId: string;
+  /** Set when the anchor's description marks a limited plan ("N/M"). */
+  installmentsTotal: number | null;
+  installmentsPaid: number | null;
 };
 
 /** One calendar month's worth of a subcategory's charges. */
@@ -54,6 +61,9 @@ export function detectRecurringBills(
     const months = monthBuckets(sorted);
     const cadence = inferCadence(months);
     if (!cadence) continue;
+    // If the anchor's description marks a limited plan ("3/12"), surface it as an
+    // installment reminder (progress + auto-complete) rather than open-ended.
+    const inst = extractInstallment(latest.description);
     out.push({
       subcategoryId,
       label: latest.name,
@@ -66,6 +76,8 @@ export function detectRecurringBills(
       cadence,
       nextDate: nextAfter(latest.date, cadence, now),
       sourceTransactionId: latest.id,
+      installmentsTotal: inst?.total ?? null,
+      installmentsPaid: inst?.paid ?? null,
     });
   }
   return out;

@@ -8,6 +8,7 @@ const txn = (over: Partial<BillTxn>): BillTxn => ({
   date: day('2026-01-01'),
   amount: 999,
   currency: 'EUR',
+  description: null,
   ...over,
 });
 
@@ -96,6 +97,38 @@ describe('detectRecurringBills', () => {
     );
     expect(res).toHaveLength(1);
     expect(res[0].amountCents).toBe(999 + 1_099); // April's full total, not May's 999
+  });
+
+  it('marks a recurring bill as a limited plan when the description says "N/M"', () => {
+    const res = detectRecurringBills(
+      [
+        txn({ id: 'a', name: 'Course', date: day('2026-03-10'), description: 'Business course 2/6' }),
+        // The anchor (latest) carries the current progress.
+        txn({ id: 'b', name: 'Course', date: day('2026-04-10'), description: 'Business course 3/6' }),
+      ],
+      now,
+    );
+    expect(res).toHaveLength(1);
+    expect(res[0]).toMatchObject({
+      cadence: 'monthly',
+      installmentsTotal: 6,
+      installmentsPaid: 3,
+      sourceTransactionId: 'b',
+    });
+  });
+
+  it('leaves an open-ended recurring bill without installments', () => {
+    const res = detectRecurringBills(
+      [
+        txn({ id: 'a', date: day('2026-03-10') }),
+        txn({ id: 'b', date: day('2026-04-10') }),
+      ],
+      now,
+    );
+    expect(res[0]).toMatchObject({
+      installmentsTotal: null,
+      installmentsPaid: null,
+    });
   });
 
   it('ignores a single charge even for a bill that looks obvious', () => {

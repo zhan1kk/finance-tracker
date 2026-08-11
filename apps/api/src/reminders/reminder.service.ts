@@ -326,6 +326,7 @@ export class ReminderService {
         id: true,
         date: true,
         amount: true,
+        description: true,
         account: { select: { currency: true } },
         subcategory: { select: { id: true, name: true } },
       },
@@ -341,6 +342,7 @@ export class ReminderService {
         currency: t.account.currency,
         subcategoryId: t.subcategory!.id,
         name: t.subcategory!.name,
+        description: t.description,
       }));
     const candidates = detectRecurringBills(bills, new Date());
     if (candidates.length === 0) return { created: 0 };
@@ -375,6 +377,9 @@ export class ReminderService {
         cadence: c.cadence,
         subcategoryId: c.subcategoryId,
         sourceTransactionId: c.sourceTransactionId,
+        installmentsTotal: c.installmentsTotal,
+        installmentsPaid:
+          c.installmentsTotal != null ? c.installmentsPaid : null,
       });
       if (madeOne) created++;
     }
