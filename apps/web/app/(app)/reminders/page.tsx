@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -8,6 +9,8 @@ import { useAuth } from "@/lib/auth";
 import { formatCents, parseAmountToCents } from "@/lib/format";
 import { runJob } from "@/lib/poll-job";
 import type {
+  RecurringCadence,
+  RecurringRule,
   Reminder,
   Subcategory,
   Transaction,
@@ -15,6 +18,18 @@ import type {
 } from "@/lib/types";
 
 const CADENCES = ["weekly", "monthly", "quarterly", "yearly", "one-off"];
+
+/** Human label for a recurring rule's cadence + interval (e.g. "every 2 weeks"). */
+function cadenceLabel(cadence: RecurringCadence, interval: number): string {
+  const base = { DAILY: "daily", WEEKLY: "weekly", MONTHLY: "monthly", YEARLY: "yearly" }[
+    cadence
+  ];
+  if (interval === 1) return base;
+  const unit = { DAILY: "days", WEEKLY: "weeks", MONTHLY: "months", YEARLY: "years" }[
+    cadence
+  ];
+  return `every ${interval} ${unit}`;
+}
 
 /**
  * Searches the user's incomes so they can pick the one that paid back an
@@ -101,6 +116,16 @@ function formatDue(iso: string | null): string {
   });
 }
 
+/** Whole months a due date is in the past (0 if under a month), so we can hint
+ * how far behind an unrecorded payment is. */
+function monthsOverdue(due: Date, today: Date): number {
+  let m =
+    (today.getFullYear() - due.getFullYear()) * 12 +
+    (today.getMonth() - due.getMonth());
+  if (today.getDate() < due.getDate()) m -= 1;
+  return Math.max(0, m);
+}
+
 
 export default function RemindersPage() {
   const queryClient = useQueryClient();
@@ -118,6 +143,13 @@ export default function RemindersPage() {
   const subcategories = useQuery({
     queryKey: ["subcategories"],
     queryFn: () => api<Subcategory[]>("/subcategories"),
+  });
+  // Active recurring rules surface as read-only "upcoming (auto)" rows — they
+  // post their own transaction on the date, so they're shown for visibility, not
+  // as something to act on.
+  const recurringRules = useQuery({
+    queryKey: ["recurring"],
+    queryFn: () => api<RecurringRule[]>("/recurring"),
   });
 
   const invalidate = () =>
@@ -245,6 +277,11 @@ export default function RemindersPage() {
   const payments = open.filter((r) => r.kind === "payment");
   const ious = open.filter((r) => r.kind !== "payment");
 
+  // Active expense rules, soonest first — shown read-only alongside reminders.
+  const autoRules = (recurringRules.data ?? [])
+    .filter((r) => r.active && r.type === "EXPENSE")
+    .sort((a, b) => a.nextRunAt.localeCompare(b.nextRunAt));
+
   // Local midnight, for flagging reminders whose due date has already passed.
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
@@ -266,6 +303,9 @@ export default function RemindersPage() {
     // A due date already in the past on an open reminder = a payment that fell
     // due but hasn't been recorded yet (e.g. the statement isn't imported).
     const overdue = !r.done && !!r.dueDate && new Date(r.dueDate) < startOfToday;
+    const monthsBehind = overdue
+      ? monthsOverdue(new Date(r.dueDate as string), startOfToday)
+      : 0;
     return (
     <li
       key={r.id}
@@ -294,6 +334,8 @@ export default function RemindersPage() {
       {overdue && (
         <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700 dark:bg-red-950 dark:text-red-300">
           overdue
+          {monthsBehind >= 1 &&
+            ` · ${monthsBehind} mo${monthsBehind === 1 ? "" : "s"} behind`}
         </span>
       )}
       {r.amountCents != null && (
@@ -383,6 +425,43 @@ export default function RemindersPage() {
         <ul className="flex flex-col">{items.map(row)}</ul>
       </section>
     );
+
+  // A recurring rule, read-only: it posts its own transaction on the date, so
+  // there's nothing to mark paid — just a heads-up, with a link to manage it.
+  const autoRow = (rule: RecurringRule) => {
+    const overdue = new Date(rule.nextRunAt) < startOfToday;
+    return (
+      <li
+        key={rule.id}
+        className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-zinc-100 py-2 last:border-0 dark:border-zinc-900"
+      >
+        <span className="font-medium">
+          {rule.subcategory.name}
+          {rule.description ? ` · ${rule.description}` : ""}
+        </span>
+        <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+          {cadenceLabel(rule.cadence, rule.interval)}
+        </span>
+        <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+          auto
+        </span>
+        <span
+          className={`text-sm ${overdue ? "font-medium text-red-600" : "text-zinc-500"}`}
+        >
+          {overdue ? "due" : "next"} · {formatDue(rule.nextRunAt)}
+        </span>
+        <span className="text-sm tabular-nums text-zinc-500">
+          · {formatCents(rule.amount, rule.account.currency)}
+        </span>
+        <Link
+          href="/recurring"
+          className="ml-auto text-xs text-zinc-500 hover:text-zinc-700 hover:underline dark:hover:text-zinc-300"
+        >
+          manage
+        </Link>
+      </li>
+    );
+  };
 
   return (
     <main className="flex flex-col gap-6">
@@ -478,16 +557,34 @@ export default function RemindersPage() {
         {reminders.isLoading && (
           <p className="text-sm text-zinc-500">Loading…</p>
         )}
-        {reminders.data && open.length === 0 && done.length === 0 && (
-          <p className="text-sm text-zinc-500">
-            No reminders yet — hit &ldquo;Scan for reminders&rdquo; after an
-            import.
-          </p>
-        )}
+        {reminders.data &&
+          open.length === 0 &&
+          done.length === 0 &&
+          autoRules.length === 0 && (
+            <p className="text-sm text-zinc-500">
+              No reminders yet — hit &ldquo;Scan for reminders&rdquo; after an
+              import.
+            </p>
+          )}
         {section(
           "Upcoming payments",
           "Bills, subscriptions and installments coming due",
           payments,
+        )}
+        {autoRules.length > 0 && (
+          <section className="mb-5 last:mb-0">
+            <div className="mb-0.5 flex items-baseline gap-2">
+              <h3 className="text-sm font-semibold tracking-wide text-zinc-700 uppercase dark:text-zinc-300">
+                Auto-posting rules
+              </h3>
+              <span className="text-xs text-zinc-400">{autoRules.length}</span>
+            </div>
+            <p className="mb-1 text-xs text-zinc-400">
+              These post their own transaction on the date — shown for
+              visibility. Manage them on the Recurring page.
+            </p>
+            <ul className="flex flex-col">{autoRules.map(autoRow)}</ul>
+          </section>
         )}
         {section(
           "Money owed",

@@ -50,6 +50,20 @@ describe('detectRecurringBills', () => {
     expect(res[0].nextDate.getTime()).toBeLessThan(day('2026-05-01').getTime());
   });
 
+  it('flags a yearly bill', () => {
+    const res = detectRecurringBills(
+      [
+        txn({ id: 'a', subcategoryId: 'y', name: 'Domain', date: day('2025-05-01') }),
+        txn({ id: 'b', subcategoryId: 'y', name: 'Domain', date: day('2026-05-01') }),
+      ],
+      day('2026-06-01'),
+    );
+    expect(res).toHaveLength(1);
+    expect(res[0]).toMatchObject({ cadence: 'yearly' });
+    // Next occurrence is one year after the last charge.
+    expect(res[0].nextDate).toEqual(day('2027-05-01'));
+  });
+
   it('flags a quarterly bill', () => {
     const res = detectRecurringBills(
       [

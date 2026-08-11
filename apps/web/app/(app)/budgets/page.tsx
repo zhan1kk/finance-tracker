@@ -372,11 +372,12 @@ function BudgetRow({
             </Button>
           )}
           <button
-            aria-label="Delete budget"
-            className="px-1 text-zinc-400 hover:text-red-600"
+            aria-label="Delete budget (all months)"
+            title="Delete this budget entirely (every month)"
+            className="px-1 text-sm text-zinc-400 hover:text-red-600"
             onClick={onDelete}
           >
-            ×
+            Delete
           </button>
         </span>
       </div>

@@ -9,6 +9,8 @@ import { extractInstallment } from './reminder-prompt';
 
 const DAY = 86_400_000;
 
+type Cadence = 'monthly' | 'quarterly' | 'yearly';
+
 export type BillTxn = {
   id: string;
   subcategoryId: string;
@@ -27,7 +29,7 @@ export type RecurringCandidate = {
   label: string;
   amountCents: number;
   currency: string;
-  cadence: 'monthly' | 'quarterly';
+  cadence: Cadence;
   nextDate: Date;
   /** The latest occurrence, anchoring the reminder. */
   sourceTransactionId: string;
@@ -122,7 +124,7 @@ function monthBuckets(sorted: BillTxn[]): MonthBucket[] {
  * month; the ±5-day tolerance (for payments that slip when a balance is short)
  * is baked into the bands: monthly = 30±5, quarterly = 90±5.
  */
-function inferCadence(months: MonthBucket[]): 'monthly' | 'quarterly' | null {
+function inferCadence(months: MonthBucket[]): Cadence | null {
   if (months.length < 2) return null;
   const intervals: number[] = [];
   for (let i = 1; i < months.length; i++) {
@@ -131,15 +133,18 @@ function inferCadence(months: MonthBucket[]): 'monthly' | 'quarterly' | null {
   const med = median(intervals);
   if (med >= 25 && med <= 35) return 'monthly';
   if (med >= 85 && med <= 95) return 'quarterly';
+  // Yearly: ~365 days, wide tolerance for month-length drift and leap years.
+  if (med >= 350 && med <= 380) return 'yearly';
   return null;
 }
 
 /** The next expected occurrence: a single step from `from`, so a payment that
  * fell due before today (but isn't recorded yet) shows as overdue rather than
  * being rolled forward to a future date. */
-function nextOccurrence(from: Date, cadence: 'monthly' | 'quarterly'): Date {
+function nextOccurrence(from: Date, cadence: Cadence): Date {
+  const months = cadence === 'monthly' ? 1 : cadence === 'quarterly' ? 3 : 12;
   const d = new Date(from);
-  d.setUTCMonth(d.getUTCMonth() + (cadence === 'monthly' ? 1 : 3));
+  d.setUTCMonth(d.getUTCMonth() + months);
   return d;
 }
 
