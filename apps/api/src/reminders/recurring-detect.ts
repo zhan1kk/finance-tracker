@@ -64,6 +64,8 @@ export function detectRecurringBills(
     // If the anchor's description marks a limited plan ("3/12"), surface it as an
     // installment reminder (progress + auto-complete) rather than open-ended.
     const inst = extractInstallment(latest.description);
+    // A fully-paid plan ("3/3") has nothing left to remind about.
+    if (inst && inst.paid >= inst.total) continue;
     out.push({
       subcategoryId,
       label: latest.name,
@@ -74,7 +76,10 @@ export function detectRecurringBills(
       amountCents: representativeAmount(months, now),
       currency: latest.currency,
       cadence,
-      nextDate: nextAfter(latest.date, cadence, now),
+      // One period after the last recorded charge — NOT stepped into the future.
+      // If that date is already past (a payment fell due but isn't imported yet),
+      // it surfaces as overdue instead of being skipped.
+      nextDate: nextOccurrence(latest.date, cadence),
       sourceTransactionId: latest.id,
       installmentsTotal: inst?.total ?? null,
       installmentsPaid: inst?.paid ?? null,
@@ -129,14 +134,12 @@ function inferCadence(months: MonthBucket[]): 'monthly' | 'quarterly' | null {
   return null;
 }
 
-/** Steps `from` by `cadence` until the date is on/after `now`. */
-function nextAfter(from: Date, cadence: 'monthly' | 'quarterly', now: Date): Date {
-  const months = cadence === 'monthly' ? 1 : 3;
+/** The next expected occurrence: a single step from `from`, so a payment that
+ * fell due before today (but isn't recorded yet) shows as overdue rather than
+ * being rolled forward to a future date. */
+function nextOccurrence(from: Date, cadence: 'monthly' | 'quarterly'): Date {
   const d = new Date(from);
-  let guard = 0;
-  do {
-    d.setUTCMonth(d.getUTCMonth() + months);
-  } while (d.getTime() < now.getTime() && guard++ < 240);
+  d.setUTCMonth(d.getUTCMonth() + (cadence === 'monthly' ? 1 : 3));
   return d;
 }
 

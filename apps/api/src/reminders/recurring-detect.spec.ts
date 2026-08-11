@@ -15,7 +15,7 @@ const txn = (over: Partial<BillTxn>): BillTxn => ({
 describe('detectRecurringBills', () => {
   const now = day('2026-05-01');
 
-  it('flags a monthly bill with the latest amount and a future next date', () => {
+  it('flags a monthly bill with the latest amount and one period after the last charge', () => {
     const res = detectRecurringBills(
       [
         txn({ id: 'a', date: day('2026-02-10') }),
@@ -31,7 +31,23 @@ describe('detectRecurringBills', () => {
       sourceTransactionId: 'c',
       label: 'Netflix',
     });
-    expect(res[0].nextDate.getTime()).toBeGreaterThanOrEqual(now.getTime());
+    // One month after the last charge — not rolled to a future date.
+    expect(res[0].nextDate).toEqual(day('2026-05-09'));
+  });
+
+  it('surfaces an unrecorded due payment as an overdue (past) next date', () => {
+    // Last recorded charge was two months before "now"; the payment due one
+    // month later was never imported, so next is in the past, not skipped ahead.
+    const res = detectRecurringBills(
+      [
+        txn({ id: 'a', date: day('2026-02-09') }),
+        txn({ id: 'b', date: day('2026-03-09') }),
+      ],
+      day('2026-05-01'),
+    );
+    expect(res).toHaveLength(1);
+    expect(res[0].nextDate).toEqual(day('2026-04-09'));
+    expect(res[0].nextDate.getTime()).toBeLessThan(day('2026-05-01').getTime());
   });
 
   it('flags a quarterly bill', () => {

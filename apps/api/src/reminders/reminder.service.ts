@@ -212,12 +212,16 @@ export class ReminderService {
         if (looksLikeIou(desc)) iouRows.push(t);
         continue;
       }
+      // A fully-paid plan ("3/3") has nothing left to remind about.
+      if (inst.paid >= inst.total) continue;
       scanned++;
       const madeOne = await this.createSafely({
         userId,
         label: installmentLabel(desc, t.subcategory?.name ?? null),
         kind: 'payment',
-        dueDate: nextOccurrence(t.date, 'monthly'),
+        // One month after this charge — not stepped into the future, so the next
+        // installment shows as overdue if it fell due before it was imported.
+        dueDate: advanceDate(t.date, 'monthly'),
         amountCents: t.amount,
         currency: t.account.currency,
         cadence: 'monthly',
@@ -408,19 +412,6 @@ export class ReminderService {
       throw new NotFoundException(`Reminder with id ${id} was not found`);
     }
   }
-}
-
-/** The first occurrence on/after today, stepping from `from` by `cadence`. */
-function nextOccurrence(from: Date, cadence: string): Date | null {
-  let d = advanceDate(from, cadence);
-  // advanceDate leaves the date unchanged for an unknown cadence — nothing to do.
-  if (d.getTime() === from.getTime()) return null;
-  const now = Date.now();
-  let guard = 0;
-  while (d.getTime() < now && guard++ < 600) {
-    d = advanceDate(d, cadence);
-  }
-  return d;
 }
 
 /** Moves a date forward by one cadence period; unknown cadence → unchanged. */

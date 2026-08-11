@@ -245,6 +245,10 @@ export default function RemindersPage() {
   const payments = open.filter((r) => r.kind === "payment");
   const ious = open.filter((r) => r.kind !== "payment");
 
+  // Local midnight, for flagging reminders whose due date has already passed.
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+
   const row = (r: Reminder) => {
     const isInstallment = r.installmentsTotal != null;
     const installmentRemaining =
@@ -259,6 +263,9 @@ export default function RemindersPage() {
       !!r.dueDate;
     const showMarkPaid =
       !r.done && (installmentRemaining || canAdvanceRecurring);
+    // A due date already in the past on an open reminder = a payment that fell
+    // due but hasn't been recorded yet (e.g. the statement isn't imported).
+    const overdue = !r.done && !!r.dueDate && new Date(r.dueDate) < startOfToday;
     return (
     <li
       key={r.id}
@@ -279,7 +286,16 @@ export default function RemindersPage() {
           {r.subcategory.name}
         </span>
       )}
-      <span className="text-sm text-zinc-500">next · {formatDue(r.dueDate)}</span>
+      <span
+        className={`text-sm ${overdue ? "font-medium text-red-600" : "text-zinc-500"}`}
+      >
+        {overdue ? "due" : "next"} · {formatDue(r.dueDate)}
+      </span>
+      {overdue && (
+        <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700 dark:bg-red-950 dark:text-red-300">
+          overdue
+        </span>
+      )}
       {r.amountCents != null && (
         <span className="text-sm tabular-nums text-zinc-500">
           · {formatCents(r.amountCents, r.currency ?? "EUR")}
