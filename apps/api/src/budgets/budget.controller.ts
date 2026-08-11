@@ -39,6 +39,21 @@ export class BudgetController {
     return this.budgetService.update(user.userId, id, body);
   }
 
+  /** Delete every budget (all months). Declared before :id so it isn't shadowed. */
+  @Delete()
+  removeAll(@CurrentUser() user: AuthUser) {
+    return this.budgetService.removeAll(user.userId);
+  }
+
+  /** Clear one month: revert all overrides for it and delete one-off budgets in it. */
+  @Delete('month/:period')
+  clearMonth(
+    @CurrentUser() user: AuthUser,
+    @Param('period') period: string,
+  ) {
+    return this.budgetService.clearMonth(user.userId, period);
+  }
+
   @Delete(':id')
   async remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     await this.budgetService.remove(user.userId, id);

@@ -365,6 +365,8 @@ export type Budget = {
   subcategoryId: string | null;
   category: TransactionCategory | null;
   subcategory: { id: string; name: string; category: TransactionCategory } | null;
+  /** When set ("YYYY-MM"), the budget applies to that month only, not recurring. */
+  oneOffPeriod: string | null;
   spentCents: number;
   remainingCents: number;
   percent: number;

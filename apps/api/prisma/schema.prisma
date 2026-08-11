@@ -536,6 +536,10 @@ model Budget {
   /// ...or a whole category (subcategoryId is then null)
   category      TransactionCategory?
 
+  /// When set (a "YYYY-MM" financial-month label), the budget is a one-off that
+  /// applies to that month only; null means it recurs every month.
+  oneOffPeriod String?
+
   periods BudgetPeriod[]
 
   @@unique([userId, subcategoryId])

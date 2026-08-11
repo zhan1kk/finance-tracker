@@ -1928,6 +1928,7 @@ describe('API (e2e)', () => {
         limit: number;
         monthlyLimit: number;
         isOverride: boolean;
+        oneOffPeriod: string | null;
         period: string;
         spentCents: number;
         remainingCents: number;
@@ -2097,6 +2098,72 @@ describe('API (e2e)', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({ limit: 5_000 })
         .expect(400);
+    });
+
+    it('creates a one-off budget that shows only in its own month', async () => {
+      const thisMonth = new Date().toISOString().slice(0, 7);
+      const otherMonth = '2020-01';
+      await createBudget({
+        monthlyLimit: 20_000,
+        subcategoryId: groceriesId,
+        oneOffPeriod: thisMonth,
+      });
+      const here = await listBudgets(token, thisMonth);
+      expect(here).toHaveLength(1);
+      expect(here[0]).toMatchObject({ oneOffPeriod: thisMonth, limit: 20_000 });
+      // A one-off never appears in another month.
+      expect(await listBudgets(token, otherMonth)).toHaveLength(0);
+    });
+
+    it('deletes every budget with the bulk endpoint', async () => {
+      await createBudget({ monthlyLimit: 10_000, subcategoryId: groceriesId });
+      await createBudget({ monthlyLimit: 50_000, category: 'Expenses' });
+      const del = await request(http)
+        .delete('/budgets')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(del.body).toMatchObject({ deleted: 2 });
+      expect(await listBudgets()).toHaveLength(0);
+    });
+
+    it('clears a month: reverts overrides and removes one-offs, keeping recurring', async () => {
+      const period = new Date().toISOString().slice(0, 7);
+      // A recurring budget with a this-month override...
+      const recurring = await createBudget({
+        monthlyLimit: 30_000,
+        subcategoryId: groceriesId,
+      });
+      await request(http)
+        .put(`/budgets/${recurring.id}/periods/${period}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ limit: 50_000 })
+        .expect(200);
+      // ...and a one-off budget living in this month.
+      await createBudget({
+        monthlyLimit: 20_000,
+        category: 'Expenses',
+        oneOffPeriod: period,
+      });
+      expect(await listBudgets(token, period)).toHaveLength(2);
+
+      const cleared = await request(http)
+        .delete(`/budgets/month/${period}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(cleared.body).toMatchObject({
+        period,
+        clearedOverrides: 1,
+        deletedOneOffs: 1,
+      });
+
+      // The recurring budget survives at its default; the one-off is gone.
+      const after = await listBudgets(token, period);
+      expect(after).toHaveLength(1);
+      expect(after[0]).toMatchObject({
+        id: recurring.id,
+        limit: 30_000,
+        isOverride: false,
+      });
     });
 
     it('reports net worth over time', async () => {

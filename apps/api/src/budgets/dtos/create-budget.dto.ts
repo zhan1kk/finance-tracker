@@ -1,4 +1,4 @@
-import { IsIn, IsInt, IsOptional, IsUUID, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsUUID, Matches, Min } from 'class-validator';
 import type { TransactionCategory } from '../../subcategories/types/subcategory.types';
 
 /** Spending categories a budget can target (Income is not a spend budget). */
@@ -24,4 +24,11 @@ export class CreateBudgetDTO {
   @IsOptional()
   @IsIn(BUDGETABLE_CATEGORIES)
   public readonly category?: Exclude<TransactionCategory, 'Income'>;
+
+  /** When set ("YYYY-MM"), the budget applies to that financial month only. */
+  @IsOptional()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, {
+    message: 'oneOffPeriod must be a "YYYY-MM" label',
+  })
+  public readonly oneOffPeriod?: string;
 }

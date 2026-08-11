@@ -59,8 +59,28 @@ export default function BudgetsPage() {
     onSuccess: invalidate,
     onError: setError,
   });
+  // Change a one-off budget's own limit (it has no separate default vs override).
+  const updateLimit = useMutation({
+    mutationFn: (vars: { id: string; limit: number }) =>
+      api(`/budgets/${vars.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ monthlyLimit: vars.limit }),
+      }),
+    onSuccess: invalidate,
+    onError: setError,
+  });
   const remove = useMutation({
     mutationFn: (id: string) => api(`/budgets/${id}`, { method: "DELETE" }),
+    onSuccess: invalidate,
+    onError: setError,
+  });
+  const clearMonth = useMutation({
+    mutationFn: () => api(`/budgets/month/${shown}`, { method: "DELETE" }),
+    onSuccess: invalidate,
+    onError: setError,
+  });
+  const deleteAll = useMutation({
+    mutationFn: () => api(`/budgets`, { method: "DELETE" }),
     onSuccess: invalidate,
     onError: setError,
   });
@@ -76,9 +96,11 @@ export default function BudgetsPage() {
       return;
     }
     const [kind, value] = scope.split(":", 2);
+    const oneOff = String(form.get("repeats")) === "oneoff";
     create.mutate({
       monthlyLimit,
       ...(kind === "sub" ? { subcategoryId: value } : { category: value }),
+      ...(oneOff ? { oneOffPeriod: shown } : {}),
     });
     e.currentTarget.reset();
   };
@@ -86,6 +108,12 @@ export default function BudgetsPage() {
   // Budgets are for variable spending only, so offer just Expenses subcategories.
   const spendingSubs = (subcategories.data ?? []).filter(
     (s) => s.category === "Expenses",
+  );
+
+  // "Clear this month" only does something when a budget has a per-month override
+  // or is a one-off living in the shown month.
+  const monthHasCustomizations = (budgets.data ?? []).some(
+    (b) => b.isOverride || b.oneOffPeriod != null,
   );
 
   return (
@@ -121,8 +149,16 @@ export default function BudgetsPage() {
               </optgroup>
             </Select>
           </Field>
-          <Field label="Monthly limit">
+          <Field label="Limit">
             <Input name="limit" required placeholder="300.00" className="w-28" />
+          </Field>
+          <Field label="Repeats">
+            <Select name="repeats" defaultValue="recurring">
+              <option value="recurring">Every month</option>
+              <option value="oneoff">
+                Only {formatPeriod(shown, monthStartDay)}
+              </option>
+            </Select>
           </Field>
           <Button type="submit" disabled={create.isPending}>
             Add budget
@@ -153,6 +189,47 @@ export default function BudgetsPage() {
               Today
             </Button>
           )}
+          <div className="ml-auto flex flex-wrap gap-2">
+            {monthHasCustomizations && (
+              <Button
+                variant="ghost"
+                title="Revert every budget's custom limit for this month, and delete one-off budgets in it"
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      `Clear all budget customizations for ${formatPeriod(
+                        shown,
+                        monthStartDay,
+                      )}? This reverts custom monthly limits to their default and deletes one-off budgets in this month.`,
+                    )
+                  ) {
+                    setError(null);
+                    clearMonth.mutate();
+                  }
+                }}
+              >
+                Clear this month
+              </Button>
+            )}
+            {(budgets.data?.length ?? 0) > 0 && (
+              <button
+                className="px-1 text-sm text-zinc-400 hover:text-red-600"
+                title="Delete every budget, all months"
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      "Delete ALL budgets (every category, all months)? This can't be undone.",
+                    )
+                  ) {
+                    setError(null);
+                    deleteAll.mutate();
+                  }
+                }}
+              >
+                Delete all
+              </button>
+            )}
+          </div>
         </div>
         {budgets.data && budgets.data.length === 0 && (
           <p className="text-sm text-zinc-500">
@@ -167,8 +244,11 @@ export default function BudgetsPage() {
               currency={currency}
               monthLabel={formatPeriod(shown, monthStartDay)}
               onEdit={() => {
+                const isOneOff = budget.oneOffPeriod != null;
                 const raw = window.prompt(
-                  `Limit for ${formatPeriod(shown, monthStartDay)}`,
+                  isOneOff
+                    ? `Limit for ${formatPeriod(shown, monthStartDay)} (this-month-only budget)`
+                    : `Limit for ${formatPeriod(shown, monthStartDay)}`,
                   (budget.limit / 100).toFixed(2),
                 );
                 if (raw === null) return;
@@ -178,10 +258,13 @@ export default function BudgetsPage() {
                   return;
                 }
                 setError(null);
-                setMonthLimit.mutate({ id: budget.id, limit: cents });
+                // A one-off has no separate default vs override — edit its own
+                // limit; a recurring budget gets a per-month override instead.
+                if (isOneOff) updateLimit.mutate({ id: budget.id, limit: cents });
+                else setMonthLimit.mutate({ id: budget.id, limit: cents });
               }}
               onReset={
-                budget.isOverride
+                budget.isOverride && budget.oneOffPeriod == null
                   ? () => {
                       setError(null);
                       resetMonth.mutate(budget.id);
@@ -189,7 +272,11 @@ export default function BudgetsPage() {
                   : undefined
               }
               onDelete={() => {
-                if (window.confirm("Delete this budget (all months)?")) {
+                const msg =
+                  budget.oneOffPeriod != null
+                    ? "Delete this one-off budget?"
+                    : "Delete this budget (all months)?";
+                if (window.confirm(msg)) {
                   setError(null);
                   remove.mutate(budget.id);
                 }
@@ -245,7 +332,15 @@ function BudgetRow({
           {formatCents(budget.spentCents, currency)} of{" "}
           {formatCents(budget.limit, currency)}
         </span>
-        {budget.isOverride && (
+        {budget.oneOffPeriod != null && (
+          <span
+            className="rounded bg-sky-100 px-1.5 py-0.5 text-xs text-sky-700 dark:bg-sky-950 dark:text-sky-300"
+            title="Applies to this month only"
+          >
+            this month only
+          </span>
+        )}
+        {budget.isOverride && budget.oneOffPeriod == null && (
           <span
             className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700 dark:bg-amber-950 dark:text-amber-300"
             title={`Custom for ${monthLabel}; default is ${formatCents(

@@ -32,7 +32,9 @@ export class BudgetService {
     // Budgets reset on the user's pay cycle, not on the 1st.
     const { start, end } = periodBounds(label, monthStartDay);
     const budgets = await this.prisma.budget.findMany({
-      where: { userId },
+      // Recurring budgets (oneOffPeriod null) show every month; a one-off shows
+      // only in its own month.
+      where: { userId, OR: [{ oneOffPeriod: null }, { oneOffPeriod: label }] },
       include: {
         ...BUDGET_INCLUDE,
         periods: { where: { period: label }, select: { limit: true } },
@@ -177,6 +179,7 @@ export class BudgetService {
           monthlyLimit: dto.monthlyLimit,
           subcategoryId: dto.subcategoryId ?? null,
           category: dto.category ?? null,
+          oneOffPeriod: dto.oneOffPeriod ?? null,
         },
         include: BUDGET_INCLUDE,
       });
@@ -205,6 +208,40 @@ export class BudgetService {
   async remove(userId: string, id: string) {
     await this.assertOwn(userId, id);
     await this.prisma.budget.delete({ where: { id } });
+  }
+
+  /** Deletes every budget the user has (all months). */
+  async removeAll(userId: string): Promise<{ deleted: number }> {
+    const { count } = await this.prisma.budget.deleteMany({ where: { userId } });
+    return { deleted: count };
+  }
+
+  /**
+   * Clears one financial month across all budgets: reverts every per-month
+   * override for it (recurring budgets fall back to their default) and deletes
+   * the one-off budgets that live only in that month. Recurring budgets
+   * themselves are left intact — they apply to every month by design.
+   */
+  async clearMonth(
+    userId: string,
+    period: string,
+  ): Promise<{ period: string; clearedOverrides: number; deletedOneOffs: number }> {
+    const { monthStartDay } = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { monthStartDay: true },
+    });
+    const label = this.resolvePeriod(period, monthStartDay);
+    const [overrides, oneOffs] = await this.prisma.$transaction([
+      this.prisma.budgetPeriod.deleteMany({
+        where: { period: label, budget: { userId } },
+      }),
+      this.prisma.budget.deleteMany({ where: { userId, oneOffPeriod: label } }),
+    ]);
+    return {
+      period: label,
+      clearedOverrides: overrides.count,
+      deletedOneOffs: oneOffs.count,
+    };
   }
 
   /**
