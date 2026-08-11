@@ -27,21 +27,69 @@ export type ReminderCandidate = {
   amount: number;
   currency: string;
   description: string;
+  /** The row's subcategory name, passed to the model for grounding. */
+  category?: string | null;
 };
 
-// Catches the shapes people write hints in — both future payments ("1/3
-// payment", "next payment", "monthly", "by 15.09", "due …") and money owed
-// between friends ("ask her", "owes", "shared w", "split", "paid for", "got
-// back", "pay back"). Kept deliberately broad — the LLM does the real judging
-// on whatever this lets through, and non-hints are dropped there.
-const REMINDER_HINT =
-  /(\d\s*\/\s*\d|next\s+(payment|instal?lment|in|due)|monthly|quarterly|weekly|yearly|annual|instal?lment|\brate\b|by\s+\d{1,2}[.\/]\d{1,2}|\bdue\b|remind|\bowe|\bask|\bshare|\bsplit|paid\s*for|pay\s*back|paid\s*back|paying\s*back|got\s*back|get\s*back|chip\s*in)/i;
-
-export function looksLikeReminder(description: string | null): boolean {
-  return !!description && REMINDER_HINT.test(description);
+/**
+ * Reads an "N/M" installment marker (e.g. "1/3", "7/12", "3/42") out of a
+ * description — deterministically, no model. Returns paid=N, total=M. Rejects
+ * dates and ratios the same way: "15/09" and "24/7" have N>M, "1/2026" exceeds
+ * the installment-count cap, and an "X/X" with X≥10 (e.g. "50/50") reads as a
+ * split, not a final payment.
+ */
+export function extractInstallment(
+  description: string | null,
+): { paid: number; total: number } | null {
+  if (!description) return null;
+  const re = /(?<!\d)(\d{1,2})\s*\/\s*(\d{1,3})(?!\d)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(description)) !== null) {
+    const paid = Number(m[1]);
+    const total = Number(m[2]);
+    if (
+      total >= 2 &&
+      total <= 60 &&
+      paid >= 1 &&
+      paid <= total &&
+      !(paid === total && total >= 10)
+    ) {
+      return { paid, total };
+    }
+  }
+  return null;
 }
 
-/** Ollama structured-output schema: reminders keyed back to input rows. */
+/**
+ * A stable label for a deterministic installment reminder: the transaction's
+ * own subcategory name when it has one (reliable, human-set), else the
+ * description with the N/M marker and separators stripped. Never invented — so
+ * a dentist-financing "Bfs · 7/12" row keeps its real category, not a guess.
+ */
+export function installmentLabel(
+  description: string,
+  subcategoryName: string | null,
+): string {
+  if (subcategoryName && subcategoryName.trim()) return subcategoryName.trim();
+  const cleaned = description
+    .replace(/(?<!\d)\d{1,2}\s*\/\s*\d{1,3}(?!\d)/g, ' ')
+    .replace(/[·|,/–—-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned || 'Installment payment';
+}
+
+// Money-owed hints only — the LLM scan is scoped to IOUs between friends now
+// that installments are read deterministically above and recurring bills are
+// detected separately. Kept broad; the model does the final judging.
+const IOU_HINT =
+  /(\bowe|\bask|\bshare|\bsplit|paid\s*for|pay(?:ing)?\s*back|paid\s*back|got\s*back|get\s*back|chip\s*in)/i;
+
+export function looksLikeIou(description: string | null): boolean {
+  return !!description && IOU_HINT.test(description);
+}
+
+/** Ollama structured-output schema: money-owed reminders keyed back to rows. */
 export const REMINDER_EXTRACTION_SCHEMA = {
   type: 'object' as const,
   properties: {
@@ -54,55 +102,39 @@ export const REMINDER_EXTRACTION_SCHEMA = {
           label: { type: 'string' as const },
           kind: {
             type: 'string' as const,
-            enum: ['payment', 'ask', 'pay'] as const,
+            enum: ['ask', 'pay'] as const,
           },
-          dueDate: { type: 'string' as const },
           amount: { type: 'number' as const },
-          cadence: { type: 'string' as const },
-          installmentsTotal: { type: 'integer' as const },
-          installmentsPaid: { type: 'integer' as const },
           note: { type: 'string' as const },
         },
-        required: ['index', 'label'],
+        required: ['index', 'label', 'kind'],
       },
     },
   },
   required: ['reminders'],
 };
 
-export const REMINDER_SYSTEM_PROMPT = `You read bank-transaction descriptions and extract REMINDERS the person will want to act on later. There are two kinds:
+export const REMINDER_SYSTEM_PROMPT = `You read bank-transaction descriptions and extract ONLY reminders about MONEY OWED between the person and their friends. Ignore everything else — bills, subscriptions, and installment plans are handled elsewhere, so never output them.
 
-1) UPCOMING PAYMENT — the description hints at a FUTURE related payment: an installment plan ("1/3 payment"), a recurring bill ("monthly", "next in Sep"), or an explicit due date.
+A row is money-owed when the description says a friend owes the person, or the person owes a friend, for a shared or covered cost. Examples: "50 is Alex's share, need to ask them", "shared w Sam", "got back from everyone but Jordan", "Alex paid for the tea", "paid for drinks, they'll pay me back".
 
-2) MONEY OWED between the person and their friends — the description says a friend owes them, or they owe a friend, for a shared or covered cost. Examples: "50 is Alex's share, need to ask them", "shared w Sam", "got back from everyone but Jordan", "Alex paid for the tea", "paid for drinks, they'll pay me back".
-
-For each row matching either kind, output one reminder; skip rows matching neither. Never invent reminders.
+For each money-owed row output one reminder; skip every row that is not clearly money owed between people. Never invent one.
 
 Fields per reminder:
 - index: the row's number, copied exactly.
-- label: a short, actionable title, ALWAYS derived from THIS row's own description/merchant. Never copy a word from the examples in this prompt — if the description says "TV", the label is about the TV, not a sofa.
-  • Upcoming payment: name the actual thing being paid (its merchant or bill name, plus "installment"/"subscription" if that fits).
-  • A friend owes THEM (collect it): start with "Ask" then the person's name, e.g. "Ask <name> for their share".
-  • THEY owe a friend (pay it): start with "Pay" then the person's name, e.g. "Pay <name> back".
-- kind: "payment" for an upcoming bill/subscription/installment, "ask" when a friend owes them, "pay" when they owe a friend. Must match the label.
-- amount: the amount as a number.
-  • If the description states the owed amount ("50 is Alex's share"), use it.
-  • If a cost is split with exactly one other person and no amount is stated, use half the transaction amount.
-  • For an upcoming payment, use the stated amount, else the transaction's amount.
-  • Omit only if truly indeterminable.
-- dueDate: "YYYY-MM-DD" for upcoming payments (resolve relative hints against the transaction's date; "monthly" → one month later). Omit for money-owed reminders unless a date is stated.
-- cadence: "monthly", "quarterly", "weekly", "yearly", or "one-off".
-- installmentsTotal / installmentsPaid: only for a fixed-length plan written "N/M" (e.g. "1/3"), set installmentsTotal to M and installmentsPaid to N. Omit otherwise.
+- label: a short title derived from THIS row. If a friend owes the person, start with "Ask" then the person's name, e.g. "Ask Alex for their share". If the person owes a friend, start with "Pay" then the person's name, e.g. "Pay Sam back". Use the name from the description; if there is no name, use "Ask for their share" / "Pay back". Never copy a name from the examples above.
+- kind: "ask" when a friend owes the person, "pay" when the person owes a friend. Must match the label.
+- amount: the owed amount as a number. If the description states it ("50 is Alex's share"), use that. If a cost is split with exactly one other person and no amount is stated, use half the row's amount. Omit if truly indeterminable.
 - note: brief context (what the cost was for). May be empty.
 
 Return only the reminders array.`;
 
 export function buildReminderPrompt(candidates: ReminderCandidate[]): string {
-  const lines = candidates.map(
-    (c) =>
-      `${c.index}. date=${c.date}, amount=${c.amount} ${c.currency}, description="${c.description}"`,
-  );
-  return `Rows:\n${lines.join('\n')}\n\nExtract the upcoming-payment reminders as JSON.`;
+  const lines = candidates.map((c) => {
+    const cat = c.category ? `, category="${c.category}"` : '';
+    return `${c.index}. date=${c.date}, amount=${c.amount} ${c.currency}${cat}, description="${c.description}"`;
+  });
+  return `Rows:\n${lines.join('\n')}\n\nExtract only the money-owed reminders as JSON.`;
 }
 
 /** Validates model output into clean rows, dropping anything unusable. */

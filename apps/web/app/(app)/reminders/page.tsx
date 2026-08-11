@@ -245,7 +245,21 @@ export default function RemindersPage() {
   const payments = open.filter((r) => r.kind === "payment");
   const ious = open.filter((r) => r.kind !== "payment");
 
-  const row = (r: Reminder) => (
+  const row = (r: Reminder) => {
+    const isInstallment = r.installmentsTotal != null;
+    const installmentRemaining =
+      isInstallment && (r.installmentsPaid ?? 0) < (r.installmentsTotal ?? 0);
+    // A plain recurring payment (cadence + a due date, no fixed plan) can be
+    // rolled forward a period when paid, instead of only being dismissed.
+    const canAdvanceRecurring =
+      !isInstallment &&
+      r.kind === "payment" &&
+      !!r.cadence &&
+      r.cadence !== "one-off" &&
+      !!r.dueDate;
+    const showMarkPaid =
+      !r.done && (installmentRemaining || canAdvanceRecurring);
+    return (
     <li
       key={r.id}
       className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-zinc-100 py-2 last:border-0 dark:border-zinc-900"
@@ -258,7 +272,9 @@ export default function RemindersPage() {
           {r.cadence}
         </span>
       )}
-      {r.subcategory && (
+      {/* Skip the category chip when it just repeats the label (detected
+          recurring bills use the subcategory name as the label). */}
+      {r.subcategory && r.subcategory.name !== r.label && (
         <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
           {r.subcategory.name}
         </span>
@@ -291,19 +307,17 @@ export default function RemindersPage() {
               Received
             </Button>
           )}
-        {r.installmentsTotal != null &&
-          !r.done &&
-          (r.installmentsPaid ?? 0) < r.installmentsTotal && (
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setError(null);
-                markPaid.mutate(r.id);
-              }}
-            >
-              Mark paid
-            </Button>
-          )}
+        {showMarkPaid && (
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setError(null);
+              markPaid.mutate(r.id);
+            }}
+          >
+            Mark paid
+          </Button>
+        )}
         <Button
           variant="ghost"
           onClick={() => {
@@ -337,7 +351,8 @@ export default function RemindersPage() {
         </div>
       )}
     </li>
-  );
+    );
+  };
 
   const section = (title: string, subtitle: string, items: Reminder[]) =>
     items.length === 0 ? null : (

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -8,8 +9,17 @@ import { PrismaService } from '../prisma.service';
 import { TransactionService } from '../transactions/transaction.service';
 import type { CreateReminderDTO } from './dtos/create-reminder.dto';
 import { ReminderExtractionService } from './reminder-extraction.service';
-import { looksLikeReminder, type ReminderCandidate } from './reminder-prompt';
+import {
+  extractInstallment,
+  installmentLabel,
+  looksLikeIou,
+  type ReminderCandidate,
+} from './reminder-prompt';
 import { detectRecurringBills } from './recurring-detect';
+
+// Cadences a plain (non-installment) recurring reminder can roll forward on
+// when it's marked paid for the period.
+const RECURRING_CADENCES = new Set(['weekly', 'monthly', 'quarterly', 'yearly']);
 
 const REMINDER_INCLUDE = {
   subcategory: { select: { id: true, name: true, category: true } },
@@ -28,6 +38,8 @@ const MAX_CANDIDATES = 25;
 
 @Injectable()
 export class ReminderService {
+  private readonly logger = new Logger(ReminderService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly extraction: ReminderExtractionService,
@@ -76,9 +88,12 @@ export class ReminderService {
   }
 
   /**
-   * Records the next installment as paid: bumps the count, moves the due date to
-   * the next occurrence, and auto-completes the reminder once every payment is
-   * in. Only valid on installment reminders.
+   * Marks the current payment as done. For an installment plan: bumps the count,
+   * moves the due date to the next occurrence, and auto-completes once every
+   * payment is in. For a plain recurring bill (a cadence + a due date, no fixed
+   * plan): rolls the due date forward one period and keeps the reminder open, so
+   * it nags again next cycle instead of being dismissed forever. Anything else
+   * (a one-off with no cadence) has nothing to advance — dismiss it with Done.
    */
   async markPaid(userId: string, id: string) {
     const reminder = await this.prisma.reminder.findFirst({
@@ -87,27 +102,41 @@ export class ReminderService {
     if (!reminder) {
       throw new NotFoundException(`Reminder with id ${id} was not found`);
     }
-    if (reminder.installmentsTotal == null) {
-      throw new BadRequestException(
-        'This reminder is not an installment plan',
-      );
-    }
-    const paid = Math.min(
-      (reminder.installmentsPaid ?? 0) + 1,
-      reminder.installmentsTotal,
-    );
-    const done = paid >= reminder.installmentsTotal;
-    // Advance to the next payment date unless we're finished.
-    const dueDate =
-      !done && reminder.dueDate && reminder.cadence
-        ? advanceDate(reminder.dueDate, reminder.cadence)
-        : reminder.dueDate;
 
-    return this.prisma.reminder.update({
-      where: { id },
-      data: { installmentsPaid: paid, done, dueDate },
-      include: REMINDER_INCLUDE,
-    });
+    if (reminder.installmentsTotal != null) {
+      const paid = Math.min(
+        (reminder.installmentsPaid ?? 0) + 1,
+        reminder.installmentsTotal,
+      );
+      const done = paid >= reminder.installmentsTotal;
+      // Advance to the next payment date unless we're finished.
+      const dueDate =
+        !done && reminder.dueDate && reminder.cadence
+          ? advanceDate(reminder.dueDate, reminder.cadence)
+          : reminder.dueDate;
+
+      return this.prisma.reminder.update({
+        where: { id },
+        data: { installmentsPaid: paid, done, dueDate },
+        include: REMINDER_INCLUDE,
+      });
+    }
+
+    if (
+      reminder.dueDate &&
+      reminder.cadence &&
+      RECURRING_CADENCES.has(reminder.cadence)
+    ) {
+      return this.prisma.reminder.update({
+        where: { id },
+        data: { dueDate: advanceDate(reminder.dueDate, reminder.cadence) },
+        include: REMINDER_INCLUDE,
+      });
+    }
+
+    throw new BadRequestException(
+      'This reminder has nothing to advance — use Done to dismiss it.',
+    );
   }
 
   /**
@@ -144,7 +173,11 @@ export class ReminderService {
   /**
    * Reads reminders out of recent transaction descriptions the user hasn't
    * scanned yet (each source transaction yields at most one reminder). On-demand
-   * so an import never waits on the model.
+   * so an import never waits on the model. Two independent passes:
+   *   1. installments ("N/M") — deterministic, no model, so there's nothing to
+   *      hallucinate and it works even when Ollama is down;
+   *   2. money owed between friends — the only job left to the local model, kept
+   *      best-effort so an Ollama failure never loses the installments above.
    */
   async scan(userId: string): Promise<{ scanned: number; created: number }> {
     const transactions = await this.prisma.transaction.findMany({
@@ -162,74 +195,110 @@ export class ReminderService {
         amount: true,
         description: true,
         account: { select: { currency: true } },
+        subcategory: { select: { name: true } },
       },
     });
 
-    const candidates = transactions
-      .filter((t) => looksLikeReminder(t.description))
-      .slice(0, MAX_CANDIDATES);
-    if (candidates.length === 0) return { scanned: 0, created: 0 };
-
-    // Alias rows to small indices for the model; map back on the way out.
-    const byIndex = new Map<number, (typeof candidates)[number]>();
-    const payload: ReminderCandidate[] = candidates.map((t, i) => {
-      byIndex.set(i + 1, t);
-      return {
-        index: i + 1,
-        date: t.date.toISOString().slice(0, 10),
-        amount: t.amount / 100,
-        currency: t.account.currency,
-        description: t.description as string,
-      };
-    });
-
-    const extracted = await this.extraction.extract(payload);
-
+    let scanned = 0;
     let created = 0;
-    for (const r of extracted) {
-      const source = byIndex.get(r.index);
-      if (!source) continue;
-      const amountCents =
-        r.amount != null ? Math.abs(Math.round(r.amount * 100)) : source.amount;
-      // If the model gave no date, approximate one so recurring bills and
-      // installment plans still sort in and show up "due soon": step from the
-      // source transaction by its cadence (installments assumed monthly) to the
-      // next occurrence on/after today. Close enough — it isn't meant to be exact.
-      let dueDate = r.dueDate ? new Date(r.dueDate) : null;
-      if (!dueDate) {
-        const cadence =
-          r.cadence ?? (r.installmentsTotal != null ? 'monthly' : null);
-        if (cadence) dueDate = nextOccurrence(source.date, cadence);
+
+    // Pass 1 — deterministic installments. The count and label come straight
+    // from the row (its subcategory name), never from a model guess.
+    const iouRows: typeof transactions = [];
+    for (const t of transactions) {
+      const desc = t.description as string;
+      const inst = extractInstallment(desc);
+      if (!inst) {
+        if (looksLikeIou(desc)) iouRows.push(t);
+        continue;
       }
+      scanned++;
+      const madeOne = await this.createSafely({
+        userId,
+        label: installmentLabel(desc, t.subcategory?.name ?? null),
+        kind: 'payment',
+        dueDate: nextOccurrence(t.date, 'monthly'),
+        amountCents: t.amount,
+        currency: t.account.currency,
+        cadence: 'monthly',
+        installmentsTotal: inst.total,
+        installmentsPaid: inst.paid,
+        sourceTransactionId: t.id,
+      });
+      if (madeOne) created++;
+    }
+
+    // Pass 2 — money owed, via the local model, on the IOU-hint rows only.
+    const rows = iouRows.slice(0, MAX_CANDIDATES);
+    if (rows.length > 0) {
+      scanned += rows.length;
+      const byIndex = new Map<number, (typeof transactions)[number]>();
+      const payload: ReminderCandidate[] = rows.map((t, i) => {
+        byIndex.set(i + 1, t);
+        return {
+          index: i + 1,
+          date: t.date.toISOString().slice(0, 10),
+          amount: t.amount / 100,
+          currency: t.account.currency,
+          description: t.description as string,
+          category: t.subcategory?.name ?? null,
+        };
+      });
       try {
-        await this.prisma.reminder.create({
-          data: {
+        const extracted = await this.extraction.extract(payload);
+        for (const r of extracted) {
+          // The IOU pass only ever creates money-owed reminders.
+          if (r.kind !== 'ask' && r.kind !== 'pay') continue;
+          const source = byIndex.get(r.index);
+          if (!source) continue;
+          const amountCents =
+            r.amount != null
+              ? Math.abs(Math.round(r.amount * 100))
+              : source.amount;
+          const madeOne = await this.createSafely({
             userId,
             label: r.label,
             kind: r.kind,
-            dueDate,
+            dueDate: r.dueDate ? new Date(r.dueDate) : null,
             amountCents,
             currency: source.account.currency,
-            cadence: r.cadence,
-            installmentsTotal: r.installmentsTotal,
-            installmentsPaid: r.installmentsTotal != null ? r.installmentsPaid : null,
             note: r.note,
             sourceTransactionId: source.id,
-          },
-        });
-        created++;
-      } catch (err) {
-        // Unique(sourceTransactionId) — a reminder for this row already exists.
-        if (
-          err instanceof Prisma.PrismaClientKnownRequestError &&
-          err.code === 'P2002'
-        ) {
-          continue;
+          });
+          if (madeOne) created++;
         }
-        throw err;
+      } catch (err) {
+        // Ollama unavailable or slow — keep the deterministic results and move
+        // on rather than failing the whole scan.
+        this.logger.warn(
+          `Money-owed scan skipped: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
-    return { scanned: candidates.length, created };
+
+    return { scanned, created };
+  }
+
+  /**
+   * Creates a reminder, swallowing the unique(sourceTransactionId) clash — a
+   * reminder for that row already exists — so a re-scan is idempotent. Returns
+   * whether a new reminder was actually created.
+   */
+  private async createSafely(
+    data: Prisma.ReminderUncheckedCreateInput,
+  ): Promise<boolean> {
+    try {
+      await this.prisma.reminder.create({ data });
+      return true;
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        return false;
+      }
+      throw err;
+    }
   }
 
   /**
@@ -296,31 +365,18 @@ export class ReminderService {
     let created = 0;
     for (const c of candidates) {
       if (covered.has(c.subcategoryId)) continue;
-      try {
-        await this.prisma.reminder.create({
-          data: {
-            userId,
-            label: c.label,
-            kind: 'payment',
-            dueDate: c.nextDate,
-            amountCents: c.amountCents,
-            currency: c.currency,
-            cadence: c.cadence,
-            subcategoryId: c.subcategoryId,
-            sourceTransactionId: c.sourceTransactionId,
-          },
-        });
-        created++;
-      } catch (err) {
-        // Unique(sourceTransactionId): that occurrence already has a reminder.
-        if (
-          err instanceof Prisma.PrismaClientKnownRequestError &&
-          err.code === 'P2002'
-        ) {
-          continue;
-        }
-        throw err;
-      }
+      const madeOne = await this.createSafely({
+        userId,
+        label: c.label,
+        kind: 'payment',
+        dueDate: c.nextDate,
+        amountCents: c.amountCents,
+        currency: c.currency,
+        cadence: c.cadence,
+        subcategoryId: c.subcategoryId,
+        sourceTransactionId: c.sourceTransactionId,
+      });
+      if (madeOne) created++;
     }
     return { created };
   }

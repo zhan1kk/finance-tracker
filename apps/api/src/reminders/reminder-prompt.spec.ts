@@ -1,21 +1,42 @@
 import {
   coerceExtractedReminders,
-  looksLikeReminder,
+  extractInstallment,
+  installmentLabel,
+  looksLikeIou,
 } from './reminder-prompt';
 
-describe('looksLikeReminder', () => {
-  it('matches future-payment hints', () => {
-    for (const s of [
-      '1/3 payment for the sofa',
-      'TV Tax next payment by 15.09.2026 - 55',
-      'ImmoScout (monthly)',
-      'next payment in Sep',
-      'Rate 2 von 3',
-    ]) {
-      expect(looksLikeReminder(s)).toBe(true);
-    }
+describe('extractInstallment', () => {
+  it('reads an N/M marker as paid/total', () => {
+    expect(extractInstallment('1/3 payment for the sofa')).toEqual({ paid: 1, total: 3 });
+    expect(extractInstallment('Bfs · 7/12')).toEqual({ paid: 7, total: 12 });
+    expect(extractInstallment('TV plan 3/42')).toEqual({ paid: 3, total: 42 });
+    expect(extractInstallment('3 / 3 final')).toEqual({ paid: 3, total: 3 });
   });
 
+  it('rejects dates, ratios, and non-installment fractions', () => {
+    expect(extractInstallment('due by 15/09')).toBeNull(); // N>M → a date
+    expect(extractInstallment('open 24/7')).toBeNull(); // N>M → a ratio
+    expect(extractInstallment('renew 1/2026')).toBeNull(); // total too large
+    expect(extractInstallment('split 50/50 with Sam')).toBeNull(); // equal split, not a plan
+    expect(extractInstallment('Albert Heijn groceries')).toBeNull();
+    expect(extractInstallment(null)).toBeNull();
+  });
+});
+
+describe('installmentLabel', () => {
+  it('prefers the subcategory name', () => {
+    expect(installmentLabel('Bfs · 7/12', 'Dentist Installment Payments')).toBe(
+      'Dentist Installment Payments',
+    );
+  });
+
+  it('falls back to the description with the marker and separators stripped', () => {
+    expect(installmentLabel('Bfs · 7/12', null)).toBe('Bfs');
+    expect(installmentLabel('7/12', '')).toBe('Installment payment');
+  });
+});
+
+describe('looksLikeIou', () => {
   it('matches money-owed hints between friends', () => {
     for (const s of [
       "50 is Alex's share, need to ask them",
@@ -24,14 +45,14 @@ describe('looksLikeReminder', () => {
       'Alex paid for the tea',
       "paid for drinks, they'll pay me back",
     ]) {
-      expect(looksLikeReminder(s)).toBe(true);
+      expect(looksLikeIou(s)).toBe(true);
     }
   });
 
-  it('ignores ordinary descriptions and null', () => {
-    expect(looksLikeReminder('Albert Heijn groceries')).toBe(false);
-    expect(looksLikeReminder('Spotify')).toBe(false);
-    expect(looksLikeReminder(null)).toBe(false);
+  it('ignores bills, subscriptions, and null', () => {
+    expect(looksLikeIou('ImmoScout (monthly)')).toBe(false);
+    expect(looksLikeIou('Spotify')).toBe(false);
+    expect(looksLikeIou(null)).toBe(false);
   });
 });
 

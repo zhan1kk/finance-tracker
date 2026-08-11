@@ -263,6 +263,7 @@ function ExpenseForm({
   onSubmit: (body: Record<string, unknown>) => void;
 }) {
   const [paidBy, setPaidBy] = useState(YOU);
+  const [amount, setAmount] = useState("");
   const [among, setAmong] = useState<Set<string>>(new Set([YOU]));
   const [method, setMethod] = useState<"equal" | "exact">("equal");
   const [exact, setExact] = useState<Record<string, string>>({});
@@ -276,13 +277,27 @@ function ExpenseForm({
       else next.add(key);
       return next;
     });
+  const allSelected = among.size === all.length;
+  const toggleAll = () =>
+    setAmong(allSelected ? new Set() : new Set(all.map((p) => p.key)));
+
+  // Live split preview (a hint while filling the form).
+  const totalCents = parseAmountToCents(amount);
+  const selectedCount = all.filter((p) => among.has(p.key)).length;
+  const equalShare =
+    totalCents != null && selectedCount > 0
+      ? Math.round(totalCents / selectedCount)
+      : null;
+  const exactSum = all
+    .filter((p) => among.has(p.key))
+    .reduce((a, p) => a + (parseAmountToCents(exact[p.key] ?? "") ?? 0), 0);
 
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLocalError(null);
     const form = new FormData(e.currentTarget);
     const description = String(form.get("description") || "").trim();
-    const total = parseAmountToCents(String(form.get("amount")));
+    const total = totalCents;
     const date = String(form.get("date"));
     if (!description) return setLocalError("Give it a description");
     if (total === null) return setLocalError("Invalid amount — e.g. 30.00");
@@ -320,6 +335,7 @@ function ExpenseForm({
       participants,
     });
     e.currentTarget.reset();
+    setAmount("");
     setAmong(new Set([YOU]));
     setExact({});
     setMethod("equal");
@@ -335,7 +351,13 @@ function ExpenseForm({
             <Input name="description" placeholder="Dinner" className="w-40" />
           </Field>
           <Field label="Total">
-            <Input name="amount" placeholder="30.00" className="w-24" />
+            <Input
+              name="amount"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="30.00"
+              className="w-24"
+            />
           </Field>
           <Field label="Date">
             <Input name="date" type="date" defaultValue={todayISO()} required />
@@ -361,8 +383,17 @@ function ExpenseForm({
         </div>
 
         <div>
-          <p className="mb-1 text-sm text-zinc-500">Split among</p>
-          <div className="flex flex-wrap gap-3">
+          <div className="mb-1.5 flex items-center justify-between">
+            <p className="text-sm text-zinc-500">Split among</p>
+            <button
+              type="button"
+              onClick={toggleAll}
+              className="rounded border border-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              {allSelected ? "Clear all" : "Select all"}
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
             {all.map((p) => (
               <label key={p.key} className="flex items-center gap-1.5 text-sm">
                 <input
@@ -370,7 +401,9 @@ function ExpenseForm({
                   checked={among.has(p.key)}
                   onChange={() => toggle(p.key)}
                 />
-                {p.name}
+                <span className={p.key === YOU ? "font-medium" : ""}>
+                  {p.name}
+                </span>
                 {method === "exact" && among.has(p.key) && (
                   <Input
                     value={exact[p.key] ?? ""}
@@ -384,6 +417,31 @@ function ExpenseForm({
               </label>
             ))}
           </div>
+          {/* Live preview so the split is tangible before saving. */}
+          {method === "equal" && equalShare != null && (
+            <p className="mt-1.5 text-xs text-zinc-500">
+              Split {selectedCount} {selectedCount === 1 ? "way" : "ways"} · ≈{" "}
+              {formatCents(equalShare, currency)} each
+            </p>
+          )}
+          {method === "exact" && totalCents != null && selectedCount > 0 && (
+            <p
+              className={`mt-1.5 text-xs ${
+                exactSum === totalCents
+                  ? "text-emerald-600"
+                  : exactSum > totalCents
+                    ? "text-red-600"
+                    : "text-zinc-500"
+              }`}
+            >
+              {formatCents(exactSum, currency)} of{" "}
+              {formatCents(totalCents, currency)}
+              {exactSum !== totalCents &&
+                ` · ${formatCents(Math.abs(totalCents - exactSum), currency)} ${
+                  exactSum > totalCents ? "over" : "left"
+                }`}
+            </p>
+          )}
         </div>
 
         {localError && <p className="text-sm text-red-600">{localError}</p>}

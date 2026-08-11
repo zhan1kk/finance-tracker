@@ -2263,12 +2263,27 @@ describe('API (e2e)', () => {
       expect(list.body).toHaveLength(1);
     });
 
-    it('rejects mark-paid on a non-installment reminder', async () => {
-      const created = await addReminder({ label: 'Netflix', cadence: 'monthly' });
+    it('rejects mark-paid on a one-off reminder with nothing to advance', async () => {
+      const created = await addReminder({ label: 'One-off donation' });
       await request(http)
         .post(`/reminders/${(created.body as { id: string }).id}/paid`)
         .set('Authorization', `Bearer ${token}`)
         .expect(400);
+    });
+
+    it('rolls a recurring reminder forward one period when marked paid', async () => {
+      const created = await addReminder({
+        label: 'Gym',
+        dueDate: '2026-08-15',
+        cadence: 'monthly',
+      });
+      const id = (created.body as { id: string }).id;
+      const paid = await request(http)
+        .post(`/reminders/${id}/paid`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      expect(paid.body).toMatchObject({ done: false });
+      expect((paid.body as { dueDate: string }).dueDate).toContain('2026-09-15');
     });
 
     it('detects a recurring monthly bill and does not duplicate it', async () => {

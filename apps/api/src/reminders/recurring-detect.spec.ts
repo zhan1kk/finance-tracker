@@ -73,26 +73,37 @@ describe('detectRecurringBills', () => {
     expect(res).toHaveLength(1);
     expect(res[0]).toMatchObject({
       cadence: 'monthly',
-      amountCents: 999 + 1_099, // the latest month's total
+      amountCents: 999 + 1_099, // the most recent complete month's total
       label: 'Subscriptions',
       sourceTransactionId: 's2',
     });
   });
 
-  it('flags obvious bills (Rent) from a single occurrence', () => {
+  it('uses the most recent complete month, ignoring a partial current one', () => {
+    const asOf = day('2026-05-20'); // mid-May: May is still in progress
     const res = detectRecurringBills(
       [
-        txn({
-          id: 'a',
-          subcategoryId: 'r',
-          name: 'Rent',
-          date: day('2026-04-01'),
-          amount: 80_000,
-        }),
+        // Full months: two streaming services each.
+        txn({ id: 'm1', subcategoryId: 'subs', name: 'Streaming', date: day('2026-03-05'), amount: 999 }),
+        txn({ id: 'm2', subcategoryId: 'subs', name: 'Streaming', date: day('2026-03-12'), amount: 1_099 }),
+        txn({ id: 'a1', subcategoryId: 'subs', name: 'Streaming', date: day('2026-04-05'), amount: 999 }),
+        txn({ id: 'a2', subcategoryId: 'subs', name: 'Streaming', date: day('2026-04-12'), amount: 1_099 }),
+        // Only one has posted so far this (current) month — don't let it
+        // understate the reminder amount.
+        txn({ id: 'p1', subcategoryId: 'subs', name: 'Streaming', date: day('2026-05-05'), amount: 999 }),
       ],
-      now,
+      asOf,
     );
     expect(res).toHaveLength(1);
-    expect(res[0]).toMatchObject({ cadence: 'monthly', label: 'Rent' });
+    expect(res[0].amountCents).toBe(999 + 1_099); // April's full total, not May's 999
+  });
+
+  it('ignores a single charge even for a bill that looks obvious', () => {
+    // No hardcoded bill names — a lone "Rent" charge has no pattern yet.
+    const res = detectRecurringBills(
+      [txn({ id: 'a', subcategoryId: 'r', name: 'Rent', date: day('2026-04-01'), amount: 80_000 })],
+      now,
+    );
+    expect(res).toEqual([]);
   });
 });

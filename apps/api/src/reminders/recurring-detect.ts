@@ -7,11 +7,6 @@
 
 const DAY = 86_400_000;
 
-// Obvious recurring bills qualify from a single occurrence — a first rent or
-// travel-pass charge is clearly monthly before a pattern has formed.
-const OBVIOUS_MONTHLY =
-  /\b(rent|miete|deutschland\s?ticket|deutschlandticket|d-ticket)\b/i;
-
 export type BillTxn = {
   id: string;
   subcategoryId: string;
@@ -57,14 +52,16 @@ export function detectRecurringBills(
     // several services (many charges a month, on different days) still reads as
     // a clean monthly recurrence, and the reminder shows the whole month's total.
     const months = monthBuckets(sorted);
-    const cadence = inferCadence(months, latest.name);
+    const cadence = inferCadence(months);
     if (!cadence) continue;
     out.push({
       subcategoryId,
       label: latest.name,
-      // The most recent month's total — right for both a single bill and a
-      // lumped "all subscriptions" subcategory.
-      amountCents: months[months.length - 1].total,
+      // The most recent COMPLETE month's total — right for a single bill and,
+      // for a lumped "all subscriptions" subcategory, avoids understating the
+      // amount from an in-progress current month that only has some charges so
+      // far. Falls back to the latest month if that's all there is.
+      amountCents: representativeAmount(months, now),
       currency: latest.currency,
       cadence,
       nextDate: nextAfter(latest.date, cadence, now),
@@ -72,6 +69,21 @@ export function detectRecurringBills(
     });
   }
   return out;
+}
+
+/**
+ * The total to show for the reminder: the most recent month that isn't the
+ * current (still in-progress) calendar month, so a lumped subcategory reflects a
+ * full month's charges rather than a partial one. Falls back to the latest month
+ * when every charge is in the current month (e.g. a first Rent charge).
+ */
+function representativeAmount(months: MonthBucket[], now: Date): number {
+  const currentKey = `${now.getUTCFullYear()}-${now.getUTCMonth()}`;
+  const complete = months.filter(
+    (m) => `${m.date.getUTCFullYear()}-${m.date.getUTCMonth()}` !== currentKey,
+  );
+  const pick = complete.length ? complete : months;
+  return pick[pick.length - 1].total;
 }
 
 /** Collapses charges to one bucket per calendar month (earliest date, summed). */
@@ -88,24 +100,20 @@ function monthBuckets(sorted: BillTxn[]): MonthBucket[] {
 
 /**
  * The cadence a subcategory repeats on, or null if it isn't a clean recurrence.
- * Works off one point per month; the ±5-day tolerance (for payments that slip
- * when a balance is short) is baked into the bands: monthly = 30±5, quarterly
- * = 90±5.
+ * Purely pattern-based (no hardcoded bill names, so it generalizes to any
+ * user): it needs at least two months of history. Works off one point per
+ * month; the ±5-day tolerance (for payments that slip when a balance is short)
+ * is baked into the bands: monthly = 30±5, quarterly = 90±5.
  */
-function inferCadence(
-  months: MonthBucket[],
-  name: string,
-): 'monthly' | 'quarterly' | null {
-  if (months.length >= 2) {
-    const intervals: number[] = [];
-    for (let i = 1; i < months.length; i++) {
-      intervals.push((months[i].date.getTime() - months[i - 1].date.getTime()) / DAY);
-    }
-    const med = median(intervals);
-    if (med >= 25 && med <= 35) return 'monthly';
-    if (med >= 85 && med <= 95) return 'quarterly';
+function inferCadence(months: MonthBucket[]): 'monthly' | 'quarterly' | null {
+  if (months.length < 2) return null;
+  const intervals: number[] = [];
+  for (let i = 1; i < months.length; i++) {
+    intervals.push((months[i].date.getTime() - months[i - 1].date.getTime()) / DAY);
   }
-  if (OBVIOUS_MONTHLY.test(name)) return 'monthly';
+  const med = median(intervals);
+  if (med >= 25 && med <= 35) return 'monthly';
+  if (med >= 85 && med <= 95) return 'quarterly';
   return null;
 }
 
