@@ -47,12 +47,98 @@ export class ReminderService {
   ) {}
 
   /** Open reminders first (soonest due), dismissed ones last. */
-  list(userId: string) {
+  async list(userId: string) {
+    // Self-heal first: advance any payment reminder past months already paid
+    // (an imported transaction covers them), so a settled bill/installment
+    // stops showing as due/overdue.
+    await this.reconcile(userId);
     return this.prisma.reminder.findMany({
       where: { userId },
       orderBy: [{ done: 'asc' }, { dueDate: 'asc' }, { createdAt: 'asc' }],
       include: REMINDER_INCLUDE,
     });
+  }
+
+  /**
+   * Advances open payment reminders (bills/installments with a cadence and a
+   * category) past every period that already has a matching, non-internal
+   * expense on/after the due date — i.e. a payment you've made and imported.
+   * Installments also bump their paid count and auto-complete. Idempotent: once
+   * the due date sits beyond the latest matching transaction, nothing changes,
+   * so it's safe to run on every list. Best-effort — a failure never breaks the
+   * list.
+   */
+  private async reconcile(userId: string): Promise<void> {
+    try {
+      const reminders = await this.prisma.reminder.findMany({
+        where: {
+          userId,
+          done: false,
+          kind: 'payment',
+          subcategoryId: { not: null },
+          dueDate: { not: null },
+          cadence: { in: ['weekly', 'monthly', 'quarterly', 'yearly'] },
+        },
+        select: {
+          id: true,
+          subcategoryId: true,
+          dueDate: true,
+          cadence: true,
+          installmentsTotal: true,
+          installmentsPaid: true,
+        },
+      });
+
+      for (const r of reminders) {
+        const dueDate = r.dueDate as Date;
+        // The latest matching payment on/after the current due date. Its date
+        // being ≥ dueDate means the due period was actually paid.
+        const latest = await this.prisma.transaction.findFirst({
+          where: {
+            account: { is: { userId } },
+            type: 'EXPENSE',
+            excludeFromStats: false,
+            subcategoryId: r.subcategoryId,
+            date: { gte: dueDate },
+          },
+          orderBy: { date: 'desc' },
+          select: { date: true },
+        });
+        if (!latest) continue;
+
+        let next = dueDate;
+        let paid = r.installmentsPaid ?? 0;
+        const total = r.installmentsTotal;
+        let done = false;
+        let guard = 0;
+        // Step forward one period per paid month, until the due date is beyond
+        // the latest payment (or the plan is complete).
+        while (next.getTime() <= latest.date.getTime() && guard++ < 120) {
+          next = advanceDate(next, r.cadence as string);
+          if (total != null) {
+            paid = Math.min(paid + 1, total);
+            if (paid >= total) {
+              done = true;
+              break;
+            }
+          }
+        }
+
+        if (!done && next.getTime() === dueDate.getTime()) continue; // no move
+        await this.prisma.reminder.update({
+          where: { id: r.id },
+          data: {
+            dueDate: next,
+            installmentsPaid: total != null ? paid : undefined,
+            done: done || undefined,
+          },
+        });
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Reminder reconcile skipped: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   /** Add a reminder by hand (e.g. a subscription or bill). */
@@ -195,12 +281,30 @@ export class ReminderService {
         amount: true,
         description: true,
         account: { select: { currency: true } },
-        subcategory: { select: { name: true } },
+        subcategory: { select: { id: true, name: true } },
       },
     });
 
     let scanned = 0;
     let created = 0;
+
+    // Categories that already have an open payment reminder — one reminder per
+    // plan is enough; reconcile() keeps it advanced as later payments arrive, so
+    // don't pile up a second. (Rows are newest-first, so the reminder anchors to
+    // the most recent payment and older ones in the same plan are skipped.)
+    const remindedSubs = new Set(
+      (
+        await this.prisma.reminder.findMany({
+          where: {
+            userId,
+            done: false,
+            kind: 'payment',
+            subcategoryId: { not: null },
+          },
+          select: { subcategoryId: true },
+        })
+      ).map((r) => r.subcategoryId as string),
+    );
 
     // Pass 1 — deterministic installments. The count and label come straight
     // from the row (its subcategory name), never from a model guess.
@@ -214,6 +318,8 @@ export class ReminderService {
       }
       // A fully-paid plan ("3/3") has nothing left to remind about.
       if (inst.paid >= inst.total) continue;
+      const subId = t.subcategory?.id ?? null;
+      if (subId && remindedSubs.has(subId)) continue; // plan already reminded
       scanned++;
       const madeOne = await this.createSafely({
         userId,
@@ -227,9 +333,14 @@ export class ReminderService {
         cadence: 'monthly',
         installmentsTotal: inst.total,
         installmentsPaid: inst.paid,
+        // Lets reconcile() advance this plan as later payments are imported.
+        subcategoryId: subId,
         sourceTransactionId: t.id,
       });
-      if (madeOne) created++;
+      if (madeOne) {
+        created++;
+        if (subId) remindedSubs.add(subId);
+      }
     }
 
     // Pass 2 — money owed, via the local model, on the IOU-hint rows only.

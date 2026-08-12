@@ -2401,6 +2401,53 @@ describe('API (e2e)', () => {
         .expect(201);
       expect(second.body).toEqual({ created: 0 });
     });
+
+    it('reconciles a paid installment forward so it no longer shows overdue', async () => {
+      const acc = (await createAccount(100_000)).id;
+      const sub = (await createSubcategory('Phone Plan Installment', 'Bills')).id;
+      // A stale installment reminder: 6/12 paid, next payment "due" a past month.
+      const created = await addReminder({
+        label: 'Phone Plan Installment',
+        subcategoryId: sub,
+        cadence: 'monthly',
+        dueDate: '2020-02-01',
+        amountCents: 5_000,
+        installmentsTotal: 12,
+        installmentsPaid: 6,
+      });
+      const id = (created.body as { id: string }).id;
+
+      // Import the payment that covers that due month.
+      await request(http)
+        .post('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          accountId: acc,
+          date: '2020-02-03',
+          type: 'EXPENSE',
+          amount: 5_000,
+          subcategoryId: sub,
+        })
+        .expect(201);
+
+      // Listing self-heals: it advances past the paid month, bumping the count.
+      const list = await request(http)
+        .get('/reminders')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const r = (
+        list.body as {
+          id: string;
+          dueDate: string;
+          installmentsPaid: number;
+          done: boolean;
+        }[]
+      ).find((x) => x.id === id);
+      expect(r).toBeDefined();
+      expect(r?.installmentsPaid).toBe(7);
+      expect(r?.done).toBe(false);
+      expect(r?.dueDate).toContain('2020-03-01');
+    });
   });
 
   describe('split ledger', () => {

@@ -13,6 +13,7 @@ ruvector.db
 # Local-only planning doc — kept on disk, intentionally out of git
 PLAN.md
 .DS_Store
-
 "EXCEL - Easy Budget.xlsx"
 *.xlsx
+.repowise/
+.claude/
