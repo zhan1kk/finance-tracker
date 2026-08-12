@@ -15,23 +15,27 @@ import {
 import { TelegramService } from './telegram.service';
 
 const HELP_TEXT = [
-  'Quick-capture bot for your finance tracker.',
+  '💸 Quick-capture for your finance tracker — great for cash spends you would',
+  'otherwise forget, with a note on what it was for.',
   '',
-  'Fastest — just send the amount and tap a category:',
-  '  40            (expense)',
-  '  +2000         (income)',
+  'Fastest — send the amount, tap a category, then type a note (or skip):',
+  '  40            expense → tap category → "lunch with Sam"',
+  '  +2000         income',
   '',
-  'Or type it all at once:',
+  'After it saves you can tap: Undo · Change date · Change amount · Add note.',
+  '(No note? Just carry on — the expense is already saved.)',
+  '',
+  'Prefer one line? Separate fields with " - ":',
   '  40 - dining out - lunch with friends',
   '  12.50 - groceries - snacks - 09.07',
+  '  amount - category - note (optional) - date (optional: DD.MM /',
+  '  DD.MM.YYYY / YYYY-MM-DD; default today).',
   '',
-  'Fields are separated by " - ": amount - category - note (optional) - date',
-  '(optional, DD.MM / DD.MM.YYYY / YYYY-MM-DD; default today).',
-  '',
-  '/account — choose which account captures go to',
-  '/rate — view or set the exchange rate (e.g. /rate 540 for 1 EUR = 540 KZT)',
-  '/link <code> — connect this chat (get the code from the web app, Accounts page)',
-  '/help — this message',
+  'Commands:',
+  '  /account — choose which account captures go to',
+  '  /rate — view or set the exchange rate (e.g. /rate 540 → 1 EUR = 540 KZT)',
+  '  /link <code> — connect this chat (get the code in the web app → Accounts)',
+  '  /help — show this message',
 ].join('\n');
 
 /**
@@ -81,7 +85,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       const linked = await this.telegram.linkChat(code, String(ctx.chat.id));
       await ctx.reply(
         linked
-          ? 'Linked! Send me something like: 12.50 groceries lunch'
+          ? 'Linked! 🎉 Try it: send  40  then tap a category and add a note — or type it in one line:  40 - groceries - lunch.  /help for more.'
           : 'That code is invalid or expired — generate a fresh one in the web app.',
       );
     });
@@ -122,6 +126,15 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       if (ctx.chat.type !== 'private') return;
       const chatId = String(ctx.chat.id);
 
+      // A just-booked capture may be waiting for a typed note / new amount; that
+      // claims this message first, unless it's itself a fresh capture (then
+      // applyPendingText returns null and we fall through as usual).
+      const pending = await this.guided.applyPendingText(chatId, ctx.message.text);
+      if (pending) {
+        await ctx.reply(pending.text, markup(pending));
+        return;
+      }
+
       // A message that is only an amount starts the button-driven picker;
       // anything richer still goes through the one-shot dash format.
       const amountOnly = parseAmountOnly(ctx.message.text);
@@ -157,12 +170,22 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         return;
       }
       if (data.startsWith('undo:')) {
+        // The transaction is going away — drop any note/amount edit waiting on it.
+        this.guided.clearPending(String(chatId));
         const text = await this.telegram.undoCapture(
           String(chatId),
           data.slice('undo:'.length),
         );
         await ctx.answerCallbackQuery();
         await ctx.editMessageText(text);
+        return;
+      }
+      if (data.startsWith('note:') || data.startsWith('amt:')) {
+        const field = data.startsWith('note:') ? 'note' : 'amount';
+        const id = data.slice(field === 'note' ? 'note:'.length : 'amt:'.length);
+        const reply = this.guided.promptEdit(String(chatId), field, id);
+        await ctx.answerCallbackQuery();
+        await ctx.editMessageText(reply.text, markup(reply));
         return;
       }
       if (data.startsWith('acct:')) {

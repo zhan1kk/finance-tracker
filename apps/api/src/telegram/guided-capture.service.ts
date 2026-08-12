@@ -3,6 +3,7 @@ import type { TransactionCategory } from '@prisma/client';
 import { BASE_CURRENCY } from '../fx/fx';
 import { PrismaService } from '../prisma.service';
 import { TransactionService } from '../transactions/transaction.service';
+import { parseAmountOnly, parseCapture } from './capture-parser';
 import { confirmationText, localDateISO, localTodayISO, money } from './format';
 
 /**
@@ -31,11 +32,25 @@ export type CaptureType = 'INCOME' | 'EXPENSE';
 const COLUMNS = 2;
 /** How many recent days the "Change date" picker offers. */
 const DATE_CHOICES = 5;
+/** How long a just-booked capture keeps listening for a follow-up note / amount
+ *  edit typed as the next message. */
+const PENDING_TTL_MS = 15 * 60_000;
 
 const NOT_LINKED = 'This chat is not linked.';
 
+/**
+ * A just-booked transaction awaiting a free-text follow-up: a note (the default
+ * right after booking) or a new amount (after "Change amount"). Held in memory
+ * only for the short window between the prompt and the reply — the transaction
+ * itself is always already saved, so nothing is lost if this is dropped.
+ */
+type Pending = { field: 'note' | 'amount'; transactionId: string; at: number };
+
 @Injectable()
 export class GuidedCaptureService {
+  /** chatId → the transaction awaiting a typed note / amount (see Pending). */
+  private readonly pending = new Map<string, Pending>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly transactionService: TransactionService,
@@ -145,7 +160,7 @@ export class GuidedCaptureService {
     };
   }
 
-  /** Step 4 — book it, dated today. */
+  /** Step 4 — book it (dated today), then invite a note as the next message. */
   async book(
     chatId: string,
     type: CaptureType,
@@ -178,24 +193,129 @@ export class GuidedCaptureService {
     );
     const account = await this.account(context.accountId);
 
+    // Listen for a note typed as the very next message. The expense is already
+    // saved, so ignoring the prompt (or sending the next amount) just leaves it
+    // note-less — nothing to skip, nothing lost.
+    this.setPending(chatId, 'note', transaction.id);
+
     return {
       transactionId: transaction.id,
-      text: confirmationText({
-        type,
-        amountCents,
-        amountBase: transaction.amountBase,
-        subcategoryName: subcategory.name,
-        account,
-        outlier: transaction.outlier,
-        baseCurrency: BASE_CURRENCY,
-      }),
-      buttons: [
-        [
-          { label: 'Undo', data: `undo:${transaction.id}` },
-          { label: 'Change date', data: `d:${transaction.id}` },
-        ],
-      ],
+      text:
+        confirmationText({
+          type,
+          amountCents,
+          amountBase: transaction.amountBase,
+          subcategoryName: subcategory.name,
+          account,
+          outlier: transaction.outlier,
+          baseCurrency: BASE_CURRENCY,
+        }) + '\n\n📝 Reply with a note (what it was for) — optional.',
+      buttons: editButtons(transaction.id),
     };
+  }
+
+  /** "Add note" / "Change amount" — start listening for the typed follow-up. */
+  promptEdit(chatId: string, field: 'note' | 'amount', transactionId: string): BotReply {
+    this.setPending(chatId, field, transactionId);
+    return {
+      text:
+        field === 'note'
+          ? 'Send the note (what it was for):'
+          : 'Send the new amount (e.g. 12.50):',
+    };
+  }
+
+  /**
+   * Applies a typed follow-up to the pending transaction. Returns null when
+   * there is nothing pending, or when the message is itself a fresh capture
+   * (an amount, or the dash format) that should start a new capture instead —
+   * so a bare "40" after booking is a new expense, not a note.
+   */
+  async applyPendingText(chatId: string, text: string): Promise<BotReply | null> {
+    const p = this.pending.get(chatId);
+    if (!p) return null;
+    if (Date.now() - p.at > PENDING_TTL_MS) {
+      this.pending.delete(chatId);
+      return null;
+    }
+
+    // "Change amount" expects a number; a bare amount here is the edit, not a
+    // new capture.
+    if (p.field === 'amount') {
+      const parsed = parseAmountOnly(text);
+      if (!parsed) {
+        // Keep listening — they mistyped the amount.
+        return { text: 'That is not an amount. Send just the number, e.g. 12.50.' };
+      }
+      const context = await this.context(chatId);
+      if ('error' in context) {
+        this.pending.delete(chatId);
+        return { text: context.error };
+      }
+      this.pending.delete(chatId);
+      const updated = await this.transactionService.updateTransaction(
+        context.userId,
+        p.transactionId,
+        { amount: parsed.amountCents },
+      );
+      const account = await this.account(context.accountId);
+      return {
+        transactionId: p.transactionId,
+        text: `Amount updated.\n${this.summary(updated, account)}`,
+        buttons: editButtons(p.transactionId),
+      };
+    }
+
+    // p.field === 'note': a fresh capture (amount-only, or the dash format)
+    // supersedes an unfilled note prompt, so a bare "40" is a new expense.
+    if (parseAmountOnly(text) || parseCapture(text)) {
+      this.pending.delete(chatId);
+      return null;
+    }
+    const context = await this.context(chatId);
+    if ('error' in context) {
+      this.pending.delete(chatId);
+      return { text: context.error };
+    }
+    this.pending.delete(chatId);
+    const updated = await this.transactionService.updateTransaction(
+      context.userId,
+      p.transactionId,
+      { description: text.trim() },
+    );
+    const account = await this.account(context.accountId);
+    return {
+      transactionId: p.transactionId,
+      text: `📝 Noted.\n${this.summary(updated, account)}`,
+      buttons: editButtons(p.transactionId),
+    };
+  }
+
+  /** Forget any pending follow-up (e.g. after Undo deletes the transaction). */
+  clearPending(chatId: string): void {
+    this.pending.delete(chatId);
+  }
+
+  private setPending(
+    chatId: string,
+    field: 'note' | 'amount',
+    transactionId: string,
+  ): void {
+    this.pending.set(chatId, { field, transactionId, at: Date.now() });
+  }
+
+  /** A compact one-line summary of a transaction after an edit. */
+  private summary(
+    t: { type: string; amount: number; description: string | null; subcategory: { name: string } | null },
+    account: { name: string; currency: string; balance: number },
+  ): string {
+    const sign = t.type === 'INCOME' ? '+' : '−';
+    const name = t.subcategory?.name ?? 'transaction';
+    const note = t.description ? ` · ${t.description}` : '';
+    return (
+      `${sign}${money(t.amount, account.currency)} · ${name}${note}\n` +
+      `${account.name}: ${money(account.balance, account.currency)}`
+    );
   }
 
   /** "Change date" — offer the last few days. */
@@ -233,7 +353,7 @@ export class GuidedCaptureService {
     const name = transaction.subcategory?.name ?? 'transaction';
     return {
       text: `Moved to ${dateISO} · ${money(transaction.amount, account.currency)} · ${name}`,
-      buttons: [[{ label: 'Undo', data: `undo:${transactionId}` }]],
+      buttons: editButtons(transactionId),
     };
   }
 
@@ -288,6 +408,20 @@ function signFilter(type: CaptureType) {
   return {
     category: type === 'INCOME' ? ('Income' as const) : { not: 'Income' as const },
   };
+}
+
+/** Post-book actions: undo, or edit the date / amount / note in place. */
+function editButtons(transactionId: string): Button[][] {
+  return [
+    [
+      { label: 'Undo', data: `undo:${transactionId}` },
+      { label: 'Change date', data: `d:${transactionId}` },
+    ],
+    [
+      { label: 'Change amount', data: `amt:${transactionId}` },
+      { label: 'Add note', data: `note:${transactionId}` },
+    ],
+  ];
 }
 
 function short(type: CaptureType): 'i' | 'e' {
