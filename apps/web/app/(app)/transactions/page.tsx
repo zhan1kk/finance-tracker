@@ -3,17 +3,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
+import { MultiSelect } from "@/components/multi-select";
 import { api, downloadFile } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatCents, parseAmountToCents, todayISO } from "@/lib/format";
 import { periodOf, periodRange, shiftPeriod } from "@/lib/period";
-import type {
-  Account,
-  Subcategory,
-  TelegramSettings,
-  Transaction,
-  TransactionList,
-  TransactionType,
+import {
+  TRANSACTION_CATEGORIES,
+  type Account,
+  type Subcategory,
+  type TelegramSettings,
+  type Transaction,
+  type TransactionList,
+  type TransactionType,
 } from "@/lib/types";
 
 type Filters = {
@@ -791,67 +793,24 @@ function CategoryFilter({
   selected: string[];
   onChange: (ids: string[]) => void;
 }) {
-  const selectedSet = new Set(selected);
-  const toggle = (id: string) =>
-    onChange(
-      selectedSet.has(id) ? selected.filter((x) => x !== id) : [...selected, id],
-    );
-
-  // Group by category (Income / Expenses / Bills / …) for scannability.
-  const groups = new Map<string, Subcategory[]>();
-  for (const s of subcategories) {
-    const list = groups.get(s.category) ?? [];
-    list.push(s);
-    groups.set(s.category, list);
-  }
+  // Order options by category (Income / Expenses / Bills / …) then name, so the
+  // grouped dropdown reads top-down in the familiar order.
+  const order = (c: string) => {
+    const i = TRANSACTION_CATEGORIES.indexOf(c as (typeof TRANSACTION_CATEGORIES)[number]);
+    return i === -1 ? TRANSACTION_CATEGORIES.length : i;
+  };
+  const options = [...subcategories]
+    .sort((a, b) => order(a.category) - order(b.category) || a.name.localeCompare(b.name))
+    .map((s) => ({ id: s.id, label: s.name, group: s.category }));
 
   return (
-    <details className="relative">
-      <summary className="flex h-9 w-40 cursor-pointer list-none items-center justify-between rounded-md border border-zinc-300 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-900 [&::-webkit-details-marker]:hidden">
-        <span className={selected.length ? "" : "text-zinc-500"}>
-          {selected.length === 0 ? "All" : `${selected.length} selected`}
-        </span>
-        <span className="text-zinc-400">▾</span>
-      </summary>
-      <div className="absolute z-20 mt-1 max-h-72 w-64 overflow-y-auto rounded-md border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="mb-1 flex items-center justify-between px-1">
-          <span className="text-xs text-zinc-400">
-            {selected.length} selected
-          </span>
-          {selected.length > 0 && (
-            <button
-              className="text-xs text-zinc-500 hover:underline"
-              onClick={() => onChange([])}
-            >
-              Clear
-            </button>
-          )}
-        </div>
-        {[...groups.entries()].map(([category, subs]) => (
-          <div key={category} className="mb-1">
-            <p className="px-1 pt-1 text-xs font-medium text-zinc-400">
-              {category}
-            </p>
-            {subs.map((s) => (
-              <label
-                key={s.id}
-                className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedSet.has(s.id)}
-                  onChange={() => toggle(s.id)}
-                />
-                {s.name}
-              </label>
-            ))}
-          </div>
-        ))}
-        {subcategories.length === 0 && (
-          <p className="px-1 text-xs text-zinc-400">No categories.</p>
-        )}
-      </div>
-    </details>
+    <MultiSelect
+      options={options}
+      selected={selected}
+      onChange={onChange}
+      placeholder="All"
+      searchPlaceholder="Search categories…"
+    />
   );
 }
 
