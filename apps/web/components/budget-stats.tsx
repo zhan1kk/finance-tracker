@@ -11,6 +11,28 @@ import type { Budget } from "@/lib/types";
 const budgetName = (b: Budget) =>
   b.subcategory ? b.subcategory.name : `${b.category} (whole category)`;
 
+/** One month's figures for a budget: spend, its limit, and whether it went over. */
+type MonthInfo = { spent: number; limit: number; over: boolean };
+
+/** A comparison cell: "spent / budget", spend in red when it went over. */
+function MonthCell({
+  info,
+  currency,
+}: {
+  info: MonthInfo | null;
+  currency: string;
+}) {
+  if (!info) return <span className="text-zinc-400">—</span>;
+  return (
+    <span className="tabular-nums">
+      <span className={info.over ? "font-medium text-red-600" : ""}>
+        {formatCents(info.spent, currency)}
+      </span>
+      <span className="text-zinc-400"> / {formatCents(info.limit, currency)}</span>
+    </span>
+  );
+}
+
 /** Stat tile: a label over a number. */
 function Stat({
   label,
@@ -149,30 +171,35 @@ export function BudgetCompare({
     queryFn: () => api<Budget[]>(`/budgets?period=${monthB}`),
   });
 
-  const spentById = (list: Budget[] | undefined) => {
-    const m = new Map<string, { name: string; spent: number }>();
+  const infoById = (list: Budget[] | undefined) => {
+    const m = new Map<string, MonthInfo & { name: string }>();
     for (const bud of list ?? [])
-      m.set(bud.id, { name: budgetName(bud), spent: bud.spentCents });
+      m.set(bud.id, {
+        name: budgetName(bud),
+        spent: bud.spentCents,
+        limit: bud.limit,
+        over: bud.overBudget,
+      });
     return m;
   };
-  const mapA = spentById(a.data);
-  const mapB = spentById(b.data);
+  const mapA = infoById(a.data);
+  const mapB = infoById(b.data);
 
   const rows = [...new Set([...mapA.keys(), ...mapB.keys()])]
     .map((id) => {
-      const ra = mapA.get(id);
-      const rb = mapB.get(id);
-      return {
-        id,
-        name: rb?.name ?? ra?.name ?? "—",
-        spentA: ra ? ra.spent : null,
-        spentB: rb ? rb.spent : null,
-      };
+      const ra = mapA.get(id) ?? null;
+      const rb = mapB.get(id) ?? null;
+      return { id, name: rb?.name ?? ra?.name ?? "—", a: ra, b: rb };
     })
-    .sort((x, y) => (y.spentB ?? y.spentA ?? 0) - (x.spentB ?? x.spentA ?? 0));
+    .sort((x, y) => (y.b?.spent ?? y.a?.spent ?? 0) - (x.b?.spent ?? x.a?.spent ?? 0));
 
-  const totalA = [...mapA.values()].reduce((s, r) => s + r.spent, 0);
-  const totalB = [...mapB.values()].reduce((s, r) => s + r.spent, 0);
+  const total = (m: Map<string, MonthInfo & { name: string }>): MonthInfo => {
+    const spent = [...m.values()].reduce((s, r) => s + r.spent, 0);
+    const limit = [...m.values()].reduce((s, r) => s + r.limit, 0);
+    return { spent, limit, over: spent > limit };
+  };
+  const totalA = total(mapA);
+  const totalB = total(mapB);
 
   return (
     <Card>
@@ -225,34 +252,39 @@ export function BudgetCompare({
                   className="border-b border-zinc-100 last:border-0 dark:border-zinc-900"
                 >
                   <td className="py-1.5 pr-3">{r.name}</td>
-                  <td className="py-1.5 pr-3 text-right tabular-nums text-zinc-500">
-                    {r.spentA == null ? "—" : formatCents(r.spentA, currency)}
+                  <td className="py-1.5 pr-3 text-right">
+                    <MonthCell info={r.a} currency={currency} />
                   </td>
-                  <td className="py-1.5 pr-3 text-right tabular-nums">
-                    {r.spentB == null ? "—" : formatCents(r.spentB, currency)}
+                  <td className="py-1.5 pr-3 text-right">
+                    <MonthCell info={r.b} currency={currency} />
                   </td>
                   <td className="py-1.5 text-right tabular-nums">
-                    <Delta a={r.spentA} b={r.spentB} currency={currency} />
+                    <Delta
+                      a={r.a?.spent ?? null}
+                      b={r.b?.spent ?? null}
+                      currency={currency}
+                    />
                   </td>
                 </tr>
               ))}
               <tr className="border-t-2 border-zinc-200 font-medium dark:border-zinc-700">
                 <td className="py-1.5 pr-3">Total</td>
-                <td className="py-1.5 pr-3 text-right tabular-nums text-zinc-500">
-                  {formatCents(totalA, currency)}
+                <td className="py-1.5 pr-3 text-right">
+                  <MonthCell info={totalA} currency={currency} />
                 </td>
-                <td className="py-1.5 pr-3 text-right tabular-nums">
-                  {formatCents(totalB, currency)}
+                <td className="py-1.5 pr-3 text-right">
+                  <MonthCell info={totalB} currency={currency} />
                 </td>
                 <td className="py-1.5 text-right tabular-nums">
-                  <Delta a={totalA} b={totalB} currency={currency} />
+                  <Delta a={totalA.spent} b={totalB.spent} currency={currency} />
                 </td>
               </tr>
             </tbody>
           </table>
           <p className="mt-2 text-xs text-zinc-400">
-            Spending is net of reimbursements. Less spent is greener; more is
-            redder.
+            Each cell is <span className="tabular-nums">spent / budget</span> (net
+            of reimbursements); red spend went over that month&rsquo;s budget.
+            Change compares spend — less is greener, more is redder.
           </p>
         </div>
       )}
