@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
+import { BudgetCompare, BudgetSummary } from "@/components/budget-stats";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatCents, parseAmountToCents } from "@/lib/format";
@@ -236,6 +237,7 @@ export default function BudgetsPage() {
             No budgets yet — add one above to keep a category in check.
           </p>
         )}
+        <BudgetSummary budgets={budgets.data ?? []} currency={currency} />
         <ul className="flex flex-col gap-4">
           {budgets.data?.map((budget) => (
             <BudgetRow
@@ -285,6 +287,12 @@ export default function BudgetsPage() {
           ))}
         </ul>
       </Card>
+
+      <BudgetCompare
+        currentPeriod={currentPeriod}
+        monthStartDay={monthStartDay}
+        currency={currency}
+      />
     </main>
   );
 }
