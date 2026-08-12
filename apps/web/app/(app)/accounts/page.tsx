@@ -69,6 +69,16 @@ export default function AccountsPage() {
     onError: setError,
   });
 
+  const changeType = useMutation({
+    mutationFn: ({ id, type }: { id: string; type: string }) =>
+      api<Account>(`/accounts/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ type }),
+      }),
+    onSuccess: invalidate,
+    onError: setError,
+  });
+
   const remove = useMutation({
     mutationFn: (id: string) =>
       api(`/accounts/${id}`, { method: "DELETE" }),
@@ -136,7 +146,22 @@ export default function AccountsPage() {
           {account.countInNetWorth ? "in net worth" : "✕ not in net worth"}
         </button>
       </div>
-      <div className="flex flex-wrap justify-end gap-1">
+      <div className="flex flex-wrap items-center justify-end gap-1">
+        <Select
+          value={account.type}
+          aria-label="Account type"
+          title="Change account type"
+          onChange={(e) => {
+            setError(null);
+            changeType.mutate({ id: account.id, type: e.target.value });
+          }}
+        >
+          {ACCOUNT_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </Select>
         <Button
           variant="ghost"
           onClick={() => {

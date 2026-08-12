@@ -383,16 +383,7 @@ function ExpenseForm({
         </div>
 
         <div>
-          <div className="mb-1.5 flex items-center justify-between">
-            <p className="text-sm text-zinc-500">Split among</p>
-            <button
-              type="button"
-              onClick={toggleAll}
-              className="rounded border border-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-            >
-              {allSelected ? "Clear all" : "Select all"}
-            </button>
-          </div>
+          <p className="mb-1.5 text-sm text-zinc-500">Split among</p>
           <div className="flex flex-wrap gap-x-4 gap-y-2">
             {all.map((p) => (
               <label key={p.key} className="flex items-center gap-1.5 text-sm">
@@ -445,14 +436,21 @@ function ExpenseForm({
         </div>
 
         {localError && <p className="text-sm text-red-600">{localError}</p>}
-        <div>
+        <div className="flex items-center gap-2">
           <Button type="submit" disabled={pending || friends.length === 0}>
             Add expense
           </Button>
+          {friends.length > 0 && (
+            <button
+              type="button"
+              onClick={toggleAll}
+              className="rounded border border-zinc-200 px-2 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              {allSelected ? "Clear all" : "Select all"}
+            </button>
+          )}
           {friends.length === 0 && (
-            <span className="ml-2 text-sm text-zinc-500">
-              Add a friend first.
-            </span>
+            <span className="text-sm text-zinc-500">Add a friend first.</span>
           )}
         </div>
       </form>
