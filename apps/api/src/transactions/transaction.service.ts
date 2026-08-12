@@ -5,20 +5,16 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { type Account, Prisma } from '@prisma/client';
-import { periodLabelShiftMonths, periodOffsetDays } from '../common/period';
 import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
 import type { TransactionCategory } from '../subcategories/types/subcategory.types';
+import { effectOnAccount, signedDelta } from './money';
 import { checkOutlier, type OutlierVerdict } from './outlier';
 import type {
   BulkUpdateInput,
-  CategoryStat,
   CreateTransactionInput,
   ListTransactionsQuery,
-  MonthlyStat,
   SplitPartInput,
-  StatsQuery,
-  TransactionStats,
   TransactionType,
   UpdateTransactionInput,
 } from './types/transaction.types';
@@ -121,6 +117,7 @@ export class TransactionService {
         type: true,
         amount: true,
         accountId: true,
+        counterAccountId: true,
       },
       orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
     });
@@ -128,15 +125,7 @@ export class TransactionService {
     let running = account.initialBalance;
     const balanceById = new Map<string, number>();
     for (const t of all) {
-      const effect =
-        t.type === 'INCOME'
-          ? t.amount
-          : t.type === 'EXPENSE'
-            ? -t.amount
-            : t.accountId === accountId
-              ? -t.amount // transfer out of this account
-              : t.amount; // transfer into this account
-      running += effect;
+      running += effectOnAccount(t, accountId);
       balanceById.set(t.id, running);
     }
 
@@ -144,123 +133,6 @@ export class TransactionService {
       ...item,
       runningBalance: balanceById.get(item.id),
     }));
-  }
-
-  /**
-   * Aggregates for dashboards, all in cents. Transfers are excluded.
-   * Reimbursements (INCOME linked to an EXPENSE) are not counted as income;
-   * they reduce expenses instead — monthly in the month received, per-category
-   * against the parent expense's subcategory.
-   */
-  async getStats(userId: string, query: StatsQuery): Promise<TransactionStats> {
-    const period = await this.periodExpression(userId);
-    const range = [
-      ...(query.from ? [Prisma.sql`t."date" >= ${new Date(query.from)}`] : []),
-      ...(query.to ? [Prisma.sql`t."date" <= ${new Date(query.to)}`] : []),
-    ];
-    const scope = (extra: Prisma.Sql) =>
-      Prisma.join(
-        [
-          Prisma.sql`a."userId" = ${userId}`,
-          // Internal moves (own-account transfers / currency exchanges) move a
-          // balance but are not earnings or spending, so they never count here.
-          Prisma.sql`t."excludeFromStats" = false`,
-          extra,
-          ...range,
-        ],
-        ' AND ',
-      );
-
-    const [monthly, byCategory, incomeByCategory] = await this.prisma.$transaction([
-      this.prisma.$queryRaw<MonthlyStat[]>`
-        SELECT
-          ${period} AS month,
-          COALESCE(SUM(t."amountBase") FILTER (
-            WHERE t."type" = 'INCOME' AND t."parentTransactionId" IS NULL
-          ), 0)::int AS income,
-          (COALESCE(SUM(t."amountBase") FILTER (WHERE t."type" = 'EXPENSE'), 0)
-           - COALESCE(SUM(t."amountBase") FILTER (
-               -- Skip reimbursements of an internal parent: that expense isn't
-               -- counted, so netting its payback would leave a phantom credit.
-               WHERE t."type" = 'INCOME' AND t."parentTransactionId" IS NOT NULL
-                 AND p."excludeFromStats" = false
-             ), 0))::int AS expense
-        FROM "Transaction" t
-        JOIN "Account" a ON a."id" = t."accountId"
-        LEFT JOIN "Transaction" p ON p."id" = t."parentTransactionId"
-        WHERE ${scope(Prisma.sql`t."type" <> 'TRANSFER'`)}
-        GROUP BY 1
-        ORDER BY 1
-      `,
-      this.prisma.$queryRaw<CategoryStat[]>`
-        SELECT
-          s."id" AS "subcategoryId",
-          s."name",
-          s."category"::text AS category,
-          SUM(x.signed)::int AS amount
-        FROM (
-          SELECT t."subcategoryId" AS sid, t."amountBase" AS signed
-          FROM "Transaction" t
-          JOIN "Account" a ON a."id" = t."accountId"
-          WHERE ${scope(Prisma.sql`t."type" = 'EXPENSE'`)}
-          UNION ALL
-          SELECT p."subcategoryId" AS sid, -t."amountBase" AS signed
-          FROM "Transaction" t
-          JOIN "Account" a ON a."id" = t."accountId"
-          JOIN "Transaction" p ON p."id" = t."parentTransactionId"
-          WHERE ${scope(
-            // Only net a payback against a parent that actually counts — an
-            // internal parent is excluded, so its reimbursement must be too.
-            Prisma.sql`t."type" = 'INCOME' AND t."parentTransactionId" IS NOT NULL AND p."excludeFromStats" = false`,
-          )}
-        ) x
-        JOIN "Subcategory" s ON s."id" = x.sid
-        GROUP BY s."id", s."name", s."category"
-        ORDER BY amount DESC
-      `,
-      // Income by subcategory: real income only (reimbursements, which carry a
-      // parent, are money coming back — not earnings — so they are excluded,
-      // matching how monthly income is counted).
-      this.prisma.$queryRaw<CategoryStat[]>`
-        SELECT
-          s."id" AS "subcategoryId",
-          s."name",
-          s."category"::text AS category,
-          COALESCE(SUM(t."amountBase"), 0)::int AS amount
-        FROM "Transaction" t
-        JOIN "Account" a ON a."id" = t."accountId"
-        JOIN "Subcategory" s ON s."id" = t."subcategoryId"
-        WHERE ${scope(
-          Prisma.sql`t."type" = 'INCOME' AND t."parentTransactionId" IS NULL`,
-        )}
-        GROUP BY s."id", s."name", s."category"
-        ORDER BY amount DESC
-      `,
-    ]);
-
-    return { monthly, byCategory, incomeByCategory };
-  }
-
-  /**
-   * SQL that labels a transaction's financial month. Shifting the date back by
-   * `monthStartDay - 1` days makes the calendar-month truncation land on the
-   * right period; the month offset then names it after the month it ends in.
-   * With the default start day of 1 this is exactly `date_trunc('month', date)`.
-   */
-  private async periodExpression(userId: string): Promise<Prisma.Sql> {
-    const { monthStartDay } = await this.prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-      select: { monthStartDay: true },
-    });
-    const offset = periodOffsetDays(monthStartDay);
-    const shift = periodLabelShiftMonths(monthStartDay);
-    // The ::int casts matter: Prisma binds JS numbers as bigint, and there is no
-    // make_interval overload for that.
-    return Prisma.sql`to_char(
-      date_trunc('month', t."date" - make_interval(days => ${offset}::int))
-        + make_interval(months => ${shift}::int),
-      'YYYY-MM'
-    )`;
   }
 
   async getTransactionById(userId: string, id: string) {
@@ -326,7 +198,7 @@ export class TransactionService {
       ? await this.outlierVerdict(userId, input, amountBase)
       : null;
 
-    const delta = this.signedDelta(input.type, input.amount);
+    const delta = signedDelta(input.type, input.amount);
 
     const [transaction, updatedAccount] = await this.prisma.$transaction([
       this.prisma.transaction.create({
@@ -409,11 +281,8 @@ export class TransactionService {
       this.ensureCategoryMatchesType(existing.type, newSubcategory.category);
     }
 
-    const oldDelta = this.signedDelta(existing.type, existing.amount);
-    const newDelta = this.signedDelta(
-      existing.type,
-      input.amount ?? existing.amount,
-    );
+    const oldDelta = signedDelta(existing.type, existing.amount);
+    const newDelta = signedDelta(existing.type, input.amount ?? existing.amount);
 
     // Amount and date both feed the base conversion (date picks the rate).
     const newDate = input.date ? new Date(input.date) : existing.date;
@@ -482,7 +351,7 @@ export class TransactionService {
       return;
     }
 
-    const delta = this.signedDelta(transaction.type, transaction.amount);
+    const delta = signedDelta(transaction.type, transaction.amount);
     await this.prisma.$transaction([
       this.prisma.transaction.delete({ where: { id } }),
       this.prisma.account.update({
@@ -654,16 +523,15 @@ export class TransactionService {
       );
     }
 
-    // Net the reversal per account so each account is touched once.
+    // Net the reversal per account so each account is touched once — undo each
+    // transaction's effect on every account it touched.
     const byAccount = new Map<string, number>();
     const add = (accountId: string, delta: number) =>
       byAccount.set(accountId, (byAccount.get(accountId) ?? 0) + delta);
     for (const t of txns) {
-      if (t.type === 'TRANSFER') {
-        add(t.accountId, t.amount);
-        if (t.counterAccountId) add(t.counterAccountId, -t.amount);
-      } else {
-        add(t.accountId, -this.signedDelta(t.type as TransactionType, t.amount));
+      add(t.accountId, -effectOnAccount(t, t.accountId));
+      if (t.type === 'TRANSFER' && t.counterAccountId) {
+        add(t.counterAccountId, -effectOnAccount(t, t.counterAccountId));
       }
     }
 
@@ -942,9 +810,5 @@ export class TransactionService {
         'EXPENSE transactions cannot use an Income subcategory',
       );
     }
-  }
-
-  private signedDelta(type: TransactionType, amount: number): number {
-    return type === 'INCOME' ? amount : -amount;
   }
 }

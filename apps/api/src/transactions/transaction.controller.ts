@@ -22,12 +22,14 @@ import { SplitTransactionDTO } from './dtos/split-transaction.dto';
 import { StatsQueryDTO } from './dtos/stats.query.dto';
 import { UpdateTransactionDTO } from './dtos/update-transaction.dto';
 import { InsightSummaryService } from './insight-summary.service';
+import { TransactionStatsService } from './transaction-stats.service';
 import { TransactionService } from './transaction.service';
 
 @Controller('transactions')
 export class TransactionController {
   constructor(
     private readonly transactionService: TransactionService,
+    private readonly statsService: TransactionStatsService,
     private readonly insightSummary: InsightSummaryService,
   ) {}
 
@@ -42,7 +44,7 @@ export class TransactionController {
   // Must be declared before @Get(':id') so 'stats' is not captured as an id.
   @Get('stats')
   getStats(@CurrentUser() user: AuthUser, @Query() query: StatsQueryDTO) {
-    return this.transactionService.getStats(user.userId, query);
+    return this.statsService.getStats(user.userId, query);
   }
 
   /** On-demand: phrase the dashboard's exact insight facts into a sentence or two. */
