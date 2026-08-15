@@ -34,11 +34,17 @@ services:
       JWT_SECRET: ${JWT_SECRET:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OLLAMA_BASE_URL: http://ollama:11434
+      # Default model sized for an 8GB host; override per-env as needed.
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
+      OLLAMA_EXTRACTION_MODEL: ${OLLAMA_EXTRACTION_MODEL:-}
       # "Today" for Telegram captures uses the server clock — set your timezone.
       TZ: ${TZ:-UTC}
     depends_on:
       db:
         condition: service_healthy
+      ollama:
+        condition: service_started
     # Ready only once migrations ran and the app listens (web waits for this).
     healthcheck:
       test:
@@ -64,6 +70,14 @@ services:
       api:
         condition: service_healthy
     # No published ports: caddy is the public entrypoint.
+
+  ollama:
+    profiles: ['prod']
+    image: ollama/ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_models:/root/.ollama
+    # No published ports: only the api container talks to it.
 
   db:
     # Plain (non-alpine) image: the existing finance-tracker-pgdata volume was
@@ -92,3 +106,4 @@ volumes:
     name: finance-tracker-pgdata
   caddy_data:
   caddy_config:
+  ollama_models:
