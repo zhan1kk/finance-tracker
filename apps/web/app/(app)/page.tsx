@@ -21,6 +21,7 @@ import {
 } from "@/lib/period";
 import type {
   Account,
+  Budget,
   MonthlyStat,
   NetWorthPoint,
   Reminder,
@@ -30,6 +31,9 @@ import type {
 
 const TREND_MONTHS = 6;
 const BASELINE_MONTHS = 3;
+
+/** Set once the setup checklist is finished or dismissed, so it stays gone. */
+const SETUP_DONE_KEY = "ft:setupDone";
 
 // Order the breakdown filter chips predictably (income first, then spend types).
 const BREAKDOWN_CATEGORIES = [
@@ -55,6 +59,13 @@ export default function OverviewPage() {
     setPeriod(null);
   };
 
+  // Lazy initializer (not an effect) so the flag is read once, and never during
+  // SSR where localStorage does not exist.
+  const [setupDismissed, setSetupDismissed] = useState(
+    () =>
+      typeof window !== "undefined" && !!localStorage.getItem(SETUP_DONE_KEY),
+  );
+
   const accounts = useQuery({
     queryKey: ["accounts"],
     queryFn: () => api<Account[]>("/accounts"),
@@ -66,6 +77,14 @@ export default function OverviewPage() {
     queryKey: ["transactions", { probe: true }],
     queryFn: () => api<TransactionList>("/transactions?pageSize=1"),
     enabled: (accounts.data?.length ?? 0) > 0,
+  });
+
+  // Last checklist item. Only asked while the checklist is still on screen, so
+  // an established user never pays for this request.
+  const anyBudget = useQuery({
+    queryKey: ["budgets", shown],
+    queryFn: () => api<Budget[]>(`/budgets?period=${shown}`),
+    enabled: !setupDismissed && (anyTx.data?.total ?? 0) > 0,
   });
 
   // Ask for exactly the selected period, and a window ending with it for the trend.
@@ -149,21 +168,45 @@ export default function OverviewPage() {
   });
 
   const noAccounts = accounts.data?.length === 0;
-  const noTransactions =
-    !noAccounts && anyTx.data !== undefined && anyTx.data.total === 0;
+
+  const hasAccounts = (accounts.data?.length ?? 0) > 0;
+  const hasTransactions = (anyTx.data?.total ?? 0) > 0;
+  const hasBudgets = (anyBudget.data?.length ?? 0) > 0;
+  const dismissSetup = () => {
+    localStorage.setItem(SETUP_DONE_KEY, "1");
+    setSetupDismissed(true);
+  };
+  // Keep the checklist up until every step is genuinely done (or dismissed), so
+  // it doubles as a "try this next" prompt rather than vanishing after step 2.
+  const showSetup =
+    !setupDismissed &&
+    accounts.data !== undefined &&
+    !(hasAccounts && hasTransactions && hasBudgets);
 
   // First run: skip the empty dashboard and walk the user through setup.
   if (noAccounts) {
     return (
       <main className="flex flex-col gap-6">
-        <Onboarding step={1} />
+        <Onboarding
+          hasAccounts={false}
+          hasTransactions={false}
+          hasBudgets={false}
+          onDismiss={dismissSetup}
+        />
       </main>
     );
   }
 
   return (
     <main className="flex flex-col gap-6">
-      {noTransactions && <Onboarding step={2} />}
+      {showSetup && (
+        <Onboarding
+          hasAccounts={hasAccounts}
+          hasTransactions={hasTransactions}
+          hasBudgets={hasBudgets}
+          onDismiss={dismissSetup}
+        />
+      )}
       <section>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <Button
@@ -540,35 +583,61 @@ const GHOST_LINK =
  * (accounts, but nothing recorded yet) sits above it as a nudge. Keeps a new
  * user from landing on a wall of empty charts.
  */
-function Onboarding({ step }: { step: 1 | 2 }) {
+/**
+ * Setup checklist driven by what the user has actually done, so ticks appear as
+ * they work rather than on a fixed script. Stays until every step is done or
+ * the user dismisses it.
+ */
+function Onboarding({
+  hasAccounts,
+  hasTransactions,
+  hasBudgets,
+  onDismiss,
+}: {
+  hasAccounts: boolean;
+  hasTransactions: boolean;
+  hasBudgets: boolean;
+  onDismiss: () => void;
+}) {
   const steps = [
     {
       title: "Create an account",
       body: "Add a bank account, card, or cash wallet to track.",
-      done: step > 1,
+      done: hasAccounts,
     },
     {
       title: "Add your transactions",
       body: "Import a statement (CSV or PDF), or type a few in by hand.",
-      done: false,
+      done: hasTransactions,
     },
     {
-      title: "Make it yours",
-      body: "Set monthly budgets, bill reminders, and your financial month.",
-      done: false,
+      title: "Set a budget",
+      body: "Cap one category you'd like to watch — the dashboard tracks the rest.",
+      done: hasBudgets,
     },
   ];
-  const current = step === 1 ? 0 : 1;
+  const current = steps.findIndex((s) => !s.done);
+  const doneCount = steps.filter((s) => s.done).length;
 
   return (
     <Card>
-      <h2 className="text-lg font-semibold">
-        {step === 1 ? "Welcome 👋 Let's get you set up" : "You're almost set"}
-      </h2>
+      <div className="flex items-start justify-between gap-3">
+        <h2 className="text-lg font-semibold">
+          {doneCount === 0
+            ? "Welcome 👋 Let's get you set up"
+            : "You're almost set"}
+        </h2>
+        <button
+          onClick={onDismiss}
+          className="shrink-0 text-xs text-zinc-400 hover:text-zinc-600 hover:underline dark:hover:text-zinc-300"
+        >
+          Dismiss
+        </button>
+      </div>
       <p className="mt-1 text-sm text-zinc-500">
-        {step === 1
+        {doneCount === 0
           ? "Three quick steps and your dashboard fills itself in."
-          : "Add some transactions and the charts below come to life."}
+          : `${doneCount} of ${steps.length} done — the charts fill in as you go.`}
       </p>
       <ol className="mt-4 flex flex-col gap-4">
         {steps.map((s, i) => (
@@ -589,11 +658,12 @@ function Onboarding({ step }: { step: 1 | 2 }) {
               <p className="text-sm text-zinc-500">{s.body}</p>
               {i === current && (
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {i === 0 ? (
+                  {i === 0 && (
                     <Link href="/accounts" className={PRIMARY_LINK}>
                       Add an account
                     </Link>
-                  ) : (
+                  )}
+                  {i === 1 && (
                     <>
                       <Link href="/imports" className={PRIMARY_LINK}>
                         Import a statement
@@ -602,6 +672,11 @@ function Onboarding({ step }: { step: 1 | 2 }) {
                         Add manually
                       </Link>
                     </>
+                  )}
+                  {i === 2 && (
+                    <Link href="/budgets" className={PRIMARY_LINK}>
+                      Set a budget
+                    </Link>
                   )}
                 </div>
               )}

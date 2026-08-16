@@ -12,6 +12,8 @@ type Step = {
   title: string;
   body: string;
   example?: ReactNode;
+  /** Optional depth, collapsed by default so the tour stays short. */
+  details?: ReactNode;
   cta?: { href: string; label: string };
 };
 
@@ -24,11 +26,44 @@ function Eg({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * Collapsed extra explanation. Native <details> so it is keyboard-accessible
+ * and needs no state of its own; it re-collapses when the step changes because
+ * each step renders a fresh element.
+ */
+function More({ children }: { children: ReactNode }) {
+  return (
+    <details className="group mt-3 rounded-lg border border-zinc-200 dark:border-zinc-800">
+      <summary className="cursor-pointer list-none rounded-lg px-3 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-800/40">
+        <span className="inline-block transition-transform group-open:rotate-90">
+          ›
+        </span>{" "}
+        More details
+      </summary>
+      <div className="flex flex-col gap-2 px-3 pb-3 text-sm text-zinc-600 dark:text-zinc-300">
+        {children}
+      </div>
+    </details>
+  );
+}
+
+/** One labelled point inside a <More> block. */
+function Point({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <p>
+      <span className="font-medium text-zinc-800 dark:text-zinc-100">
+        {label}
+      </span>{" "}
+      {children}
+    </p>
+  );
+}
+
 const STEPS: Step[] = [
   {
     icon: "👋",
     title: "Welcome to your finance tracker",
-    body: "It's private and runs on your own machine — your data never leaves it. Here's a 60-second tour of what each section does.",
+    body: "It's private: your data stays on this server and the categorization runs locally, so nothing is sent to an outside AI service. Here's a quick tour — each step has a “More details” link if you want the full story.",
   },
   {
     icon: "🏦",
@@ -41,6 +76,20 @@ const STEPS: Step[] = [
           <span className="font-semibold tabular-nums">€1,240.00</span>
         </div>
       </Eg>
+    ),
+    details: (
+      <>
+        <Point label="Types matter a little.">
+          Bank, card, cash and investment accounts behave the same day to day,
+          but the type is what makes your net-worth chart meaningful. You can
+          change it later from the Accounts page.
+        </Point>
+        <Point label="Other currencies are fine.">
+          An account keeps its own currency, and every amount is also converted
+          into your base currency so totals and charts add up. You control the
+          rates under Exchange rates — no live market feed is required.
+        </Point>
+      </>
     ),
   },
   {
@@ -55,6 +104,26 @@ const STEPS: Step[] = [
         </div>
       </Eg>
     ),
+    details: (
+      <>
+        <Point label="Moving your own money isn't spending.">
+          When you send money from your bank to your savings, record it as a
+          transfer. Both balances change, but it never shows up as income or
+          expense — otherwise every transfer would look like you spent it.
+        </Point>
+        <Point label="One receipt, several categories.">
+          A supermarket run that was half groceries and half household stuff can
+          be split into parts that add up to the original amount, so each part
+          lands in the right category.
+        </Point>
+        <Point label="Hide something from the stats.">
+          Any transaction can be marked as excluded. It still changes your
+          balance, but it stays out of budgets and charts — handy for a
+          reimbursement you pass straight through, or a one-off that would
+          distort the month.
+        </Point>
+      </>
+    ),
   },
   {
     icon: "📥",
@@ -67,11 +136,50 @@ const STEPS: Step[] = [
         </span>
       </Eg>
     ),
+    details: (
+      <>
+        <Point label="First time with a new bank: you map the columns.">
+          You tell it once which column holds the date, the amount and the
+          description. That mapping is remembered, so the next statement from
+          the same bank goes straight through.
+        </Point>
+        <Point label="Nothing is saved until you say so.">
+          An import always lands in a review screen first. Rows the app is
+          confident about are pre-filled; the unsure ones are waiting for you to
+          pick a category. You commit when the list looks right.
+        </Point>
+        <Point label="Re-importing an overlapping statement is safe.">
+          Rows that already exist in your ledger are detected and skipped, so
+          you can import January–March and then February–April without creating
+          duplicates.
+        </Point>
+        <Point label="It learns from your corrections.">
+          Every time you fix a category, that becomes a rule for that merchant.
+          Next time the same shop appears it is matched instantly, without
+          asking the model at all — so imports get faster and more accurate the
+          more you use it.
+        </Point>
+      </>
+    ),
   },
   {
     icon: "📊",
     title: "Overview",
     body: "Your dashboard: income vs spending for the month, a donut of where money goes, how you're trending vs your 3-month average, net worth over time, and what's due soon.",
+    details: (
+      <>
+        <Point label="Your month doesn't have to start on the 1st.">
+          If you’re paid on the 25th, set that as your month start and every
+          total, budget and chart will follow your pay cycle instead of the
+          calendar.
+        </Point>
+        <Point label="“vs average” compares like with like.">
+          The trend figure measures this month against your own recent months,
+          not against a target — so it tells you whether this month is unusual
+          for you.
+        </Point>
+      </>
+    ),
   },
   {
     icon: "🎯",
@@ -88,6 +196,19 @@ const STEPS: Step[] = [
         </div>
       </Eg>
     ),
+    details: (
+      <>
+        <Point label="Every month, or just this one.">
+          A normal budget repeats. A one-off budget applies to a single month —
+          right for a holiday in July that you don’t want haunting August.
+        </Point>
+        <Point label="Compare two months side by side.">
+          Because limits change, the comparison shows each month’s spend against
+          that month’s own limit, so a bigger Travel budget in summer doesn’t
+          read as overspending.
+        </Point>
+      </>
+    ),
   },
   {
     icon: "⏰",
@@ -100,6 +221,25 @@ const STEPS: Step[] = [
           <span className="text-zinc-500">due in 3d · €800</span>
         </div>
       </Eg>
+    ),
+    details: (
+      <>
+        <Point label="Instalments are counted for you.">
+          If a description says something like “2/6”, the app understands you’re
+          two payments into six and tracks the remaining four, with the next one
+          due a month later.
+        </Point>
+        <Point label="Recurring bills are found, not typed.">
+          Detect recurring looks for charges that repeat at a steady interval —
+          monthly, quarterly or yearly — and offers them as reminders. Nothing
+          is created behind your back; you approve what becomes a reminder.
+        </Point>
+        <Point label="They fix themselves when the payment arrives.">
+          If you already paid but only import the statement later, the reminder
+          notices the matching transaction and moves on to the next period
+          instead of nagging you about a bill you’ve settled.
+        </Point>
+      </>
     ),
   },
   {
@@ -118,16 +258,82 @@ const STEPS: Step[] = [
         </div>
       </Eg>
     ),
+    details: (
+      <>
+        <Point label="It works when someone else pays too.">
+          Most trackers only handle money leaving your account. Here you can
+          record that a friend paid for dinner and you owe them a share, so the
+          running total between you is right either way.
+        </Point>
+        <Point label="Only your share hits your stats.">
+          Paying €60 for three people isn’t €60 of your own spending, so the
+          split keeps your categories honest.
+        </Point>
+      </>
+    ),
   },
   {
     icon: "🔗",
+    title: "Refunds that cancel out",
+    body: "When money comes back to you — a returned item, or your flatmate paying you back — link it to the expense it repays. The two then cancel out instead of inflating your income.",
+    example: (
+      <Eg>
+        <div className="flex items-center justify-between">
+          <span>Flights (paid for both)</span>
+          <span className="tabular-nums">−€240.00</span>
+        </div>
+        <div className="flex items-center justify-between text-zinc-500">
+          <span>↳ Alex paid me back</span>
+          <span className="tabular-nums">+€120.00</span>
+        </div>
+        <div className="mt-1 border-t border-zinc-200 pt-1 text-right text-xs dark:border-zinc-700">
+          counts as €120.00 of Travel
+        </div>
+      </Eg>
+    ),
+    details: (
+      <>
+        <Point label="Why not just call it income?">
+          Because it isn’t. If a €120 payback counted as income, your month
+          would show more earnings and more spending than really happened. Linked
+          instead, it reduces the original expense — which is what actually
+          occurred.
+        </Point>
+        <Point label="Where you'll see the difference.">
+          The repaid amount comes off that expense’s own category, so Travel
+          shows €120 rather than €240, and your income figure stays untouched.
+        </Point>
+        <Point label="How to do it.">
+          Open the incoming transaction and pick the expense it pays back. To
+          undo, unlink it and both go back to standing alone.
+        </Point>
+      </>
+    ),
+  },
+  {
+    icon: "🛠️",
     title: "A few power tools",
-    body: "Link a refund to the expense it pays back so it nets out. Set recurring rules that post bills automatically, manage your categories, and add exchange rates for foreign accounts.",
+    body: "Recurring rules post regular bills for you, category rules tidy up imports, exchange rates keep foreign accounts honest, and a Telegram bot logs cash spending in seconds.",
+    details: (
+      <>
+        <Point label="Telegram, for cash.">
+          Card spending arrives with your statement, but cash doesn’t. Link the
+          bot from the Telegram card and you can message an amount, tap a
+          category, add a note, and it’s in your ledger before you leave the
+          shop.
+        </Point>
+        <Point label="Rules are yours to edit.">
+          Everything the app learned from your corrections is listed under Rules
+          — you can change or delete any of them if a merchant should be
+          categorized differently.
+        </Point>
+      </>
+    ),
   },
   {
     icon: "🚀",
     title: "Ready when you are",
-    body: "Start by adding your first account, then import a statement or add a few transactions. You can reopen this guide anytime from the “Guide” button up top.",
+    body: "Start by adding your first account, then import a statement or add a few transactions. The checklist on your dashboard tracks what's left, and you can reopen this guide anytime from the “Guide” button up top.",
     cta: { href: "/accounts", label: "Add my first account" },
   },
 ];
@@ -167,6 +373,7 @@ export function WelcomeTour({ onClose }: { onClose: () => void }) {
         <h2 className="mt-2 text-lg font-semibold">{s.title}</h2>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">{s.body}</p>
         {s.example}
+        {s.details && <More>{s.details}</More>}
         {s.cta && (
           <Link
             href={s.cta.href}
