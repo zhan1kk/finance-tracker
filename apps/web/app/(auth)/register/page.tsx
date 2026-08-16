@@ -18,7 +18,12 @@ export default function RegisterPage() {
     setBusy(true);
     setError(null);
     try {
-      await register(String(form.get("email")), String(form.get("password")));
+      const inviteCode = String(form.get("inviteCode") ?? "").trim();
+      await register(
+        String(form.get("email")),
+        String(form.get("password")),
+        inviteCode || undefined,
+      );
       router.push("/");
     } catch (err) {
       setError(err);
@@ -37,6 +42,9 @@ export default function RegisterPage() {
           </Field>
           <Field label="Password (min. 8 characters)">
             <Input name="password" type="password" minLength={8} required />
+          </Field>
+          <Field label="Invite code (if you were given one)">
+            <Input name="inviteCode" autoComplete="off" />
           </Field>
           <ErrorText error={error} />
           <Button type="submit" disabled={busy}>

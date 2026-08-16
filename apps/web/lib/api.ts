@@ -125,10 +125,13 @@ export async function loginRequest(
 export async function registerRequest(
   email: string,
   password: string,
+  inviteCode?: string,
 ): Promise<User> {
   const data = await api<AuthResponse>('/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify(
+      inviteCode ? { email, password, inviteCode } : { email, password },
+    ),
   });
   setAccessToken(data.accessToken);
   return data.user;

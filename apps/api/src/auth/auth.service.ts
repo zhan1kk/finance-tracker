@@ -1,12 +1,14 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { PrismaService } from '../prisma.service';
 import { DEFAULT_SUBCATEGORIES } from '../subcategories/default-subcategories';
 import { REFRESH_TOKEN_TTL_DAYS } from './auth.constants';
@@ -24,13 +26,30 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly config: ConfigService,
   ) {}
 
   async register(input: {
     email: string;
     password: string;
     baseCurrency?: string;
+    inviteCode?: string;
   }): Promise<{ user: PublicUser; tokens: AuthTokens }> {
+    // With INVITE_CODE set, registration is invite-only. Digest comparison
+    // keeps it constant-time even when the lengths differ.
+    const requiredCode = this.config.get<string>('INVITE_CODE');
+    if (requiredCode) {
+      const supplied = createHash('sha256')
+        .update(input.inviteCode ?? '')
+        .digest();
+      const expected = createHash('sha256').update(requiredCode).digest();
+      if (!timingSafeEqual(supplied, expected)) {
+        throw new ForbiddenException(
+          'A valid invite code is required to register',
+        );
+      }
+    }
+
     const email = input.email.trim().toLowerCase();
 
     const existing = await this.prisma.user.findUnique({ where: { email } });

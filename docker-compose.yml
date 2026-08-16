@@ -32,6 +32,8 @@ services:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/finance_tracker
       # Required in prod; the API refuses to boot without a strong value.
       JWT_SECRET: ${JWT_SECRET:-}
+      # When set, registration requires this invite code (invite-only signup).
+      INVITE_CODE: ${INVITE_CODE:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OLLAMA_BASE_URL: http://ollama:11434

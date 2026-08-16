@@ -20,7 +20,11 @@ type AuthContextValue = {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string) => Promise<void>;
+  register: (
+    email: string,
+    password: string,
+    inviteCode?: string,
+  ) => Promise<void>;
   logout: () => Promise<void>;
   /** Update the caller's own reporting preferences (e.g. month start day). */
   updateProfile: (patch: { monthStartDay?: number }) => Promise<void>;
@@ -43,8 +47,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user,
     loading,
     login: async (email, password) => setUser(await loginRequest(email, password)),
-    register: async (email, password) =>
-      setUser(await registerRequest(email, password)),
+    register: async (email, password, inviteCode) =>
+      setUser(await registerRequest(email, password, inviteCode)),
     logout: async () => {
       await logoutRequest();
       setUser(null);

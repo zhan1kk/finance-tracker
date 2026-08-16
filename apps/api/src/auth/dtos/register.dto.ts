@@ -22,4 +22,10 @@ export class RegisterDTO {
     message: 'baseCurrency must be a 3-letter ISO code',
   })
   public readonly baseCurrency?: string;
+
+  /** Required when the server has INVITE_CODE set; ignored otherwise. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  public readonly inviteCode?: string;
 }
