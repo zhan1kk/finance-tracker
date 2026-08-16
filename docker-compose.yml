@@ -36,6 +36,10 @@ services:
       INVITE_CODE: ${INVITE_CODE:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Must be passed explicitly: without it the provider factory falls back to
+      # Anthropic whenever ANTHROPIC_API_KEY happens to be set.
+      CATEGORIZER: ${CATEGORIZER:-}
+      DEFAULT_CATEGORIZATION_THRESHOLD: ${DEFAULT_CATEGORIZATION_THRESHOLD:-}
       OLLAMA_BASE_URL: http://ollama:11434
       # Default model sized for an 8GB host; override per-env as needed.
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
