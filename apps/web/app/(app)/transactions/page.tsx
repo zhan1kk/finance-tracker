@@ -1063,11 +1063,17 @@ function TransactionRow({
   // Moves between your own accounts — transfers either way, and internal moves —
   // are grey, so they don't read as earnings.
   const isRealIncome = t.type === "INCOME" && !t.excludeFromStats;
-  const color = isRealIncome
-    ? "text-emerald-600"
-    : t.type === "TRANSFER" || t.excludeFromStats
-      ? "text-zinc-500"
-      : "";
+  // A payback is money coming back, not money earned, so it gets a softer green
+  // than real income. The label beside it carries the meaning; the shade only
+  // echoes it, so the distinction is never colour-alone.
+  const isPayback = isRealIncome && t.parentTransactionId !== null;
+  const color = isPayback
+    ? "text-emerald-500/80"
+    : isRealIncome
+      ? "text-emerald-600"
+      : t.type === "TRANSFER" || t.excludeFromStats
+        ? "text-zinc-500"
+        : "";
   // Show a signed amount for transfers only when scoped to one account (so the
   // running balance reads correctly); otherwise keep them sign-less.
   const showSign = t.type !== "TRANSFER" || filterAccountId !== null;
@@ -1196,7 +1202,9 @@ function TransactionRow({
           </span>
         )}
         {t.type === "INCOME" && t.parentTransactionId && (
-          <span className="ml-1.5 text-xs text-zinc-400">reimbursement</span>
+          <span className="ml-1.5 rounded bg-emerald-500/10 px-1.5 py-0.5 text-xs text-emerald-700 dark:text-emerald-300">
+            reimbursement
+          </span>
         )}
         {t.type === "EXPENSE" &&
           !t.excludeFromStats &&
@@ -1210,15 +1218,28 @@ function TransactionRow({
             const uniform = t.reimbursements.every(
               (r) => currencyOf(r.accountId) === cur,
             );
+            const paidBack = t.reimbursements.reduce(
+              (sum, r) => sum + r.amount,
+              0,
+            );
+            // "Fully" is only claimable when the paybacks and the expense are in
+            // the same currency — otherwise the totals are not comparable.
+            const fully = uniform && cur === currency && paidBack >= t.amount;
             return (
-              <span className="ml-1.5 text-xs text-zinc-400">
-                reimbursed{" "}
-                {uniform
-                  ? formatCents(
-                      t.reimbursements.reduce((sum, r) => sum + r.amount, 0),
-                      cur,
-                    )
-                  : `${t.reimbursements.length}×`}
+              <span
+                className={`ml-1.5 rounded px-1.5 py-0.5 text-xs ${
+                  fully
+                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                    : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                }`}
+              >
+                {fully
+                  ? "fully reimbursed"
+                  : `reimbursed ${
+                      uniform
+                        ? formatCents(paidBack, cur)
+                        : `${t.reimbursements.length}×`
+                    }`}
               </span>
             );
           })()}
