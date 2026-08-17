@@ -8,6 +8,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatCents, parseAmountToCents } from "@/lib/format";
 import { formatPeriod, periodOf, shiftPeriod } from "@/lib/period";
+import { revivePeriod, useStickyState } from "@/lib/sticky-state";
 import {
   BUDGETABLE_CATEGORIES,
   type Budget,
@@ -22,7 +23,11 @@ export default function BudgetsPage() {
   const monthStartDay = user?.monthStartDay ?? 1;
 
   const currentPeriod = periodOf(new Date(), monthStartDay);
-  const [period, setPeriod] = useState<string | null>(null);
+  const [period, setPeriod] = useStickyState<string | null>(
+    "ft:budgets.period",
+    null,
+    revivePeriod,
+  );
   const shown = period ?? currentPeriod;
 
   const budgets = useQuery({

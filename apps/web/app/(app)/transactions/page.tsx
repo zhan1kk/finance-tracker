@@ -8,6 +8,7 @@ import { api, downloadFile } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatCents, parseAmountToCents, todayISO } from "@/lib/format";
 import { periodOf, periodRange, shiftPeriod } from "@/lib/period";
+import { useStickyState } from "@/lib/sticky-state";
 import {
   TRANSACTION_CATEGORIES,
   type Account,
@@ -30,19 +31,45 @@ type Filters = {
 
 const PAGE_SIZE = 20;
 
+const NO_FILTERS: Filters = {
+  type: "",
+  accountId: "",
+  subcategoryIds: [],
+  search: "",
+  from: "",
+  to: "",
+  page: 1,
+};
+
+/** Accept only a well-formed saved filter set; anything else starts clean. */
+function reviveFilters(saved: unknown): Filters | null {
+  if (typeof saved !== "object" || saved === null) return null;
+  const s = saved as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  return {
+    type: str(s.type),
+    accountId: str(s.accountId),
+    subcategoryIds: Array.isArray(s.subcategoryIds)
+      ? s.subcategoryIds.filter((v): v is string => typeof v === "string")
+      : [],
+    search: str(s.search),
+    from: str(s.from),
+    to: str(s.to),
+    page: typeof s.page === "number" && s.page >= 1 ? Math.floor(s.page) : 1,
+  };
+}
+
 export default function TransactionsPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const monthStartDay = user?.monthStartDay ?? 1;
-  const [filters, setFilters] = useState<Filters>({
-    type: "",
-    accountId: "",
-    subcategoryIds: [],
-    search: "",
-    from: "",
-    to: "",
-    page: 1,
-  });
+  // Kept while you visit another page, so comparing the list against the
+  // dashboard does not mean re-applying the same filters every time.
+  const [filters, setFilters] = useStickyState<Filters>(
+    "ft:transactions.filters",
+    NO_FILTERS,
+    reviveFilters,
+  );
   // Rows ticked for a bulk action, and the row (if any) being split. Selection
   // is scoped to the visible page, so it clears whenever the page or filters
   // change — the ids in the set always map to rows we can still see and reason
@@ -146,7 +173,7 @@ export default function TransactionsPage() {
     if (transactions.data && filters.page > lastPage) {
       setFilters((f) => ({ ...f, page: lastPage }));
     }
-  }, [transactions.data, filters.page, lastPage]);
+  }, [transactions.data, filters.page, lastPage, setFilters]);
 
   // A running balance is only meaningful (and only returned) for one account.
   const singleAccount = filters.accountId !== "";
@@ -181,6 +208,14 @@ export default function TransactionsPage() {
   ];
   const applyRange = (from: string, to: string) =>
     setFilters((f) => ({ ...f, from, to, page: 1 }));
+
+  const anyFilterActive =
+    filters.type !== "" ||
+    filters.accountId !== "" ||
+    filters.subcategoryIds.length > 0 ||
+    filters.search !== "" ||
+    filters.from !== "" ||
+    filters.to !== "";
   const activePreset = presets.find(
     (p) => p.from === filters.from && p.to === filters.to,
   );
@@ -267,6 +302,16 @@ export default function TransactionsPage() {
             />
           </Field>
           <span className="ml-auto flex items-center gap-3 text-sm text-zinc-500">
+            {/* Filters persist across navigation, so there has to be one
+                obvious way back to the unfiltered list. */}
+            {anyFilterActive && (
+              <button
+                onClick={() => setFilters(NO_FILTERS)}
+                className="underline decoration-zinc-300 underline-offset-2 hover:text-zinc-700 dark:decoration-zinc-700 dark:hover:text-zinc-300"
+              >
+                Clear filters
+              </button>
+            )}
             {total} transaction{total === 1 ? "" : "s"}
             <button
               className="underline decoration-zinc-300 underline-offset-2 hover:text-zinc-700 dark:decoration-zinc-700 dark:hover:text-zinc-300"

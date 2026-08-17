@@ -19,6 +19,7 @@ import {
   periodRange,
   shiftPeriod,
 } from "@/lib/period";
+import { revivePeriod, useStickyState } from "@/lib/sticky-state";
 import type {
   Account,
   Budget,
@@ -49,7 +50,13 @@ export default function OverviewPage() {
   const { user, updateProfile } = useAuth();
   const monthStartDay = user?.monthStartDay ?? 1;
   const currentPeriod = periodOf(new Date(), monthStartDay);
-  const [period, setPeriod] = useState<string | null>(null);
+  // Sticky so stepping back to June, checking the transaction list, and
+  // returning does not snap the dashboard back to the current month.
+  const [period, setPeriod] = useStickyState<string | null>(
+    "ft:overview.period",
+    null,
+    revivePeriod,
+  );
   const shown = period ?? currentPeriod;
 
   // Changing the day the financial month starts re-periods every stat; snap the
