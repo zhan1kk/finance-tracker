@@ -265,15 +265,26 @@ export class BudgetService {
     // A payback only nets when its parent actually counts as spending — an
     // internal parent is excluded, so its reimbursement must be too (else it
     // would show as a phantom credit against the budget).
+    // The parent's date also decides the period: a payback belongs to the month
+    // of the expense it cancels, otherwise that month stays overstated and a
+    // later month picks up a credit for spending it never had.
     const reimbScope: Prisma.TransactionWhereInput = budget.subcategoryId
       ? {
           parentTransaction: {
-            is: { subcategoryId: budget.subcategoryId, excludeFromStats: false },
+            is: {
+              subcategoryId: budget.subcategoryId,
+              excludeFromStats: false,
+              date,
+            },
           },
         }
       : {
           parentTransaction: {
-            is: { subcategory: { is: { category } }, excludeFromStats: false },
+            is: {
+              subcategory: { is: { category } },
+              excludeFromStats: false,
+              date,
+            },
           },
         };
 
@@ -298,7 +309,9 @@ export class BudgetService {
           type: 'INCOME',
           excludeFromStats: false,
           parentTransactionId: { not: null },
-          date,
+          // No date filter here on purpose: the period is applied to the parent
+          // expense inside reimbScope, so a payback that arrives in a later
+          // month still nets against the month it belongs to.
           ...reimbScope,
         },
       }),

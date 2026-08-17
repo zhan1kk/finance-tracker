@@ -26,11 +26,15 @@ export class TransactionStatsService {
    */
   async getStats(userId: string, query: StatsQuery): Promise<TransactionStats> {
     const period = await this.periodExpression(userId);
-    const range = [
-      ...(query.from ? [Prisma.sql`t."date" >= ${new Date(query.from)}`] : []),
-      ...(query.to ? [Prisma.sql`t."date" <= ${new Date(query.to)}`] : []),
+    // Which row's date decides the period. Usually the row being summed (t),
+    // but a reimbursement is credited against its parent expense, so it must
+    // fall in the parent's period (p) — see the category query below.
+    const rangeOn = (date: Prisma.Sql) => [
+      ...(query.from ? [Prisma.sql`${date} >= ${new Date(query.from)}`] : []),
+      ...(query.to ? [Prisma.sql`${date} <= ${new Date(query.to)}`] : []),
     ];
-    const scope = (extra: Prisma.Sql) =>
+    const range = rangeOn(Prisma.sql`t."date"`);
+    const scopeIn = (extra: Prisma.Sql, dateRange: Prisma.Sql[]) =>
       Prisma.join(
         [
           Prisma.sql`a."userId" = ${userId}`,
@@ -38,10 +42,11 @@ export class TransactionStatsService {
           // balance but are not earnings or spending, so they never count here.
           Prisma.sql`t."excludeFromStats" = false`,
           extra,
-          ...range,
+          ...dateRange,
         ],
         ' AND ',
       );
+    const scope = (extra: Prisma.Sql) => scopeIn(extra, range);
 
     const [monthly, byCategory, incomeByCategory] = await this.prisma.$transaction([
       this.prisma.$queryRaw<MonthlyStat[]>`
@@ -80,10 +85,15 @@ export class TransactionStatsService {
           FROM "Transaction" t
           JOIN "Account" a ON a."id" = t."accountId"
           JOIN "Transaction" p ON p."id" = t."parentTransactionId"
-          WHERE ${scope(
+          WHERE ${scopeIn(
             // Only net a payback against a parent that actually counts — an
             // internal parent is excluded, so its reimbursement must be too.
             Prisma.sql`t."type" = 'INCOME' AND t."parentTransactionId" IS NOT NULL AND p."excludeFromStats" = false`,
+            // Ranged on the parent's date, not the payback's: the credit belongs
+            // to the month of the expense it cancels. Dating it by when the money
+            // arrived would leave the expense month overstated and drop a credit
+            // into a later month that has no spending in that category at all.
+            rangeOn(Prisma.sql`p."date"`),
           )}
         ) x
         JOIN "Subcategory" s ON s."id" = x.sid
