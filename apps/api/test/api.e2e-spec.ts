@@ -877,6 +877,35 @@ describe('API (e2e)', () => {
       expect(stats.incomeByCategory).toEqual([]);
     });
 
+    it('credits a later reimbursement to the month of the expense it repays', async () => {
+      // Regression: the category breakdown used to range on the payback's own
+      // date while crediting it to the parent's category, so a repaid expense
+      // stayed at full value in its own month and left a phantom credit in the
+      // month the money arrived. Only visible when a period is selected.
+      const gear = await addTransaction({
+        type: 'EXPENSE',
+        subcategoryId: groceriesId,
+        amount: 6_600,
+        date: '2026-06-14',
+      });
+      await addTransaction({
+        type: 'INCOME',
+        subcategoryId: salaryId,
+        amount: 6_600,
+        date: '2026-07-08',
+        parentTransactionId: gear.id,
+      });
+
+      const june = await getStats('?from=2026-06-01&to=2026-06-30');
+      expect(june.byCategory).toEqual([
+        expect.objectContaining({ subcategoryId: groceriesId, amount: 0 }),
+      ]);
+
+      // July only received the money; it never had spending in that category.
+      const july = await getStats('?from=2026-07-01&to=2026-07-31');
+      expect(july.byCategory).toEqual([]);
+    });
+
     it('does not net a reimbursement against an internal (excluded) parent', async () => {
       const parent = await addTransaction({
         type: 'EXPENSE',
@@ -1997,6 +2026,39 @@ describe('API (e2e)', () => {
       expect((await listBudgets())[0]).toMatchObject({
         spentCents: 9_000,
         overBudget: false,
+      });
+    });
+
+    it('nets a reimbursement that only arrives the following month', async () => {
+      // Regression: budget spend used to require the payback itself to fall in
+      // the period, so an expense repaid later stayed fully counted against the
+      // month's budget (and credited a month that had no spending).
+      const later = new Date();
+      later.setDate(1);
+      later.setMonth(later.getMonth() + 1);
+      later.setDate(5);
+      const laterDate = later.toISOString().slice(0, 10);
+      const laterPeriod = laterDate.slice(0, 7);
+
+      await createBudget({ monthlyLimit: 10_000, subcategoryId: groceriesId });
+      const expense = await createTxn({
+        type: 'EXPENSE',
+        amount: 8_000,
+        subcategoryId: groceriesId,
+      });
+      await createTxn({
+        type: 'INCOME',
+        amount: 8_000,
+        subcategoryId: incomeId,
+        parentTransactionId: expense.id,
+        date: laterDate,
+      });
+
+      // Fully repaid, so this month's budget must not still count it...
+      expect((await listBudgets())[0]).toMatchObject({ spentCents: 0 });
+      // ...and next month must not gain a credit for spending it never had.
+      expect((await listBudgets(token, laterPeriod))[0]).toMatchObject({
+        spentCents: 0,
       });
     });
 
