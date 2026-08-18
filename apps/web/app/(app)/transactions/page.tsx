@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
+import { ConfirmPhrase } from "@/components/confirm-phrase";
 import { MultiSelect } from "@/components/multi-select";
 import { api, downloadFile } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -77,6 +78,9 @@ export default function TransactionsPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [splitting, setSplitting] = useState<Transaction | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
+  // Wiping every transaction is the one action here with no way back, so it
+  // asks for a typed word rather than a one-click confirm.
+  const [confirmingWipe, setConfirmingWipe] = useState(false);
 
   const accounts = useQuery({
     queryKey: ["accounts"],
@@ -324,15 +328,7 @@ export default function TransactionsPage() {
             <button
               className="text-red-600 hover:underline disabled:opacity-50"
               disabled={removeAll.isPending}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    "Delete ALL transactions across every account? Each account resets to its starting balance. This cannot be undone.",
-                  )
-                ) {
-                  removeAll.mutate();
-                }
-              }}
+              onClick={() => setConfirmingWipe(true)}
             >
               Delete all
             </button>
@@ -484,6 +480,23 @@ export default function TransactionsPage() {
             setSplitting(null);
             invalidateAll();
           }}
+        />
+      )}
+
+      {confirmingWipe && (
+        <ConfirmPhrase
+          title="Delete every transaction?"
+          body={`This removes all ${total} transaction${
+            total === 1 ? "" : "s"
+          } across every account, and each account falls back to its starting balance. Imports, budgets and reminders stay, but the history they describe is gone. There is no undo.`}
+          confirmLabel="Delete everything"
+          busy={removeAll.isPending}
+          onCancel={() => setConfirmingWipe(false)}
+          onConfirm={() =>
+            removeAll.mutate(undefined, {
+              onSuccess: () => setConfirmingWipe(false),
+            })
+          }
         />
       )}
     </main>

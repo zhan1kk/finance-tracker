@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { BudgetCompare, BudgetSummary } from "@/components/budget-stats";
+import { ConfirmPhrase } from "@/components/confirm-phrase";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatCents, parseAmountToCents } from "@/lib/format";
@@ -19,6 +20,8 @@ export default function BudgetsPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [error, setError] = useState<unknown>(null);
+  // Same treatment as wiping transactions: irreversible, so it is typed.
+  const [confirmingWipe, setConfirmingWipe] = useState(false);
   const currency = user?.baseCurrency ?? "EUR";
   const monthStartDay = user?.monthStartDay ?? 1;
 
@@ -222,14 +225,8 @@ export default function BudgetsPage() {
                 className="px-1 text-sm text-zinc-400 hover:text-red-600"
                 title="Delete every budget, all months"
                 onClick={() => {
-                  if (
-                    window.confirm(
-                      "Delete ALL budgets (every category, all months)? This can't be undone.",
-                    )
-                  ) {
-                    setError(null);
-                    deleteAll.mutate();
-                  }
+                  setError(null);
+                  setConfirmingWipe(true);
                 }}
               >
                 Delete all
@@ -298,6 +295,21 @@ export default function BudgetsPage() {
         monthStartDay={monthStartDay}
         currency={currency}
       />
+
+      {confirmingWipe && (
+        <ConfirmPhrase
+          title="Delete every budget?"
+          body="This removes all budgets in every category and every month, including one-off ones. Your transactions are untouched, but the limits and their history are gone for good."
+          confirmLabel="Delete all budgets"
+          busy={deleteAll.isPending}
+          onCancel={() => setConfirmingWipe(false)}
+          onConfirm={() =>
+            deleteAll.mutate(undefined, {
+              onSuccess: () => setConfirmingWipe(false),
+            })
+          }
+        />
+      )}
     </main>
   );
 }

@@ -168,8 +168,9 @@ export function TelegramCard({ accounts }: { accounts: Account[] }) {
                 />
               </Field>
               <p className="text-xs text-zinc-500">
-                {settings.data.leadDays} days out, then every{" "}
-                {settings.data.intervalDays} — and again on the day itself.
+                Starts {settings.data.leadDays} days out, then every{" "}
+                {settings.data.intervalDays}. The day before and the day itself
+                are always included, whatever that works out to.
               </p>
             </div>
           )}

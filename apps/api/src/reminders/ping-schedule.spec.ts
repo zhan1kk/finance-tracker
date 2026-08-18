@@ -23,6 +23,19 @@ describe('shouldPing', () => {
     expect(pinged).toEqual([10, 7, 4, 1, 0]);
   });
 
+  it('always nudges the day before, whatever the interval works out to', () => {
+    // every 4 from a lead of 10 lands on 10, 6, 2 — which would skip the two
+    // days that matter most, so they are added unconditionally.
+    const pinged = [];
+    for (let d = 12; d >= 0; d--) if (shouldPing(d, 10, 4)) pinged.push(d);
+    expect(pinged).toEqual([10, 6, 2, 1, 0]);
+
+    // A single long interval still gets the last-minute pair.
+    const sparse = [];
+    for (let d = 12; d >= 0; d--) if (shouldPing(d, 10, 30)) sparse.push(d);
+    expect(sparse).toEqual([10, 1, 0]);
+  });
+
   it('stays quiet before the lead time and after the due date', () => {
     expect(shouldPing(11, 10, 3)).toBe(false);
     // Overdue is deliberately silent — the app shows it, and a daily nag on an
