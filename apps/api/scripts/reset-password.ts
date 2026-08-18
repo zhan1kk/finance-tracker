@@ -7,7 +7,11 @@
  * both simpler and less attack surface. Run it on the server:
  *
  *   cd /opt/finance-tracker
- *   docker compose --profile prod exec api pnpm reset-password <email> '<new password>'
+ *   docker compose --profile prod exec api \
+ *     node_modules/.bin/ts-node scripts/reset-password.ts <email> '<new password>'
+ *
+ * (pnpm's script shorthand does not resolve inside the runtime image, so the
+ * ts-node binary is invoked directly — verified working in production.)
  *
  * Or locally against the dev database:
  *

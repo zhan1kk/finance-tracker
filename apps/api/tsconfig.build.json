@@ -1,4 +1,14 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "test", "dist", "prisma", "**/*spec.ts"]
+  // "scripts" is excluded deliberately: those are ts-node admin tools, and
+  // compiling them would widen the project's root directory, which moves the
+  // build output from dist/main.js to dist/src/main.js and breaks the image.
+  "exclude": [
+    "node_modules",
+    "test",
+    "dist",
+    "prisma",
+    "scripts",
+    "**/*spec.ts"
+  ]
 }
