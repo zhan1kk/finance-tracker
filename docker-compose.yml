@@ -18,6 +18,8 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+      # Access log lives in a volume so it survives container recreation.
+      - caddy_logs:/var/log/caddy
     depends_on:
       - web
 
@@ -112,4 +114,5 @@ volumes:
     name: finance-tracker-pgdata
   caddy_data:
   caddy_config:
+  caddy_logs:
   ollama_models:

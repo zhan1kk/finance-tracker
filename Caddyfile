@@ -3,5 +3,19 @@
 # turn proxies /api/* to the API. Set DOMAIN in your .env (see README).
 {$DOMAIN} {
 	encode gzip
+
+	# Access log, so it is possible to tell whether anyone else finds the site.
+	# Written to a volume rather than the container's stdout because every
+	# deploy recreates the container and would otherwise wipe the history.
+	# Rotation caps it: these lines contain visitor IPs, which are personal
+	# data, so they are not kept indefinitely.
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10MiB
+			roll_keep 3
+			roll_keep_for 720h
+		}
+	}
+
 	reverse_proxy web:3000
 }
