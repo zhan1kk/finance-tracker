@@ -133,6 +133,10 @@ export default function RemindersPage() {
   const baseCurrency = user?.baseCurrency ?? "EUR";
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Blank means "recent transactions" (the capped default); a date scans
+  // everything from then on, for picking up notes written a while ago.
+  const [scanSince, setScanSince] = useState("");
+  const [showHelp, setShowHelp] = useState(false);
   // The reminder whose "Received" income picker is open, if any.
   const [settling, setSettling] = useState<string | null>(null);
 
@@ -187,16 +191,21 @@ export default function RemindersPage() {
   });
 
   const scan = useMutation({
-    mutationFn: () =>
+    mutationFn: (since: string) =>
       runJob<{ scanned: number; created: number }>(() =>
-        api<{ jobId: string }>("/reminders/scan", { method: "POST" }),
+        api<{ jobId: string }>("/reminders/scan", {
+          method: "POST",
+          body: JSON.stringify(since ? { since } : {}),
+        }),
       ),
     onSuccess: (res) => {
       invalidate();
       setNotice(
         res.created > 0
           ? `Found ${res.created} reminder${res.created === 1 ? "" : "s"}.`
-          : "No new reminders in your recent transactions.",
+          : scanSince
+            ? `No new reminders in transactions since ${scanSince}.`
+            : "No new reminders in your recent transactions.",
       );
     },
     onError: setError,
@@ -481,7 +490,26 @@ export default function RemindersPage() {
             >
               {detect.isPending ? "Detecting…" : "Detect recurring bills"}
             </Button>
-            <Button onClick={() => scan.mutate()} disabled={scan.isPending}>
+            <label
+              className="flex items-center gap-1.5 text-sm text-zinc-500"
+              title="Leave blank to scan your most recent transactions"
+            >
+              since
+              <Input
+                type="date"
+                value={scanSince}
+                onChange={(e) => setScanSince(e.target.value)}
+                className="w-auto"
+              />
+            </label>
+            <Button
+              onClick={() => {
+                setError(null);
+                setNotice(null);
+                scan.mutate(scanSince);
+              }}
+              disabled={scan.isPending}
+            >
               {scan.isPending ? "Scanning…" : "Scan for reminders"}
             </Button>
           </div>
@@ -493,9 +521,16 @@ export default function RemindersPage() {
           friend&rsquo;s share of a bill, an IOU you jotted down). It never posts
           anything — just reminds.
         </p>
+        <button
+          onClick={() => setShowHelp((v) => !v)}
+          className="mb-3 text-sm text-zinc-500 underline decoration-zinc-300 underline-offset-2 hover:text-zinc-700 dark:decoration-zinc-700 dark:hover:text-zinc-300"
+        >
+          {showHelp ? "Hide" : "What gets picked up?"}
+        </button>
+        {showHelp && <ScanHelp />}
         {scan.isPending && (
           <p className="text-sm text-amber-600">
-            Reading recent descriptions with Ollama… this can take a moment.
+            Reading descriptions with Ollama… this can take a moment.
           </p>
         )}
         {notice && !scan.isPending && (
@@ -601,5 +636,97 @@ export default function RemindersPage() {
         )}
       </Card>
     </main>
+  );
+}
+
+/** One labelled group of example wordings inside the help panel. */
+function HelpBlock({
+  title,
+  body,
+  examples,
+}: {
+  title: string;
+  body: string;
+  examples: string[];
+}) {
+  return (
+    <div>
+      <p className="font-medium text-zinc-700 dark:text-zinc-200">{title}</p>
+      <p className="text-zinc-500">{body}</p>
+      <ul className="mt-1 flex flex-col gap-0.5">
+        {examples.map((e) => (
+          <li
+            key={e}
+            className="rounded bg-zinc-100 px-2 py-0.5 font-mono text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+          >
+            {e}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * What the scan looks for, in the user's own terms. Kept truthful to the
+ * matching rules rather than aspirational: the words listed here are the ones
+ * that actually trigger each path.
+ */
+function ScanHelp() {
+  return (
+    <div className="mb-3 flex flex-col gap-3 rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-800">
+      <p className="text-zinc-500">
+        Reminders come from what you write in a transaction&rsquo;s description.
+        Three of the four kinds are plain word matching — only the money-between-
+        friends one asks the local model, because working out <em>who</em> owes{" "}
+        <em>whom</em> needs actual reading.
+      </p>
+
+      <HelpBlock
+        title="Instalments — no model involved"
+        body="Write how many payments you are into the plan. The count and the next date are worked out for you, and it self-corrects as later payments are imported."
+        examples={["Sofa 2/6", "Dentist · 7/12"]}
+      />
+
+      <HelpBlock
+        title="Waiting on a refund — no model involved"
+        body="Use the word refund (or “money back”). You will get a reminder to link the refund to this expense once it lands. Past tense is ignored, so “refunded” raises nothing."
+        examples={[
+          "Returned the bag · refund will be soon",
+          "Booking cancelled, waiting on the money back",
+        ]}
+      />
+
+      <HelpBlock
+        title="Money between friends — the model reads these"
+        body="Any of these words send the row to the model, which decides the direction and the name: owe, ask, share, split, paid for, chip in, IOU, debt, and “pay / give / send / get … back”."
+        examples={[
+          "Dinner · 25 is Sam's share, need to ask her",
+          "Transfer from Debbie · we need to give back",
+          "Cake · got back from all but Esther",
+        ]}
+      />
+
+      <HelpBlock
+        title="Already settled — deliberately ignored"
+        body="These read as history, so nothing is raised: closed off, settled, all square, already paid back, sorted out."
+        examples={["Erasyl · closed off my debt"]}
+      />
+
+      <p className="text-zinc-500">
+        Regular bills and subscriptions need no words at all — use{" "}
+        <span className="font-medium">Detect recurring bills</span>, which finds
+        anything charged at a steady interval. Merchant boilerplate such as
+        Klarna&rsquo;s &ldquo;Pay later&rdquo; does not trigger anything on its
+        own.
+      </p>
+      <p className="text-zinc-500">
+        Each transaction can raise <span className="font-medium">one</span>{" "}
+        reminder ever. Marking it <span className="font-medium">Done</span> keeps
+        it from coming back on a later scan; deleting it with{" "}
+        <span className="font-medium">×</span> makes that transaction eligible
+        again. Scanning is additive, so it never touches what is already here.
+      </p>
+    </div>
   );
 }

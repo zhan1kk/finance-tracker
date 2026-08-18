@@ -85,8 +85,18 @@ export function installmentLabel(
 const IOU_HINT =
   /(\bowe|\bask|\bshare|\bsplit|paid\s*for|(?:pay(?:ing)?|paid|give|giving|gave|send|sending|sent|transfer)\s*(?:it\s*)?back|(?:get|got|getting)\s*(?:it\s*)?back|chip\s*in|\bIOU\b|\bdebt)/i;
 
+/**
+ * Wording that says a debt is already square, so the row is history, not a
+ * reminder ("closed off my debt"). A cheap guard in front of the model, which
+ * at 4B parameters is not reliably good at spotting settled past tense.
+ */
+export const IOU_SETTLED_HINT =
+  /(closed\s*off|settled|all\s*square|already\s*paid\s*(?:me\s*)?back|sorted\s*out)/i;
+
 export function looksLikeIou(description: string | null): boolean {
-  return !!description && IOU_HINT.test(description);
+  if (!description || !IOU_HINT.test(description)) return false;
+  // "closed off my debt" is a record of settling up, not something to chase.
+  return !IOU_SETTLED_HINT.test(description);
 }
 
 /**
@@ -105,7 +115,6 @@ const REFUND_PENDING_HINT =
   /(refund|reimburse|money\s*back|charge\s*back|chargeback)/i;
 const REFUND_SETTLED_HINT =
   /(refunded|reimbursed|refund\s+(?:received|arrived|came|is\s*here|done))/i;
-const RETURN_HINT = /(returned|sent\s*back|sending\s*back|cancell?ed)/i;
 
 /** Merchant-ish label for a refund reminder: the text before the first note. */
 export function refundLabel(description: string): string {
@@ -117,9 +126,7 @@ export function refundLabel(description: string): string {
 export function looksLikeExpectedRefund(description: string | null): boolean {
   if (!description) return false;
   if (REFUND_SETTLED_HINT.test(description)) return false;
-  return (
-    REFUND_PENDING_HINT.test(description) || RETURN_HINT.test(description)
-  );
+  return REFUND_PENDING_HINT.test(description);
 }
 
 /** Ollama structured-output schema: money-owed reminders keyed back to rows. */

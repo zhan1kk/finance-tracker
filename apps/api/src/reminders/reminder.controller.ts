@@ -12,6 +12,7 @@ import type { AuthUser } from '../auth/types/auth.types';
 import { JobsService } from '../jobs/jobs.service';
 import { CreateReminderDTO } from './dtos/create-reminder.dto';
 import { LinkPaymentDTO } from './dtos/link-payment.dto';
+import { ScanRemindersDTO } from './dtos/scan-reminders.dto';
 import { UpdateReminderDTO } from './dtos/update-reminder.dto';
 import { ReminderService } from './reminder.service';
 
@@ -38,9 +39,9 @@ export class ReminderController {
    * Runs in the background — returns a job id to poll.
    */
   @Post('scan')
-  scan(@CurrentUser() user: AuthUser) {
+  scan(@CurrentUser() user: AuthUser, @Body() body: ScanRemindersDTO) {
     const jobId = this.jobs.start(user.userId, () =>
-      this.reminderService.scan(user.userId),
+      this.reminderService.scan(user.userId, body.since),
     );
     return { jobId };
   }

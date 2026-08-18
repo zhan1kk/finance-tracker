@@ -267,16 +267,23 @@ export class ReminderService {
    *   2. money owed between friends — the only job left to the local model, kept
    *      best-effort so an Ollama failure never loses the installments above.
    */
-  async scan(userId: string): Promise<{ scanned: number; created: number }> {
+  async scan(
+    userId: string,
+    since?: string,
+  ): Promise<{ scanned: number; created: number }> {
+    const from = since ? new Date(since) : null;
     const transactions = await this.prisma.transaction.findMany({
       where: {
         account: { userId },
         description: { not: null },
         // Skip anything that already produced a reminder — re-scan is additive.
         reminder: { is: null },
+        ...(from ? { date: { gte: from } } : {}),
       },
       orderBy: { date: 'desc' },
-      take: SCAN_WINDOW,
+      // With an explicit start date the user chose the range, so the cap only
+      // guards the default "recent transactions" scan.
+      take: from ? undefined : SCAN_WINDOW,
       select: {
         id: true,
         date: true,
