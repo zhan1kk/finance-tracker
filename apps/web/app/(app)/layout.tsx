@@ -59,7 +59,15 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <div className="flex items-center gap-3">
           <span className="text-lg font-semibold">Finance Tracker</span>
           <div className="ml-auto flex items-center gap-2 text-sm text-zinc-500">
-            <span className="hidden truncate sm:inline">{user.email}</span>
+            {/* The email doubles as the way into account settings — keeps it
+                out of the data nav, where people look for pages, not prefs. */}
+            <Link
+              href="/settings"
+              className="hidden truncate hover:text-zinc-700 hover:underline sm:inline dark:hover:text-zinc-300"
+              title="Account settings"
+            >
+              {user.email}
+            </Link>
             <Button
               variant="ghost"
               onClick={() => setTourOpen(true)}

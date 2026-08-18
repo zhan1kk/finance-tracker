@@ -175,4 +175,65 @@ describe('Auth (e2e)', () => {
         .expect(401);
     });
   });
+
+  describe('change password', () => {
+    const NEW_PASSWORD = 'a-much-better-password';
+
+    it('swaps the password, revoking every existing session', async () => {
+      const registered = await register();
+      const token = (registered.body as { accessToken: string }).accessToken;
+      const cookie = refreshCookieOf(registered);
+
+      await request(http)
+        .post('/auth/password')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          currentPassword: CREDENTIALS.password,
+          newPassword: NEW_PASSWORD,
+        })
+        .expect(204);
+
+      // The old refresh token must not survive a password change.
+      await request(http)
+        .post('/auth/refresh')
+        .set('Cookie', cookie)
+        .expect(401);
+
+      await request(http).post('/auth/login').send(CREDENTIALS).expect(401);
+      await request(http)
+        .post('/auth/login')
+        .send({ email: CREDENTIALS.email, password: NEW_PASSWORD })
+        .expect(200);
+    });
+
+    it('rejects a wrong current password, leaving the old one working', async () => {
+      const token = (await register()).body as { accessToken: string };
+
+      await request(http)
+        .post('/auth/password')
+        .set('Authorization', `Bearer ${token.accessToken}`)
+        .send({ currentPassword: 'not-my-password', newPassword: NEW_PASSWORD })
+        .expect(401);
+
+      await request(http).post('/auth/login').send(CREDENTIALS).expect(200);
+    });
+
+    it('rejects a short new password and unauthenticated callers', async () => {
+      const token = (await register()).body as { accessToken: string };
+
+      await request(http)
+        .post('/auth/password')
+        .set('Authorization', `Bearer ${token.accessToken}`)
+        .send({ currentPassword: CREDENTIALS.password, newPassword: 'short' })
+        .expect(400);
+
+      await request(http)
+        .post('/auth/password')
+        .send({
+          currentPassword: CREDENTIALS.password,
+          newPassword: NEW_PASSWORD,
+        })
+        .expect(401);
+    });
+  });
 });

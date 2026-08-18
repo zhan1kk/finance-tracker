@@ -141,3 +141,18 @@ export async function logoutRequest(): Promise<void> {
   await fetch('/api/auth/logout', { method: 'POST' });
   setAccessToken(null);
 }
+
+/**
+ * Changes the password. Every session is revoked server-side, so the caller is
+ * signed out here too and has to sign in again with the new password.
+ */
+export async function changePasswordRequest(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  await api<void>('/auth/password', {
+    method: 'POST',
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  setAccessToken(null);
+}

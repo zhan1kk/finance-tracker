@@ -161,6 +161,31 @@ export class AuthService {
     return this.toPublicUser(user);
   }
 
+  /**
+   * Changes the caller's password after re-checking the current one, then drops
+   * every refresh token they hold: if the reason for changing it was that
+   * someone else had the old password, their session must not survive it. The
+   * caller signs in again with the new password.
+   */
+  async changePassword(
+    userId: string,
+    input: { currentPassword: string; newPassword: string },
+  ): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    const valid = await argon2.verify(user.passwordHash, input.currentPassword);
+    if (!valid) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: await argon2.hash(input.newPassword) },
+    });
+    await this.prisma.refreshToken.deleteMany({ where: { userId } });
+  }
+
   private async issueTokens(
     userId: string,
     email: string,

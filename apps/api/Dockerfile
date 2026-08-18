@@ -26,6 +26,8 @@ COPY --from=build /repo/package.json package.json
 COPY --from=build /repo/apps/api/node_modules apps/api/node_modules
 COPY --from=build /repo/apps/api/dist apps/api/dist
 COPY --from=build /repo/apps/api/prisma apps/api/prisma
+# Admin tooling (password reset) has to be runnable in the deployed container.
+COPY --from=build /repo/apps/api/scripts apps/api/scripts
 COPY --from=build /repo/apps/api/package.json apps/api/package.json
 WORKDIR /repo/apps/api
 EXPOSE 3000

@@ -22,7 +22,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json --runInBand"
   },
   "prisma": {
-    "seed": "ts-node prisma/seed.ts"
+    "seed": "ts-node prisma/seed.ts",
+    "reset-password": "ts-node scripts/reset-password.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

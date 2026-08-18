@@ -16,6 +16,7 @@ import { REFRESH_COOKIE, REFRESH_COOKIE_PATH } from './auth.constants';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
+import { ChangePasswordDTO } from './dtos/change-password.dto';
 import { LoginDTO } from './dtos/login.dto';
 import { RegisterDTO } from './dtos/register.dto';
 import { UpdateProfileDTO } from './dtos/update-profile.dto';
@@ -84,6 +85,18 @@ export class AuthController {
   @Patch('me')
   updateMe(@CurrentUser() user: AuthUser, @Body() body: UpdateProfileDTO) {
     return this.authService.updateProfile(user.userId, body);
+  }
+
+  /** Changes the caller's password and signs every session out, this one too. */
+  @Post('password')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async changePassword(
+    @CurrentUser() user: AuthUser,
+    @Body() body: ChangePasswordDTO,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await this.authService.changePassword(user.userId, body);
+    res.clearCookie(REFRESH_COOKIE, { path: REFRESH_COOKIE_PATH });
   }
 
   private readRefreshCookie(req: Request): string | undefined {
