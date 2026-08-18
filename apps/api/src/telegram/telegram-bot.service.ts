@@ -188,6 +188,15 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         await ctx.editMessageText(reply.text, markup(reply));
         return;
       }
+      if (data.startsWith('rdone:')) {
+        const text = await this.telegram.markReminderDone(
+          String(chatId),
+          data.slice('rdone:'.length),
+        );
+        await ctx.answerCallbackQuery();
+        await ctx.editMessageText(text);
+        return;
+      }
       if (data.startsWith('acct:')) {
         const text = await this.telegram.setDefaultAccount(
           String(chatId),
@@ -273,6 +282,32 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         );
         setTimeout(() => this.startPolling(bot), 30_000);
       });
+  }
+
+  /**
+   * Sends an unprompted message (the reminder nudges). Returns false when the
+   * bot is disabled or Telegram rejects it — e.g. the user blocked the bot —
+   * so the caller can carry on rather than treat it as a failed job.
+   */
+  async sendMessage(
+    chatId: string,
+    text: string,
+    buttons?: { label: string; data: string }[],
+  ): Promise<boolean> {
+    if (!this.bot) return false;
+    const keyboard = buttons?.length
+      ? { reply_markup: buttons.reduce(
+          (kb, b) => kb.text(b.label, b.data),
+          new InlineKeyboard(),
+        ) }
+      : undefined;
+    try {
+      await this.bot.api.sendMessage(chatId, text, keyboard);
+      return true;
+    } catch (err: unknown) {
+      this.logger.warn(`Could not message chat ${chatId}: ${String(err)}`);
+      return false;
+    }
   }
 
   async onModuleDestroy() {

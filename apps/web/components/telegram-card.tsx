@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Button, Card, ErrorText, Field, Select } from "@/components/ui";
+import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import type { Account, TelegramLinkCode, TelegramSettings } from "@/lib/types";
 
@@ -31,6 +31,18 @@ export function TelegramCard({ accounts }: { accounts: Account[] }) {
       api<TelegramSettings>("/telegram/settings", {
         method: "PATCH",
         body: JSON.stringify({ defaultAccountId }),
+      }),
+    onSuccess: invalidate,
+    onError: setError,
+  });
+
+  // Patch semantics: only the fields sent are written, so each control here
+  // can update one setting without disturbing the others.
+  const saveReminders = useMutation({
+    mutationFn: (patch: Record<string, unknown>) =>
+      api<TelegramSettings>("/telegram/settings", {
+        method: "PATCH",
+        body: JSON.stringify(patch),
       }),
     onSuccess: invalidate,
     onError: setError,
@@ -105,6 +117,64 @@ export function TelegramCard({ accounts }: { accounts: Account[] }) {
           </Button>
         )}
       </div>
+
+      {settings.data?.linked && (
+        <div className="mt-4 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={settings.data.remindersEnabled}
+              onChange={(e) => {
+                setError(null);
+                saveReminders.mutate({ remindersEnabled: e.target.checked });
+              }}
+            />
+            <span className="font-medium">Nudge me about upcoming payments</span>
+          </label>
+          <p className="mt-1 text-xs text-zinc-500">
+            One message a morning, only when something is due soon. Each
+            reminder comes with a Done button.
+          </p>
+          {settings.data.remindersEnabled && (
+            <div className="mt-2 flex flex-wrap items-end gap-3">
+              <Field label="Start (days before)">
+                <Input
+                  type="number"
+                  min={1}
+                  max={60}
+                  defaultValue={settings.data.leadDays}
+                  className="w-24"
+                  onBlur={(e) => {
+                    const leadDays = Number(e.target.value);
+                    if (leadDays >= 1 && leadDays <= 60) {
+                      saveReminders.mutate({ leadDays });
+                    }
+                  }}
+                />
+              </Field>
+              <Field label="Then every (days)">
+                <Input
+                  type="number"
+                  min={1}
+                  max={30}
+                  defaultValue={settings.data.intervalDays}
+                  className="w-24"
+                  onBlur={(e) => {
+                    const intervalDays = Number(e.target.value);
+                    if (intervalDays >= 1 && intervalDays <= 30) {
+                      saveReminders.mutate({ intervalDays });
+                    }
+                  }}
+                />
+              </Field>
+              <p className="text-xs text-zinc-500">
+                {settings.data.leadDays} days out, then every{" "}
+                {settings.data.intervalDays} — and again on the day itself.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {!settings.data?.linked && linkCode && (
         <p className="mt-3 text-sm">

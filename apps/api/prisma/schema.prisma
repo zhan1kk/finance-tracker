@@ -49,6 +49,14 @@ model User {
   telegramLinkCodeHash      String?   @unique
   telegramLinkCodeExpiresAt DateTime?
 
+  /// Opt-in: send reminder nudges to the linked Telegram chat. Off by default —
+  /// an unsolicited message is worse than a missed one.
+  telegramRemindersEnabled Boolean @default(false)
+  /// How many days before a payment the nudges start.
+  reminderLeadDays         Int     @default(10)
+  /// How often to repeat after that, in days (lead 10 / every 3 → 10, 7, 4, 1).
+  reminderIntervalDays     Int     @default(3)
+
   /// Account the Telegram bot books captured transactions against
   defaultAccountId String?
   defaultAccount   Account? @relation("UserDefaultAccount", fields: [defaultAccountId], references: [id], onDelete: SetNull)
@@ -591,6 +599,8 @@ model Reminder {
   kind        String    @default("payment")
   /// Dismissed / handled.
   done        Boolean   @default(false)
+  /// Date of the last Telegram nudge, so a day's job never pings twice.
+  lastPingedOn DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 

@@ -24,10 +24,7 @@ export class TelegramController {
     @CurrentUser() user: AuthUser,
     @Body() body: UpdateTelegramSettingsDTO,
   ) {
-    return this.telegramService.updateSettings(
-      user.userId,
-      body.defaultAccountId,
-    );
+    return this.telegramService.updateSettings(user.userId, body);
   }
 
   @Delete('link')

@@ -181,6 +181,12 @@ export type TelegramSettings = {
   linked: boolean;
   defaultAccountId: string | null;
   botUsername: string | null;
+  /** Opt-in nudges about payments coming due, sent to the linked chat. */
+  remindersEnabled: boolean;
+  /** Days before the due date the nudges start. */
+  leadDays: number;
+  /** Days between nudges inside that window. */
+  intervalDays: number;
 };
 
 export type TelegramLinkCode = {

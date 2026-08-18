@@ -51,29 +51,61 @@ export class TelegramService {
   async getSettings(userId: string) {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
-      select: { telegramChatId: true, defaultAccountId: true },
+      select: {
+        telegramChatId: true,
+        defaultAccountId: true,
+        telegramRemindersEnabled: true,
+        reminderLeadDays: true,
+        reminderIntervalDays: true,
+      },
     });
     return {
       linked: user.telegramChatId !== null,
       defaultAccountId: user.defaultAccountId,
       botUsername: this.botUsername,
+      remindersEnabled: user.telegramRemindersEnabled,
+      leadDays: user.reminderLeadDays,
+      intervalDays: user.reminderIntervalDays,
     };
   }
 
-  async updateSettings(userId: string, defaultAccountId: string | null) {
-    if (defaultAccountId !== null) {
+  async updateSettings(
+    userId: string,
+    patch: {
+      defaultAccountId?: string | null;
+      remindersEnabled?: boolean;
+      leadDays?: number;
+      intervalDays?: number;
+    },
+  ) {
+    if (patch.defaultAccountId != null) {
       const account = await this.prisma.account.findFirst({
-        where: { id: defaultAccountId, userId },
+        where: { id: patch.defaultAccountId, userId },
       });
       if (!account) {
         throw new NotFoundException(
-          `Account with id ${defaultAccountId} was not found`,
+          `Account with id ${patch.defaultAccountId} was not found`,
         );
       }
     }
     await this.prisma.user.update({
       where: { id: userId },
-      data: { defaultAccountId },
+      // Only the keys actually sent are written, so a settings form that
+      // touches one field never resets the others.
+      data: {
+        ...(patch.defaultAccountId !== undefined
+          ? { defaultAccountId: patch.defaultAccountId }
+          : {}),
+        ...(patch.remindersEnabled !== undefined
+          ? { telegramRemindersEnabled: patch.remindersEnabled }
+          : {}),
+        ...(patch.leadDays !== undefined
+          ? { reminderLeadDays: patch.leadDays }
+          : {}),
+        ...(patch.intervalDays !== undefined
+          ? { reminderIntervalDays: patch.intervalDays }
+          : {}),
+      },
     });
     return this.getSettings(userId);
   }
@@ -310,5 +342,20 @@ export class TelegramService {
     } catch {
       return 'Could not undo (already removed?).';
     }
+  }
+
+  /** Settles a reminder from its nudge message. Scoped to the chat's own user. */
+  async markReminderDone(chatId: string, reminderId: string): Promise<string> {
+    const user = await this.prisma.user.findUnique({
+      where: { telegramChatId: chatId },
+    });
+    if (!user) return 'This chat is not linked.';
+    const { count } = await this.prisma.reminder.updateMany({
+      where: { id: reminderId, userId: user.id },
+      data: { done: true },
+    });
+    return count > 0
+      ? '✅ Marked done.'
+      : 'That reminder is gone already.';
   }
 }
