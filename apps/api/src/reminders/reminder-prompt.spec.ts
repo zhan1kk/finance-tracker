@@ -2,6 +2,7 @@ import {
   coerceExtractedReminders,
   extractInstallment,
   installmentLabel,
+  looksLikeExpectedRefund,
   looksLikeIou,
 } from './reminder-prompt';
 
@@ -49,10 +50,42 @@ describe('looksLikeIou', () => {
     }
   });
 
+  it('matches money going back the other way', () => {
+    for (const s of [
+      'Transfer from Debbie · (we need to give back, trip is cancelled)',
+      'Dinner — I owe Sam',
+      'sent back his half already? no, still to send back',
+      'IOU 20 for the taxi',
+    ]) {
+      expect(looksLikeIou(s)).toBe(true);
+    }
+  });
+
   it('ignores bills, subscriptions, and null', () => {
     expect(looksLikeIou('ImmoScout (monthly)')).toBe(false);
     expect(looksLikeIou('Spotify')).toBe(false);
     expect(looksLikeIou(null)).toBe(false);
+  });
+});
+
+describe('looksLikeExpectedRefund', () => {
+  it('spots money owed back by a shop', () => {
+    for (const s of [
+      'Sp Dogs Collective · ordered the other bag and returned it (refund will be soon)',
+      'Flights — booking cancelled, waiting on the money back',
+      'Disputed charge, chargeback opened',
+    ]) {
+      expect(looksLikeExpectedRefund(s)).toBe(true);
+    }
+  });
+
+  it('ignores refunds that already landed, and unrelated rows', () => {
+    // Past tense means the money is in, so there is nothing left to chase.
+    // (An *income* row that merely says "refund" is the refund itself; that is
+    // ruled out by transaction type at the call site, not by wording.)
+    expect(looksLikeExpectedRefund('Card Delivery Fee Refunded')).toBe(false);
+    expect(looksLikeExpectedRefund('Groceries')).toBe(false);
+    expect(looksLikeExpectedRefund(null)).toBe(false);
   });
 });
 

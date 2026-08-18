@@ -18,6 +18,7 @@ import { CsvParserService } from './csv-parser.service';
 import type { ColumnMappingDTO } from './dtos/column-mapping.dto';
 import type { CreateImportDTO } from './dtos/create-import.dto';
 import { MappingService } from './mapping.service';
+import { numericSetting } from '../common/env';
 import { dedupeHash, normalizeMerchant } from './normalization';
 import { parseAmount, parseDate } from './parsing';
 import { RulesService } from './rules.service';
@@ -175,7 +176,7 @@ export class ImportService {
 
     const threshold =
       dto.threshold ??
-      Number(this.config.get('DEFAULT_CATEGORIZATION_THRESHOLD') ?? 0.7);
+      numericSetting(this.config, 'DEFAULT_CATEGORIZATION_THRESHOLD', 0.7);
     await this.categorize(userId, staged, threshold);
 
     const batch = await this.prisma.importBatch.create({

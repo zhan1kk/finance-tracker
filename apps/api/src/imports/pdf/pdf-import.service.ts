@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { optionalSetting } from '../../common/env';
 import { ImportService } from '../import.service';
 import {
   buildPdfExtractionPrompt,
@@ -95,12 +96,12 @@ export class PdfImportService {
     text: string,
   ): Promise<ExtractedTransaction[]> {
     const baseUrl =
-      this.config.get<string>('OLLAMA_BASE_URL') ?? 'http://localhost:11434';
+      optionalSetting(this.config, 'OLLAMA_BASE_URL') ?? 'http://localhost:11434';
     // A leaner model can be set for extraction jobs via OLLAMA_EXTRACTION_MODEL
     // (see the reminder extractor); falls back to OLLAMA_MODEL.
     const model =
-      this.config.get<string>('OLLAMA_EXTRACTION_MODEL') ??
-      this.config.get<string>('OLLAMA_MODEL') ??
+      optionalSetting(this.config, 'OLLAMA_EXTRACTION_MODEL') ??
+      optionalSetting(this.config, 'OLLAMA_MODEL') ??
       'llama3.1';
 
     const controller = new AbortController();

@@ -83,10 +83,43 @@ export function installmentLabel(
 // that installments are read deterministically above and recurring bills are
 // detected separately. Kept broad; the model does the final judging.
 const IOU_HINT =
-  /(\bowe|\bask|\bshare|\bsplit|paid\s*for|pay(?:ing)?\s*back|paid\s*back|got\s*back|get\s*back|chip\s*in)/i;
+  /(\bowe|\bask|\bshare|\bsplit|paid\s*for|(?:pay(?:ing)?|paid|give|giving|gave|send|sending|sent|transfer)\s*(?:it\s*)?back|(?:get|got|getting)\s*(?:it\s*)?back|chip\s*in|\bIOU\b|\bdebt)/i;
 
 export function looksLikeIou(description: string | null): boolean {
   return !!description && IOU_HINT.test(description);
+}
+
+/**
+ * Money the user is waiting to receive back from a merchant, not a person: a
+ * return that has not been refunded yet, a cancelled booking, a disputed
+ * charge. Worth a reminder because the refund lands as a separate transaction
+ * later and has to be linked to this expense by hand — nothing else will
+ * connect the two, and until it is linked the expense looks like real spending.
+ *
+ * Deliberately requires a *pending* sense: "refund received" or "refunded on
+ * the 3rd" is already settled and must not raise a reminder. Direction is the
+ * caller's job — only an EXPENSE can be awaiting a refund; an INCOME row saying
+ * "refund" *is* the refund.
+ */
+const REFUND_PENDING_HINT =
+  /(refund|reimburse|money\s*back|charge\s*back|chargeback)/i;
+const REFUND_SETTLED_HINT =
+  /(refunded|reimbursed|refund\s+(?:received|arrived|came|is\s*here|done))/i;
+const RETURN_HINT = /(returned|sent\s*back|sending\s*back|cancell?ed)/i;
+
+/** Merchant-ish label for a refund reminder: the text before the first note. */
+export function refundLabel(description: string): string {
+  const head = description.split(/[·(]/)[0].replace(/\s+/g, ' ').trim();
+  const label = head || description.trim();
+  return label.length > 60 ? `${label.slice(0, 57)}…` : label;
+}
+
+export function looksLikeExpectedRefund(description: string | null): boolean {
+  if (!description) return false;
+  if (REFUND_SETTLED_HINT.test(description)) return false;
+  return (
+    REFUND_PENDING_HINT.test(description) || RETURN_HINT.test(description)
+  );
 }
 
 /** Ollama structured-output schema: money-owed reminders keyed back to rows. */

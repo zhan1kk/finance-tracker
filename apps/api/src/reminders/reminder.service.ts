@@ -12,7 +12,9 @@ import { ReminderExtractionService } from './reminder-extraction.service';
 import {
   extractInstallment,
   installmentLabel,
+  looksLikeExpectedRefund,
   looksLikeIou,
+  refundLabel,
   type ReminderCandidate,
 } from './reminder-prompt';
 import { detectRecurringBills } from './recurring-detect';
@@ -278,10 +280,13 @@ export class ReminderService {
       select: {
         id: true,
         date: true,
+        type: true,
         amount: true,
         description: true,
         account: { select: { currency: true } },
         subcategory: { select: { id: true, name: true } },
+        // An expense that already has a payback linked needs no chase-up.
+        reimbursements: { select: { id: true }, take: 1 },
       },
     });
 
@@ -313,7 +318,32 @@ export class ReminderService {
       const desc = t.description as string;
       const inst = extractInstallment(desc);
       if (!inst) {
-        if (looksLikeIou(desc)) iouRows.push(t);
+        if (looksLikeIou(desc)) {
+          iouRows.push(t);
+          continue;
+        }
+        // Deterministic: an expense still waiting on a refund. Only an expense
+        // can be owed one (an income row saying "refund" is the refund), and
+        // one that already has a payback linked is settled — nothing to chase.
+        if (
+          t.type === 'EXPENSE' &&
+          t.reimbursements.length === 0 &&
+          looksLikeExpectedRefund(desc)
+        ) {
+          scanned++;
+          const madeOne = await this.createSafely({
+            userId,
+            label: refundLabel(desc),
+            // Money owed to the user, so it lands with the IOUs and gets the
+            // same "settle" action.
+            kind: 'ask',
+            amountCents: t.amount,
+            currency: t.account.currency,
+            note: 'Refund expected — link it to this expense once it arrives.',
+            sourceTransactionId: t.id,
+          });
+          if (madeOne) created++;
+        }
         continue;
       }
       // A fully-paid plan ("3/3") has nothing left to remind about.

@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { optionalSetting } from '../common/env';
 
 /** The exact, already-computed facts to phrase — never re-derived by the model. */
 export type InsightSummaryInput = {
@@ -33,10 +34,10 @@ export class InsightSummaryService {
     if (facts.length === 0) return { summary: null };
 
     const baseUrl =
-      this.config.get<string>('OLLAMA_BASE_URL') ?? 'http://localhost:11434';
+      optionalSetting(this.config, 'OLLAMA_BASE_URL') ?? 'http://localhost:11434';
     const model =
-      this.config.get<string>('OLLAMA_EXTRACTION_MODEL') ??
-      this.config.get<string>('OLLAMA_MODEL') ??
+      optionalSetting(this.config, 'OLLAMA_EXTRACTION_MODEL') ??
+      optionalSetting(this.config, 'OLLAMA_MODEL') ??
       'llama3.1';
 
     const system =
