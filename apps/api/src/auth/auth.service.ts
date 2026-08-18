@@ -69,6 +69,17 @@ export class AuthService {
           userId: created.id,
         })),
       });
+      // Start with a cash wallet: everyone has one, it is what the Telegram
+      // capture bot books against, and it means the app is usable before the
+      // first statement import. An ordinary account — rename or delete it.
+      await tx.account.create({
+        data: {
+          userId: created.id,
+          name: 'Cash',
+          type: 'cash',
+          currency: created.baseCurrency,
+        },
+      });
       return created;
     });
 

@@ -177,9 +177,10 @@ describe('API (e2e)', () => {
         .get('/accounts')
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
-      const ids = (list.body as { id: string; pinned: boolean }[]).map(
-        (a) => a.id,
-      );
+      const ids = (list.body as { id: string; pinned: boolean }[])
+        .map((a) => a.id)
+        // Ignore the Cash account registration seeds; this is about ordering.
+        .filter((id) => id === first.id || id === second.id);
       // Pinned account leads, regardless of creation order.
       expect(ids).toEqual([second.id, first.id]);
       expect(list.body[0]).toMatchObject({ pinned: true });
@@ -249,7 +250,10 @@ describe('API (e2e)', () => {
         .get('/accounts')
         .set('Authorization', bearer)
         .expect(200);
-      expect(accounts.body).toEqual([]);
+      // Their own seeded Cash account and nothing else — never the other user's.
+      expect(accounts.body).toEqual([
+        expect.objectContaining({ name: 'Cash', type: 'cash' }),
+      ]);
 
       const transactions = await request(http)
         .get('/transactions')
@@ -1117,7 +1121,8 @@ describe('API (e2e)', () => {
 
     it('switches the capture account via /account', async () => {
       const first = await createAccount(10_000);
-      const second = await createAccount(0, token, { name: 'Cash' });
+      // Not 'Cash': registration already seeds an account by that name.
+      const second = await createAccount(0, token, { name: 'Wallet' });
       await linkChat();
       await request(http)
         .patch('/telegram/settings')
@@ -1129,11 +1134,12 @@ describe('API (e2e)', () => {
       expect(listed?.accounts.map((a) => a.name).sort()).toEqual([
         'Cash',
         'Checking',
+        'Wallet',
       ]);
       expect(listed?.defaultAccountId).toBe(first.id);
 
       expect(await telegram().setDefaultAccount(CHAT, second.id)).toContain(
-        'Cash',
+        'Wallet',
       );
       const capture = await telegram().capture(CHAT, '5 - grocer');
       expect(capture.ok).toBe(true);
@@ -1922,7 +1928,8 @@ describe('API (e2e)', () => {
       accountId = (await createAccount(100_000)).id;
       groceriesId = (await createSubcategory('Weekly Groceries', 'Expenses'))
         .id;
-      incomeId = (await createSubcategory('Refunds', 'Income')).id;
+      // Not 'Refunds': registration already seeds a subcategory by that name.
+      incomeId = (await createSubcategory('Money Back', 'Income')).id;
     });
 
     const createTxn = async (body: Record<string, unknown>) => {
@@ -2298,7 +2305,8 @@ describe('API (e2e)', () => {
         baseCurrency: 'EUR',
         createdAt: expect.any(String) as unknown,
       });
-      expect(body.accounts).toHaveLength(1);
+      // The account this test created, plus the Cash account registration seeds.
+      expect(body.accounts).toHaveLength(2);
       expect(body.transactions).toHaveLength(1);
       expect(body.budgets).toHaveLength(1);
       expect(JSON.stringify(body)).not.toContain('passwordHash');

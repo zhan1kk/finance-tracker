@@ -8,6 +8,10 @@ export const DEFAULT_SUBCATEGORIES: {
   { name: 'Salary', category: 'Income' },
   { name: 'Freelance', category: 'Income' },
   { name: 'Other Income', category: 'Income' },
+  // Somewhere to file money coming back (a return, a friend paying you back).
+  // Nothing keys off this name: what makes a payback behave like a refund is
+  // linking it to the expense it repays, not the category it sits in.
+  { name: 'Refunds', category: 'Income' },
   { name: 'Groceries', category: 'Expenses' },
   { name: 'Dining Out', category: 'Expenses' },
   { name: 'Transport', category: 'Expenses' },
