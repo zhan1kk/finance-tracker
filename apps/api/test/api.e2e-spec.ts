@@ -869,10 +869,11 @@ describe('API (e2e)', () => {
       });
 
       const stats = await getStats();
-      // The payback is not income; it reduces spending in the month received.
+      // The payback is not income; it reduces the expense it repays, and it does
+      // so in that expense's month even though the money arrived in July — so
+      // the monthly totals agree with the category breakdown below.
       expect(stats.monthly).toEqual([
-        { month: '2026-06', income: 0, expense: 9_000 },
-        { month: '2026-07', income: 0, expense: -3_000 },
+        { month: '2026-06', income: 0, expense: 6_000 },
       ]);
       expect(stats.byCategory).toEqual([
         expect.objectContaining({ subcategoryId: groceriesId, amount: 6_000 }),
@@ -904,10 +905,16 @@ describe('API (e2e)', () => {
       expect(june.byCategory).toEqual([
         expect.objectContaining({ subcategoryId: groceriesId, amount: 0 }),
       ]);
+      // The monthly total tells the same story as the categories — the two
+      // views of one month must not disagree.
+      expect(june.monthly).toEqual([
+        { month: '2026-06', income: 0, expense: 0 },
+      ]);
 
       // July only received the money; it never had spending in that category.
       const july = await getStats('?from=2026-07-01&to=2026-07-31');
       expect(july.byCategory).toEqual([]);
+      expect(july.monthly).toEqual([]);
     });
 
     it('does not net a reimbursement against an internal (excluded) parent', async () => {

@@ -21,18 +21,20 @@ export class TransactionStatsService {
   /**
    * Aggregates for dashboards, all in cents. Transfers are excluded.
    * Reimbursements (INCOME linked to an EXPENSE) are not counted as income;
-   * they reduce expenses instead — monthly in the month received, per-category
-   * against the parent expense's subcategory.
+   * they reduce the expense they repay, and they do so in *that expense's*
+   * month — monthly totals and the category breakdown therefore agree.
    */
   async getStats(userId: string, query: StatsQuery): Promise<TransactionStats> {
-    const period = await this.periodExpression(userId);
+    const periodOf = await this.periodExpression(userId);
     // Which row's date decides the period. Usually the row being summed (t),
-    // but a reimbursement is credited against its parent expense, so it must
-    // fall in the parent's period (p) — see the category query below.
+    // but a reimbursement is credited against its parent expense, so it counts
+    // in the parent's period (p) — in the monthly totals and the categories
+    // alike. COALESCE falls back to t for every row that has no parent.
     const rangeOn = (date: Prisma.Sql) => [
       ...(query.from ? [Prisma.sql`${date} >= ${new Date(query.from)}`] : []),
       ...(query.to ? [Prisma.sql`${date} <= ${new Date(query.to)}`] : []),
     ];
+    const effectiveDate = Prisma.sql`COALESCE(p."date", t."date")`;
     const range = rangeOn(Prisma.sql`t."date"`);
     const scopeIn = (extra: Prisma.Sql, dateRange: Prisma.Sql[]) =>
       Prisma.join(
@@ -51,7 +53,7 @@ export class TransactionStatsService {
     const [monthly, byCategory, incomeByCategory] = await this.prisma.$transaction([
       this.prisma.$queryRaw<MonthlyStat[]>`
         SELECT
-          ${period} AS month,
+          ${periodOf(effectiveDate)} AS month,
           COALESCE(SUM(t."amountBase") FILTER (
             WHERE t."type" = 'INCOME' AND t."parentTransactionId" IS NULL
           ), 0)::int AS income,
@@ -65,7 +67,10 @@ export class TransactionStatsService {
         FROM "Transaction" t
         JOIN "Account" a ON a."id" = t."accountId"
         LEFT JOIN "Transaction" p ON p."id" = t."parentTransactionId"
-        WHERE ${scope(Prisma.sql`t."type" <> 'TRANSFER'`)}
+        WHERE ${scopeIn(
+          Prisma.sql`t."type" <> 'TRANSFER'`,
+          rangeOn(effectiveDate),
+        )}
         GROUP BY 1
         ORDER BY 1
       `,
@@ -124,12 +129,17 @@ export class TransactionStatsService {
   }
 
   /**
-   * SQL that labels a transaction's financial month. Shifting the date back by
+   * Builds SQL that labels a date's financial month. Shifting the date back by
    * `monthStartDay - 1` days makes the calendar-month truncation land on the
    * right period; the month offset then names it after the month it ends in.
    * With the default start day of 1 this is exactly `date_trunc('month', date)`.
+   *
+   * Returns a function so the caller picks which date to label — the row's own,
+   * or its parent expense's for a reimbursement.
    */
-  private async periodExpression(userId: string): Promise<Prisma.Sql> {
+  private async periodExpression(
+    userId: string,
+  ): Promise<(date: Prisma.Sql) => Prisma.Sql> {
     const { monthStartDay } = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
       select: { monthStartDay: true },
@@ -138,8 +148,8 @@ export class TransactionStatsService {
     const shift = periodLabelShiftMonths(monthStartDay);
     // The ::int casts matter: Prisma binds JS numbers as bigint, and there is no
     // make_interval overload for that.
-    return Prisma.sql`to_char(
-      date_trunc('month', t."date" - make_interval(days => ${offset}::int))
+    return (date: Prisma.Sql) => Prisma.sql`to_char(
+      date_trunc('month', ${date} - make_interval(days => ${offset}::int))
         + make_interval(months => ${shift}::int),
       'YYYY-MM'
     )`;

@@ -1067,13 +1067,38 @@ function TransactionRow({
   // than real income. The label beside it carries the meaning; the shade only
   // echoes it, so the distinction is never colour-alone.
   const isPayback = isRealIncome && t.parentTransactionId !== null;
-  const color = isPayback
-    ? "text-emerald-500/80"
-    : isRealIncome
-      ? "text-emerald-600"
-      : t.type === "TRANSFER" || t.excludeFromStats
-        ? "text-zinc-500"
-        : "";
+
+  // A repaid expense: how much came back, and whether that covers it. Paybacks
+  // are shown in the currency they arrived in, and only compared against the
+  // expense when they share its currency — a €120 credit against a tenge charge
+  // says nothing about how much of it was covered.
+  const paybacks =
+    t.type === "EXPENSE" && !t.excludeFromStats ? t.reimbursements : [];
+  const paybackCurrency =
+    paybacks.length > 0 ? currencyOf(paybacks[0].accountId) : null;
+  const paidBack = paybacks.reduce((sum, r) => sum + r.amount, 0);
+  const comparable =
+    paybacks.length > 0 &&
+    paybacks.every((r) => currencyOf(r.accountId) === paybackCurrency) &&
+    paybackCurrency === currency;
+  // Over-repayment (a friend rounds up) still means the expense cost nothing.
+  const fullyReimbursed = comparable && paidBack >= t.amount;
+  const partlyReimbursed = paybacks.length > 0 && !fullyReimbursed;
+  const netSpent = comparable ? Math.max(t.amount - paidBack, 0) : null;
+
+  const color = fullyReimbursed
+    ? "text-zinc-400"
+    : isPayback
+      ? "text-emerald-500/80"
+      : isRealIncome
+        ? "text-emerald-600"
+        : t.type === "TRANSFER" || t.excludeFromStats
+          ? "text-zinc-500"
+          : "";
+  // Fully repaid reads like a transfer — the money came back, so it is greyed
+  // out. Partly repaid still cost something, so it stays legible and is only
+  // faded enough to signal "not the whole story".
+  const amountClass = partlyReimbursed ? `${color} opacity-70` : color;
   // Show a signed amount for transfers only when scoped to one account (so the
   // running balance reads correctly); otherwise keep them sign-less.
   const showSign = t.type !== "TRANSFER" || filterAccountId !== null;
@@ -1206,50 +1231,35 @@ function TransactionRow({
             reimbursement
           </span>
         )}
-        {t.type === "EXPENSE" &&
-          !t.excludeFromStats &&
-          t.reimbursements.length > 0 &&
-          (() => {
-            // Show the payback in the currency it actually arrived in (the
-            // reimbursing account's), not the expense's — a €120 Revolut credit
-            // against a tenge charge is "€120", not "KZT 120". Amounts are only
-            // summed when they share a currency.
-            const cur = currencyOf(t.reimbursements[0].accountId);
-            const uniform = t.reimbursements.every(
-              (r) => currencyOf(r.accountId) === cur,
-            );
-            const paidBack = t.reimbursements.reduce(
-              (sum, r) => sum + r.amount,
-              0,
-            );
-            // "Fully" is only claimable when the paybacks and the expense are in
-            // the same currency — otherwise the totals are not comparable.
-            const fully = uniform && cur === currency && paidBack >= t.amount;
-            return (
-              <span
-                className={`ml-1.5 rounded px-1.5 py-0.5 text-xs ${
-                  fully
-                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                    : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+        {paybacks.length > 0 && (
+          <span
+            className={`ml-1.5 rounded px-1.5 py-0.5 text-xs ${
+              fullyReimbursed
+                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+            }`}
+          >
+            {fullyReimbursed
+              ? "fully reimbursed"
+              : // Show what it actually cost after the partial payback, so the
+                // faded amount above does not have to be worked out by hand.
+                `reimbursed ${
+                  comparable
+                    ? `${formatCents(paidBack, currency)} · ${formatCents(
+                        netSpent ?? 0,
+                        currency,
+                      )} net`
+                    : `${paybacks.length}×`
                 }`}
-              >
-                {fully
-                  ? "fully reimbursed"
-                  : `reimbursed ${
-                      uniform
-                        ? formatCents(paidBack, cur)
-                        : `${t.reimbursements.length}×`
-                    }`}
-              </span>
-            );
-          })()}
+          </span>
+        )}
       </td>
       <td className="py-2 pr-3">{t.description ?? ""}</td>
       <td className="py-2 pr-3 whitespace-nowrap">
         {accountName(t.accountId)}
         {t.type === "TRANSFER" && ` → ${accountName(t.counterAccountId)}`}
       </td>
-      <td className={`py-2 pr-3 text-right whitespace-nowrap ${color}`}>
+      <td className={`py-2 pr-3 text-right whitespace-nowrap ${amountClass}`}>
         {showSign ? sign : ""}
         {formatCents(t.amount, currency)}
       </td>
