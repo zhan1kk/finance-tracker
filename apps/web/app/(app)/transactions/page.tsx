@@ -1451,9 +1451,14 @@ function QuickAdd({
     if (type === "INCOME" && !internal && parentId) {
       body.parentTransactionId = parentId;
     }
-    create.mutate(body);
-    window.localStorage.setItem(LAST_DATE_KEY, date);
-    e.currentTarget.reset();
+    const form_ = e.currentTarget;
+    create.mutate(body, {
+      onSuccess: () => {
+        // Remember the date and clear the form only once it actually saved.
+        window.localStorage.setItem(LAST_DATE_KEY, date);
+        form_.reset();
+      },
+    });
     setInternal(false);
     setParentId("");
   };

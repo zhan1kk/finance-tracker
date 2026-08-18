@@ -179,9 +179,11 @@ export function ImportReview({
   const duplicateCount = data.rows.filter(
     (r) => r.status === "DUPLICATE",
   ).length;
+  // Every mutation on this screen, so a failed row edit cannot fail silently.
   const error =
     commit.error ?? undo.error ?? reopen.error ?? discard.error ??
-    correct.error ?? acceptAll.error ?? skip.error ?? include.error;
+    correct.error ?? acceptAll.error ?? skip.error ?? include.error ??
+    flip.error ?? annotate.error;
 
   return (
     <Card>

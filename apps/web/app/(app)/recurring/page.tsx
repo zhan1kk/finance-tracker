@@ -239,19 +239,23 @@ function NewRule({ onCreated }: { onCreated: () => void }) {
     }
     const maxRaw = String(form.get("maxOccurrences") || "").trim();
     const endRaw = String(form.get("endDate") || "").trim();
-    create.mutate({
-      type,
-      amount,
-      accountId: String(form.get("accountId")),
-      subcategoryId: String(form.get("subcategoryId")),
-      cadence: String(form.get("cadence")),
-      interval: Number(form.get("interval")) || 1,
-      startDate: String(form.get("startDate")),
-      description: String(form.get("description") || "") || undefined,
-      ...(endRaw ? { endDate: endRaw } : {}),
-      ...(maxRaw ? { maxOccurrences: Number(maxRaw) } : {}),
-    });
-    e.currentTarget.reset();
+    const form_ = e.currentTarget;
+    create.mutate(
+      {
+        type,
+        amount,
+        accountId: String(form.get("accountId")),
+        subcategoryId: String(form.get("subcategoryId")),
+        cadence: String(form.get("cadence")),
+        interval: Number(form.get("interval")) || 1,
+        startDate: String(form.get("startDate")),
+        description: String(form.get("description") || "") || undefined,
+        ...(endRaw ? { endDate: endRaw } : {}),
+        ...(maxRaw ? { maxOccurrences: Number(maxRaw) } : {}),
+      },
+      // Nine fields: losing them to a failed save is the worst case in the app.
+      { onSuccess: () => form_.reset() },
+    );
   };
 
   return (

@@ -53,11 +53,15 @@ export default function SubcategoriesPage() {
     e.preventDefault();
     setError(null);
     const form = new FormData(e.currentTarget);
-    create.mutate({
-      name: String(form.get("name")),
-      category: String(form.get("category")),
-    });
-    e.currentTarget.reset();
+    const form_ = e.currentTarget;
+    create.mutate(
+      {
+        name: String(form.get("name")),
+        category: String(form.get("category")),
+      },
+      // A duplicate name is a 409; keep the typing so it can be edited.
+      { onSuccess: () => form_.reset() },
+    );
   };
 
   const grouped = TRANSACTION_CATEGORIES.map((category) => ({

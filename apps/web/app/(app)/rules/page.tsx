@@ -56,12 +56,14 @@ export default function RulesPage() {
       setError(new Error("Enter a merchant text and pick what it means"));
       return;
     }
+    const form_ = e.currentTarget;
     create.mutate(
       target.startsWith(ACC)
         ? { pattern, counterAccountId: target.slice(ACC.length) }
         : { pattern, subcategoryId: target.slice(SUB.length) },
+      // Only clear once it saved: a rejected rule used to wipe what was typed.
+      { onSuccess: () => form_.reset() },
     );
-    e.currentTarget.reset();
   };
 
   return (
@@ -155,7 +157,18 @@ export default function RulesPage() {
                     <button
                       aria-label="Delete rule"
                       className="text-zinc-400 hover:text-red-600"
-                      onClick={() => remove.mutate(rule.id)}
+                      onClick={() => {
+                        // Rules are learned from past corrections, so losing one
+                        // to a misclick throws away real work — confirm like
+                        // every other delete in the app.
+                        if (
+                          window.confirm(
+                            `Delete the rule for "${rule.pattern}"? Future imports will stop matching it automatically.`,
+                          )
+                        ) {
+                          remove.mutate(rule.id);
+                        }
+                      }}
                     >
                       ×
                     </button>

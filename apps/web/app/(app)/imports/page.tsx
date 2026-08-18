@@ -27,13 +27,29 @@ function guessColumn(headers: string[], patterns: RegExp[]): string {
 
 export default function ImportsPage() {
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
+  // Owned here, not in NewImport: opening a batch unmounts NewImport in the same
+  // tick it sets this, so a banner rendered there would never reach the screen —
+  // and unparseable rows would go missing silently.
+  const [skipped, setSkipped] = useState(0);
+
+  const skippedNotice = skipped > 0 && (
+    <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+      {skipped} row{skipped === 1 ? "" : "s"} could not be read (unparseable date
+      or amount) and {skipped === 1 ? "was" : "were"} left out of this import.
+      Check the statement if a transaction seems to be missing.
+    </p>
+  );
 
   if (activeBatchId) {
     return (
       <main className="flex flex-col gap-6">
+        {skippedNotice}
         <ImportReview
           batchId={activeBatchId}
-          onDone={() => setActiveBatchId(null)}
+          onDone={() => {
+            setActiveBatchId(null);
+            setSkipped(0);
+          }}
         />
       </main>
     );
@@ -41,14 +57,24 @@ export default function ImportsPage() {
 
   return (
     <main className="flex flex-col gap-6">
-      <NewImport onImported={setActiveBatchId} />
+      {skippedNotice}
+      <NewImport
+        onImported={(batchId, skippedRows) => {
+          setSkipped(skippedRows);
+          setActiveBatchId(batchId);
+        }}
+      />
       <AccuracyCard />
       <History onOpen={setActiveBatchId} />
     </main>
   );
 }
 
-function NewImport({ onImported }: { onImported: (batchId: string) => void }) {
+function NewImport({
+  onImported,
+}: {
+  onImported: (batchId: string, skippedRows: number) => void;
+}) {
   const queryClient = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
   const pdfInput = useRef<HTMLInputElement>(null);
@@ -58,7 +84,6 @@ function NewImport({ onImported }: { onImported: (batchId: string) => void }) {
   const [inspection, setInspection] = useState<CsvInspection | null>(null);
   const [mapping, setMapping] = useState<ColumnMapping | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [skipped, setSkipped] = useState<number | null>(null);
 
   const accounts = useQuery({
     queryKey: ["accounts"],
@@ -76,7 +101,6 @@ function NewImport({ onImported }: { onImported: (batchId: string) => void }) {
 
   const onFile = async (file: File) => {
     setError(null);
-    setSkipped(null);
     const text = await file.text();
     setCsv(text);
     setFilename(file.name);
@@ -117,9 +141,8 @@ function NewImport({ onImported }: { onImported: (batchId: string) => void }) {
       }),
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: ["import-batches"] });
-      setSkipped(result.skipped.length);
       reset();
-      onImported(result.batch.id);
+      onImported(result.batch.id, result.skipped.length);
     },
     onError: setError,
   });
@@ -146,16 +169,14 @@ function NewImport({ onImported }: { onImported: (batchId: string) => void }) {
       ),
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: ["import-batches"] });
-      setSkipped(result.skipped.length);
       reset();
-      onImported(result.batch.id);
+      onImported(result.batch.id, result.skipped.length);
     },
     onError: setError,
   });
 
   const onPdfFile = async (file: File) => {
     setError(null);
-    setSkipped(null);
     if (!accountId) {
       setError(new Error("Pick an account first"));
       if (pdfInput.current) pdfInput.current.value = "";
@@ -320,12 +341,6 @@ function NewImport({ onImported }: { onImported: (batchId: string) => void }) {
         </form>
       )}
 
-      {skipped !== null && skipped > 0 && (
-        <p className="mt-2 text-sm text-amber-600">
-          {skipped} row{skipped === 1 ? "" : "s"} were skipped (unparseable date
-          or amount).
-        </p>
-      )}
       <ErrorText error={error} />
     </Card>
   );
