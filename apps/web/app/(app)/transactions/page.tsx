@@ -649,6 +649,16 @@ function SplitDialog({
   const removePart = (i: number) =>
     setParts((prev) => prev.filter((_, j) => j !== i));
 
+  // Escape closes it, matching the multi-select and the welcome tour — this
+  // was the one overlay in the app that trapped you into reaching for the mouse.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   const split = useMutation({
     mutationFn: (body: { parts: Record<string, unknown>[] }) =>
       api(`/transactions/${t.id}/split`, {
@@ -723,6 +733,9 @@ function SplitDialog({
                 inputMode="decimal"
                 placeholder="0.00"
                 className="w-24 text-right"
+                // Focus the first amount so the dialog is usable from the
+                // keyboard the moment it opens.
+                autoFocus={i === 0}
                 onChange={(e) => setPart(i, { amount: e.target.value })}
               />
               <Select

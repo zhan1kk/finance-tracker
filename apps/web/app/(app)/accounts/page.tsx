@@ -96,17 +96,31 @@ export default function AccountsPage() {
       setError(new Error("Invalid starting balance — e.g. 100 or -478.42"));
       return;
     }
-    create.mutate({
-      name: String(form.get("name")),
-      type: String(form.get("type")),
-      currency: String(form.get("currency")).toUpperCase(),
-      initialBalance,
-    });
-    e.currentTarget.reset();
+    const form_ = e.currentTarget;
+    create.mutate(
+      {
+        name: String(form.get("name")),
+        type: String(form.get("type")),
+        currency: String(form.get("currency")).toUpperCase(),
+        initialBalance,
+      },
+      { onSuccess: () => form_.reset() },
+    );
   };
 
   const pinned = accounts.data?.filter((a) => a.pinned) ?? [];
   const unpinned = accounts.data?.filter((a) => !a.pinned) ?? [];
+
+  // Any in-flight change disables that account's controls: on a slow
+  // connection a second click used to fire a duplicate request, and after a
+  // delete the retry came back as a confusing "Not Found".
+  const rowBusy =
+    rename.isPending ||
+    setStartingBalance.isPending ||
+    setCounted.isPending ||
+    setPinned.isPending ||
+    changeType.isPending ||
+    remove.isPending;
 
   const renderAccount = (account: Account) => (
     <Card
@@ -134,7 +148,8 @@ export default function AccountsPage() {
           {formatCents(account.balance, account.currency)}
         </p>
         <button
-          className="mt-0.5 text-xs text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300"
+          disabled={rowBusy}
+          className="mt-0.5 text-xs text-zinc-400 hover:text-zinc-700 disabled:opacity-50 dark:hover:text-zinc-300"
           title="Whether this account's balance is part of your net worth"
           onClick={() =>
             setCounted.mutate({
@@ -149,6 +164,7 @@ export default function AccountsPage() {
       <div className="flex flex-wrap items-center justify-end gap-1">
         <Select
           value={account.type}
+          disabled={rowBusy}
           aria-label="Account type"
           title="Change account type"
           onChange={(e) => {
@@ -164,6 +180,7 @@ export default function AccountsPage() {
         </Select>
         <Button
           variant="ghost"
+          disabled={rowBusy}
           onClick={() => {
             setError(null);
             setPinned.mutate({ id: account.id, pinned: !account.pinned });
@@ -173,6 +190,7 @@ export default function AccountsPage() {
         </Button>
         <Button
           variant="ghost"
+          disabled={rowBusy}
           onClick={() => {
             const name = window.prompt("New name", account.name);
             if (name && name !== account.name) {
@@ -185,6 +203,7 @@ export default function AccountsPage() {
         </Button>
         <Button
           variant="ghost"
+          disabled={rowBusy}
           onClick={() => {
             const raw = window.prompt(
               "Starting balance on day one (negative = credit card debt, e.g. -478.42). Later transactions stay applied on top.",
@@ -206,6 +225,7 @@ export default function AccountsPage() {
         </Button>
         <Button
           variant="danger"
+          disabled={rowBusy}
           onClick={() => {
             if (window.confirm(`Delete account "${account.name}"?`)) {
               setError(null);

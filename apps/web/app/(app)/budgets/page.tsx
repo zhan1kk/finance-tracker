@@ -106,12 +106,16 @@ export default function BudgetsPage() {
     }
     const [kind, value] = scope.split(":", 2);
     const oneOff = String(form.get("repeats")) === "oneoff";
-    create.mutate({
-      monthlyLimit,
-      ...(kind === "sub" ? { subcategoryId: value } : { category: value }),
-      ...(oneOff ? { oneOffPeriod: shown } : {}),
-    });
-    e.currentTarget.reset();
+    const form_ = e.currentTarget;
+    create.mutate(
+      {
+        monthlyLimit,
+        ...(kind === "sub" ? { subcategoryId: value } : { category: value }),
+        ...(oneOff ? { oneOffPeriod: shown } : {}),
+      },
+      // A duplicate scope is a 409; keep the numbers so they can be adjusted.
+      { onSuccess: () => form_.reset() },
+    );
   };
 
   // Budgets are for variable spending only, so offer just Expenses subcategories.

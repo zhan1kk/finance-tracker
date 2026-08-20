@@ -124,7 +124,8 @@ export default function SplitPage() {
         pending={addExpense.isPending}
         onSubmit={(body) => {
           setError(null);
-          addExpense.mutate(body);
+          // mutateAsync so the form clears only once the server accepted it.
+          return addExpense.mutateAsync(body);
         }}
       />
 
@@ -133,7 +134,7 @@ export default function SplitPage() {
         pending={addSettlement.isPending}
         onSubmit={(body) => {
           setError(null);
-          addSettlement.mutate(body);
+          return addSettlement.mutateAsync(body);
         }}
       />
 
@@ -148,8 +149,11 @@ export default function SplitPage() {
             const name = input.value.trim();
             if (!name) return;
             setError(null);
-            addFriend.mutate(name);
-            input.value = "";
+            addFriend.mutate(name, {
+              onSuccess: () => {
+                input.value = "";
+              },
+            });
           }}
           className="mb-3 flex items-end gap-2"
         >
@@ -176,6 +180,10 @@ export default function SplitPage() {
                   aria-label={`Remove ${f.name}`}
                   className="text-zinc-400 hover:text-red-600"
                   onClick={() => {
+                    // Refused server-side while they still appear in expenses,
+                    // but confirm anyway — every other delete in the app does.
+                    if (!window.confirm(`Remove ${f.name} from your friends?`))
+                      return;
                     setError(null);
                     removeFriend.mutate(f.id);
                   }}
@@ -205,7 +213,16 @@ export default function SplitPage() {
                 <button
                   aria-label="Delete settlement"
                   className="text-zinc-400 hover:text-red-600"
-                  onClick={() => removeSettlement.mutate(s.id)}
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        "Delete this settlement? The balances between you go back to what they were before it.",
+                      )
+                    )
+                      return;
+                    setError(null);
+                    removeSettlement.mutate(s.id);
+                  }}
                 >
                   ×
                 </button>
@@ -233,7 +250,16 @@ export default function SplitPage() {
                 <button
                   aria-label="Delete shared expense"
                   className="text-zinc-400 hover:text-red-600"
-                  onClick={() => removeExpense.mutate(e.id)}
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        "Delete this shared expense? Everyone's share of it is removed too.",
+                      )
+                    )
+                      return;
+                    setError(null);
+                    removeExpense.mutate(e.id);
+                  }}
                 >
                   ×
                 </button>
@@ -260,7 +286,7 @@ function ExpenseForm({
   friends: Friend[];
   currency: string;
   pending: boolean;
-  onSubmit: (body: Record<string, unknown>) => void;
+  onSubmit: (body: Record<string, unknown>) => Promise<unknown>;
 }) {
   const [paidBy, setPaidBy] = useState(YOU);
   const [amount, setAmount] = useState("");
@@ -326,20 +352,28 @@ function ExpenseForm({
       return base;
     });
 
-    onSubmit({
+    const form_ = e.currentTarget;
+    void onSubmit({
       description,
       amountCents: total,
       date,
       payerFriendId: paidBy === YOU ? undefined : paidBy,
       splitMethod: method,
       participants,
-    });
-    e.currentTarget.reset();
-    setAmount("");
-    setAmong(new Set([YOU]));
-    setExact({});
-    setMethod("equal");
-    setPaidBy(YOU);
+    })
+      .then(() => {
+        // Only on success: a rejected expense used to wipe the description,
+        // amount, date, payer and every per-person share at once.
+        form_.reset();
+        setAmount("");
+        setAmong(new Set([YOU]));
+        setExact({});
+        setMethod("equal");
+        setPaidBy(YOU);
+      })
+      .catch(() => {
+        // The parent surfaces the error; keep what was typed so it can be fixed.
+      });
   };
 
   return (
@@ -465,7 +499,7 @@ function SettleForm({
 }: {
   friends: Friend[];
   pending: boolean;
-  onSubmit: (body: Record<string, unknown>) => void;
+  onSubmit: (body: Record<string, unknown>) => Promise<unknown>;
 }) {
   const all = parties(friends);
   const [from, setFrom] = useState(YOU);
@@ -482,12 +516,14 @@ function SettleForm({
     );
     if (amount === null) return setLocalError("Invalid amount");
     if (from === to) return setLocalError("Pick two different people");
-    onSubmit({
+    const form_ = e.currentTarget;
+    void onSubmit({
       fromFriendId: from === YOU ? undefined : from,
       toFriendId: to === YOU ? undefined : to,
       amountCents: amount,
-    });
-    e.currentTarget.reset();
+    })
+      .then(() => form_.reset())
+      .catch(() => {});
   };
 
   return (

@@ -109,8 +109,11 @@ function CurrencyRates({
       setError(new Error("Rate must be a positive number"));
       return;
     }
-    setRate.mutate({ currency, date, rate });
-    e.currentTarget.reset();
+    const form_ = e.currentTarget;
+    setRate.mutate(
+      { currency, date, rate },
+      { onSuccess: () => form_.reset() },
+    );
   };
 
   const onSaveSpread = () => {
@@ -201,6 +204,14 @@ function CurrencyRates({
                 type="button"
                 className="text-xs text-red-600 hover:underline"
                 onClick={() => {
+                  // Removing a rate re-converts every transaction that used it,
+                  // so the card's own warning deserves a confirmation.
+                  if (
+                    !window.confirm(
+                      `Remove the ${r.date.slice(0, 10)} rate? Transactions converted with it are recalculated at the next rate that applies.`,
+                    )
+                  )
+                    return;
                   setError(null);
                   remove.mutate(r.id);
                 }}

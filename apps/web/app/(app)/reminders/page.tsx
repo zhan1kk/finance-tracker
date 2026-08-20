@@ -268,17 +268,20 @@ export default function RemindersPage() {
       setError(new Error("Installments must be a whole number of 2 or more"));
       return;
     }
-    create.mutate({
-      label,
-      subcategoryId: String(form.get("subcategoryId") || "") || undefined,
-      dueDate: String(form.get("dueDate") || "") || undefined,
-      amountCents: amountCents ?? undefined,
-      currency: amountCents != null ? baseCurrency : undefined,
-      cadence: String(form.get("cadence") || "") || undefined,
-      installmentsTotal: installmentsTotal ?? undefined,
-      note: String(form.get("note") || "").trim() || undefined,
-    });
-    e.currentTarget.reset();
+    const form_ = e.currentTarget;
+    create.mutate(
+      {
+        label,
+        subcategoryId: String(form.get("subcategoryId") || "") || undefined,
+        dueDate: String(form.get("dueDate") || "") || undefined,
+        amountCents: amountCents ?? undefined,
+        currency: amountCents != null ? baseCurrency : undefined,
+        cadence: String(form.get("cadence") || "") || undefined,
+        installmentsTotal: installmentsTotal ?? undefined,
+        note: String(form.get("note") || "").trim() || undefined,
+      },
+      { onSuccess: () => form_.reset() },
+    );
   };
 
   const open = reminders.data?.filter((r) => !r.done) ?? [];
@@ -398,6 +401,14 @@ export default function RemindersPage() {
           aria-label="Delete reminder"
           className="px-1 text-zinc-400 hover:text-red-600"
           onClick={() => {
+            // Deleting frees the source transaction to raise this reminder
+            // again on the next scan; "Done" is the way to settle it for good.
+            if (
+              !window.confirm(
+                `Delete the reminder "${r.label}"? A later scan may recreate it — use Done to settle it instead.`,
+              )
+            )
+              return;
             setError(null);
             remove.mutate(r.id);
           }}

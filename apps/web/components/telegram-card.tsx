@@ -146,9 +146,15 @@ export function TelegramCard({ accounts }: { accounts: Account[] }) {
                   className="w-24"
                   onBlur={(e) => {
                     const leadDays = Number(e.target.value);
-                    if (leadDays >= 1 && leadDays <= 60) {
-                      saveReminders.mutate({ leadDays });
+                    // Say so rather than quietly ignoring it: the field keeps
+                    // the rejected number, so it looked like it had saved.
+                    if (!(leadDays >= 1 && leadDays <= 60)) {
+                      e.target.value = String(settings.data?.leadDays ?? 10);
+                      setError(new Error("Start must be between 1 and 60 days"));
+                      return;
                     }
+                    setError(null);
+                    saveReminders.mutate({ leadDays });
                   }}
                 />
               </Field>
@@ -161,9 +167,15 @@ export function TelegramCard({ accounts }: { accounts: Account[] }) {
                   className="w-24"
                   onBlur={(e) => {
                     const intervalDays = Number(e.target.value);
-                    if (intervalDays >= 1 && intervalDays <= 30) {
-                      saveReminders.mutate({ intervalDays });
+                    if (!(intervalDays >= 1 && intervalDays <= 30)) {
+                      e.target.value = String(settings.data?.intervalDays ?? 3);
+                      setError(
+                        new Error("Repeat must be between 1 and 30 days"),
+                      );
+                      return;
                     }
+                    setError(null);
+                    saveReminders.mutate({ intervalDays });
                   }}
                 />
               </Field>
