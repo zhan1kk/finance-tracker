@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { optionalSetting } from '../../common/env';
+import { PrismaService } from '../../prisma.service';
 import { ImportService } from '../import.service';
 import {
   buildPdfExtractionPrompt,
@@ -35,6 +36,7 @@ export class PdfImportService {
   constructor(
     private readonly config: ConfigService,
     private readonly imports: ImportService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async importPdf(
@@ -48,7 +50,11 @@ export class PdfImportService {
       );
     }
 
-    const rows = await this.extractTransactions(text);
+    const account = await this.prisma.account.findFirst({
+      where: { id: input.accountId, userId },
+      select: { currency: true },
+    });
+    const rows = await this.extractTransactions(text, account?.currency);
     if (rows.length === 0) {
       throw new BadRequestException(
         'No transactions could be extracted from the PDF. You can still import a CSV instead.',
@@ -94,6 +100,7 @@ export class PdfImportService {
 
   private async extractTransactions(
     text: string,
+    currency?: string,
   ): Promise<ExtractedTransaction[]> {
     const baseUrl =
       optionalSetting(this.config, 'OLLAMA_BASE_URL') ?? 'http://localhost:11434';
@@ -118,7 +125,10 @@ export class PdfImportService {
           options: { temperature: 0, num_ctx: NUM_CTX },
           messages: [
             { role: 'system', content: PDF_EXTRACTION_SYSTEM_PROMPT },
-            { role: 'user', content: buildPdfExtractionPrompt(text) },
+            {
+              role: 'user',
+              content: buildPdfExtractionPrompt(text, currency),
+            },
           ],
         }),
       });

@@ -37,12 +37,21 @@ Return ONLY JSON matching the schema — a "transactions" array.
 Rules:
 - One object per real transaction. Ignore headers, footers, page numbers, running balances, subtotals, totals, and interest/summary lines.
 - date: the transaction (booking) date as "YYYY-MM-DD". If a row omits the year, infer it from the statement period.
-- amount: a signed decimal number in the statement's currency. Money LEAVING the account (purchases, payments, debits, fees, withdrawals) is NEGATIVE; money ARRIVING (credits, refunds, incoming transfers) is POSITIVE.
+- amount: a signed decimal number in the ACCOUNT'S OWN CURRENCY, named above. Money LEAVING the account (purchases, payments, debits, fees, withdrawals) is NEGATIVE; money ARRIVING (credits, refunds, incoming transfers) is POSITIVE.
+- Some statements print a second, converted amount beside the real one, usually in brackets — e.g. "9 000,00 ₸ (15,00 €)" on a tenge account. Always take the amount in the account's currency and ignore the bracketed conversion. Never mix the two.
 - description: the merchant or counterparty plus any useful detail, on one line.
 - Do not invent transactions and do not drop real ones. If a value is unclear, use your best reading of the text.`;
 
-export function buildPdfExtractionPrompt(text: string): string {
-  return `Statement text:\n\n${text}\n\nExtract every transaction as JSON.`;
+export function buildPdfExtractionPrompt(
+  text: string,
+  currency?: string,
+): string {
+  // Naming the account's currency is what lets the model resolve a line that
+  // shows two amounts; without it, "the statement's currency" is a guess.
+  const header = currency
+    ? `This statement belongs to an account denominated in ${currency}. Every amount you return must be in ${currency}.\n\n`
+    : '';
+  return `${header}Statement text:\n\n${text}\n\nExtract every transaction as JSON.`;
 }
 
 /**

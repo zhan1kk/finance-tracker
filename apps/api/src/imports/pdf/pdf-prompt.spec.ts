@@ -1,4 +1,8 @@
-import { coerceExtractedTransactions } from './pdf-prompt';
+import {
+  buildPdfExtractionPrompt,
+  coerceExtractedTransactions,
+  PDF_EXTRACTION_SYSTEM_PROMPT,
+} from './pdf-prompt';
 
 describe('coerceExtractedTransactions', () => {
   it('keeps well-formed rows and coerces a numeric-string amount', () => {
@@ -32,5 +36,28 @@ describe('coerceExtractedTransactions', () => {
     ).toEqual([{ date: '2026-06-06', amount: 5, description: 'Transaction' }]);
     expect(coerceExtractedTransactions(null)).toEqual([]);
     expect(coerceExtractedTransactions({})).toEqual([]);
+  });
+});
+
+describe('buildPdfExtractionPrompt', () => {
+  it('names the account currency so a two-amount line can be resolved', () => {
+    const prompt = buildPdfExtractionPrompt('some statement', 'KZT');
+    expect(prompt).toContain('denominated in KZT');
+    expect(prompt).toContain('must be in KZT');
+    expect(prompt).toContain('some statement');
+  });
+
+  it('omits the currency header when the account currency is unknown', () => {
+    expect(buildPdfExtractionPrompt('some statement')).not.toContain(
+      'denominated in',
+    );
+  });
+});
+
+describe('PDF_EXTRACTION_SYSTEM_PROMPT', () => {
+  it('tells the model to ignore a bracketed converted amount', () => {
+    // Kaspi prints "9 000,00 ₸ (15,00 €)"; taking the 15 would record 15 tenge.
+    expect(PDF_EXTRACTION_SYSTEM_PROMPT).toMatch(/bracket/i);
+    expect(PDF_EXTRACTION_SYSTEM_PROMPT).toMatch(/ACCOUNT'S OWN CURRENCY/);
   });
 });

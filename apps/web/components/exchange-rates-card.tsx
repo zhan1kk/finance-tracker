@@ -124,6 +124,7 @@ function CurrencyRates({
   const queryClient = useQueryClient();
   const [error, setError] = useState<unknown>(null);
   const [spread, setSpread] = useState(String(spreadPct));
+  const [pastDate, setPastDate] = useState("");
 
   const setAutoSync = useMutation({
     mutationFn: (next: boolean) =>
@@ -273,18 +274,30 @@ function CurrencyRates({
 
       <div className="mb-2 flex flex-wrap items-end gap-2">
         <Field label="Fetch the rate for a past day">
-          <Input
-            type="date"
-            className="w-auto"
-            max={new Date().toISOString().slice(0, 10)}
-            onChange={(e) => {
-              const date = e.target.value;
-              if (!date) return;
-              setError(null);
-              sync.mutate(date);
-              e.target.value = "";
-            }}
-          />
+          {/* Deliberately not onChange: a date input reports every intermediate
+              value, so typing a day and month fired a request (and a failure)
+              before the year existed, and paging through the calendar fetched a
+              rate for each month passed. The date is only used when asked for. */}
+          <div className="flex items-end gap-2">
+            <Input
+              type="date"
+              className="w-auto"
+              value={pastDate}
+              max={new Date().toISOString().slice(0, 10)}
+              onChange={(e) => setPastDate(e.target.value)}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={!pastDate || sync.isPending}
+              onClick={() => {
+                setError(null);
+                sync.mutate(pastDate, { onSuccess: () => setPastDate("") });
+              }}
+            >
+              Fetch
+            </Button>
+          </div>
         </Field>
         <p className="pb-2 text-xs text-zinc-500">
           Older transactions use the rate in effect on their date. With none,
