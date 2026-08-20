@@ -118,7 +118,8 @@ export function MonthlyTrendChart({
     return (
       <div>
         {legend}
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[20rem] text-sm">
           <thead>
             <tr className="border-b border-zinc-200 text-left text-zinc-500 dark:border-zinc-800">
               <th className="py-1.5 font-medium">Month</th>
@@ -143,6 +144,7 @@ export function MonthlyTrendChart({
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     );
   }
@@ -444,7 +446,8 @@ export function CategoryDonut({
     return (
       <div>
         {controls}
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[20rem] text-sm">
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
             {spending.map((d) => (
               <tr key={d.subcategoryId}>
@@ -466,6 +469,7 @@ export function CategoryDonut({
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     );
   }

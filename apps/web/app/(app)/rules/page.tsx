@@ -120,7 +120,8 @@ export default function RulesPage() {
           </p>
         )}
         {rules.data && rules.data.length > 0 && (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[22rem] text-sm">
             <thead>
               <tr className="border-b border-zinc-200 text-left text-zinc-500 dark:border-zinc-800">
                 <th className="py-2 pr-3 font-medium">Description contains</th>
@@ -177,6 +178,7 @@ export default function RulesPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
     </main>

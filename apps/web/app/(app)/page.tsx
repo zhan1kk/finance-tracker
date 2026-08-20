@@ -771,7 +771,8 @@ function FullBreakdown({
             {shown.length === 0 ? (
               <p className="text-sm text-zinc-500">Nothing here this month.</p>
             ) : (
-              <table className="w-full text-sm">
+              <div className="overflow-x-auto">
+              <table className="w-full min-w-[20rem] text-sm">
                 <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
                   {shown.map((r) => (
                     <tr key={`${r.kind}:${r.subcategoryId}`}>
@@ -793,6 +794,7 @@ function FullBreakdown({
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
 
             <div className="flex justify-between border-t border-zinc-200 pt-2 text-sm font-medium dark:border-zinc-800">

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
 import { Providers } from "@/lib/providers";
 import "./globals.css";
@@ -11,6 +11,19 @@ const geistSans = Geist({
 export const metadata: Metadata = {
   title: "Finance Tracker",
   description: "Personal finance tracker",
+  // Added to a phone's home screen it should open like an app, not a bookmark.
+  appleWebApp: { capable: true, title: "Finance", statusBarStyle: "default" },
+};
+
+/**
+ * Colours the browser/OS chrome around the page, per theme, so an installed
+ * home-screen app does not sit in a white bar while the app itself is dark.
+ */
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#fafafa" },
+    { media: "(prefers-color-scheme: dark)", color: "#09090b" },
+  ],
 };
 
 // Runs before first paint: resolves the saved theme (defaulting to the OS) and
