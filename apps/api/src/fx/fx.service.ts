@@ -179,6 +179,38 @@ export class FxService {
     return { currency, spreadPct: 0, autoSync: false, rate: mid };
   }
 
+  /**
+   * Guarantees a usable rate exists before something is priced in `currency`.
+   *
+   * Without this, an unknown currency converts 1:1 — an account opened with
+   * 10,000 TRY would anchor net worth at 10,000 EUR and stay wrong, because the
+   * opening balance is frozen at creation. Fetches on demand; if the rate
+   * cannot be had, it says so rather than inventing one.
+   */
+  async ensureRate(userId: string, currency: string): Promise<void> {
+    const { baseCurrency } = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { baseCurrency: true },
+    });
+    if (currency === baseCurrency) return;
+    const existing = await this.prisma.exchangeRate.count({
+      where: { userId, currency },
+    });
+    if (existing > 0 || DEFAULT_RATES[currency] !== undefined) return;
+
+    const mid = await fetchMidRate(currency).catch(() => {
+      throw new BadRequestException(
+        `No exchange rate for ${currency} yet, and it could not be fetched. Add one under Exchange rates first.`,
+      );
+    });
+    await this.prisma.currencyPreference.upsert({
+      where: { userId_currency: { userId, currency } },
+      update: {},
+      create: { userId, currency },
+    });
+    await this.setRate(userId, currency, new Date().toISOString().slice(0, 10), mid);
+  }
+
   /** Stops tracking a currency. Rates already recorded are left alone. */
   async removeCurrency(userId: string, currency: string) {
     const inUse = await this.prisma.account.count({

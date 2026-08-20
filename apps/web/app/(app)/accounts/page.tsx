@@ -8,11 +8,27 @@ import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api, downloadFile } from "@/lib/api";
 import { formatCents, parseSignedAmountToCents } from "@/lib/format";
 import { TYPE_ACCENT, TYPE_BADGE } from "@/lib/account-style";
-import { ACCOUNT_TYPES, CURRENCIES, type Account } from "@/lib/types";
+import {
+  ACCOUNT_TYPES,
+  COMMON_CURRENCIES,
+  type Account,
+  type FxPreferences,
+} from "@/lib/types";
 
 export default function AccountsPage() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<unknown>(null);
+
+  const fxPrefs = useQuery({
+    queryKey: ["fx-preferences"],
+    queryFn: () => api<FxPreferences>("/fx/preferences"),
+  });
+  const baseCurrency = fxPrefs.data?.baseCurrency ?? "EUR";
+  const currencyOptions = [
+    baseCurrency,
+    ...(fxPrefs.data?.currencies ?? []).map((c) => c.currency),
+    ...COMMON_CURRENCIES,
+  ].filter((c, i, all) => all.indexOf(c) === i);
 
   const accounts = useQuery({
     queryKey: ["accounts"],
@@ -257,13 +273,20 @@ export default function AccountsPage() {
             </Select>
           </Field>
           <Field label="Currency">
-            <Select name="currency" defaultValue="EUR">
-              {CURRENCIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
+            <Input
+              name="currency"
+              defaultValue={baseCurrency}
+              maxLength={3}
+              required
+              className="w-24 uppercase"
+              list="account-currencies"
+              title="Any three-letter code — its rate is fetched when the account is created"
+            />
+            <datalist id="account-currencies">
+              {currencyOptions.map((c) => (
+                <option key={c} value={c} />
               ))}
-            </Select>
+            </datalist>
           </Field>
           <Field label="Starting balance">
             <Input name="initialBalance" placeholder="0.00" className="w-28" />

@@ -17,8 +17,22 @@ export const ACCOUNT_TYPES = [
 export type AccountType = (typeof ACCOUNT_TYPES)[number];
 
 /** Currencies the app supports; the first is the base/reporting currency. */
-export const CURRENCIES = ['EUR', 'KZT', 'USD'] as const;
-export type Currency = (typeof CURRENCIES)[number];
+/**
+ * Suggestions for the currency pickers only — never a restriction. Any
+ * three-letter code is accepted, and its rate is fetched on first use.
+ */
+export const COMMON_CURRENCIES = [
+  'EUR',
+  'USD',
+  'GBP',
+  'KZT',
+  'TRY',
+  'CHF',
+  'PLN',
+  'SEK',
+  'JPY',
+  'AED',
+] as const;
 
 // ---- split ledger (shared expenses with friends) ----
 

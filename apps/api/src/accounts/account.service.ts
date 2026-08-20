@@ -40,6 +40,9 @@ export class AccountService {
   }
 
   async createAccount(userId: string, input: CreateAccountInput) {
+    // A currency with no rate would convert 1:1 and freeze a wrong net-worth
+    // anchor, so make sure one exists (fetching it if needed) before pricing.
+    await this.fx.ensureRate(userId, input.currency);
     const initialBalance = input.initialBalance ?? 0;
     // Freeze the opening balance's base-currency value at today's rate; it is
     // the net-worth anchor and is not re-derived from transactions.

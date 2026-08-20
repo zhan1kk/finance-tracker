@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { BASE_CURRENCY, SUPPORTED_CURRENCIES } from '../fx/fx';
+import { BASE_CURRENCY } from '../fx/fx';
 import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
 import { TransactionService } from '../transactions/transaction.service';
@@ -270,8 +270,12 @@ export class TelegramService {
     });
     if (!user) return 'This chat is not linked.';
 
-    const foreignDefault =
-      SUPPORTED_CURRENCIES.find((c) => c !== BASE_CURRENCY) ?? 'KZT';
+    // The user's own currencies, not a built-in list: default to the first one
+    // they actually track so /rate with no arguments means something to them.
+    const tracked = (await this.fx.listPreferences(user.id)).currencies.map(
+      (c) => c.currency,
+    );
+    const foreignDefault = tracked[0] ?? 'USD';
     const tokens = argsText.trim().split(/\s+/).filter(Boolean);
 
     if (tokens.length === 0) {
@@ -303,8 +307,8 @@ export class TelegramService {
         if (code === BASE_CURRENCY) {
           return `${BASE_CURRENCY} is the base currency — set a foreign currency's rate, e.g. ${foreignDefault}.`;
         }
-        if (!SUPPORTED_CURRENCIES.includes(code)) {
-          return `Unsupported currency "${code}". Supported: ${SUPPORTED_CURRENCIES.join(', ')}.`;
+        if (tracked.length > 0 && !tracked.includes(code)) {
+          return `You don't track ${code} yet. Yours: ${tracked.join(', ')}. Add it under Exchange rates in the web app.`;
         }
         currency = code;
       } else if (parseCaptureDate(token)) {
