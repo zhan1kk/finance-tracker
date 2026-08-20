@@ -29,12 +29,20 @@ export function ExchangeRatesCard() {
         date until the next later one; changing it recomputes affected
         transactions.
       </p>
+      <AddCurrency base={base} />
+      {prefs.data?.currencies.length === 0 && (
+        <p className="mb-2 text-sm text-zinc-500">
+          No foreign currencies yet. Add one above if you hold money, or spend,
+          in something other than {base}.
+        </p>
+      )}
       <div className="flex flex-col gap-5">
         {(prefs.data?.currencies ?? []).map((c) => (
           <CurrencyRates
             key={c.currency}
             currency={c.currency}
             spreadPct={c.spreadPct}
+            autoSync={c.autoSync}
             base={base}
           />
         ))}
@@ -43,18 +51,98 @@ export function ExchangeRatesCard() {
   );
 }
 
+/** Adds a currency to track. The rate is fetched on the server as it is added. */
+function AddCurrency({ base }: { base: string }) {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<unknown>(null);
+
+  const add = useMutation({
+    mutationFn: (currency: string) =>
+      api("/fx/currencies", {
+        method: "POST",
+        body: JSON.stringify({ currency }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["fx-preferences"] });
+      void queryClient.invalidateQueries({ queryKey: ["fx-rates"] });
+    },
+    onError: setError,
+  });
+
+  return (
+    <form
+      className="mb-4 flex flex-wrap items-end gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const input = e.currentTarget.elements.namedItem(
+          "currency",
+        ) as HTMLInputElement;
+        const code = input.value.trim().toUpperCase();
+        if (code.length !== 3) {
+          setError(new Error("Use a three-letter code, e.g. USD"));
+          return;
+        }
+        setError(null);
+        add.mutate(code, { onSuccess: () => (input.value = "") });
+      }}
+    >
+      <Field label="Track another currency">
+        <Input
+          name="currency"
+          placeholder="USD"
+          maxLength={3}
+          className="w-24 uppercase"
+          list="common-currencies"
+        />
+      </Field>
+      <datalist id="common-currencies">
+        {["USD", "GBP", "KZT", "TRY", "CHF", "PLN", "SEK", "JPY", "AED"]
+          .filter((c) => c !== base)
+          .map((c) => (
+            <option key={c} value={c} />
+          ))}
+      </datalist>
+      <Button type="submit" variant="ghost" disabled={add.isPending}>
+        {add.isPending ? "Checking…" : "Add"}
+      </Button>
+      <ErrorText error={error} />
+    </form>
+  );
+}
+
 function CurrencyRates({
   currency,
   spreadPct,
+  autoSync,
   base,
 }: {
   currency: string;
   spreadPct: number;
+  autoSync: boolean;
   base: string;
 }) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<unknown>(null);
   const [spread, setSpread] = useState(String(spreadPct));
+
+  const setAutoSync = useMutation({
+    mutationFn: (next: boolean) =>
+      api(`/fx/currencies/${currency}/auto-sync`, {
+        method: "PUT",
+        body: JSON.stringify({ autoSync: next }),
+      }),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ["fx-preferences"] }),
+    onError: setError,
+  });
+
+  const stopTracking = useMutation({
+    mutationFn: () =>
+      api(`/fx/currencies/${currency}`, { method: "DELETE" }),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ["fx-preferences"] }),
+    onError: setError,
+  });
 
   const rates = useQuery({
     queryKey: ["fx-rates", currency],
@@ -137,9 +225,23 @@ function CurrencyRates({
             today: 1 {base} = <b>{round(rates.data.effectiveRate)}</b> {currency}
           </span>
         )}
+        <label
+          className="ml-auto flex items-center gap-1.5 text-sm text-zinc-500"
+          title="Fetch this rate automatically each morning"
+        >
+          <input
+            type="checkbox"
+            checked={autoSync}
+            disabled={setAutoSync.isPending}
+            onChange={(e) => {
+              setError(null);
+              setAutoSync.mutate(e.target.checked);
+            }}
+          />
+          daily
+        </label>
         <Button
           variant="ghost"
-          className="ml-auto"
           disabled={sync.isPending}
           onClick={() => {
             setError(null);
@@ -148,6 +250,23 @@ function CurrencyRates({
         >
           {sync.isPending ? "Syncing…" : "Sync now"}
         </Button>
+        <button
+          type="button"
+          className="text-xs text-zinc-400 hover:text-red-600"
+          title={`Stop tracking ${currency}`}
+          onClick={() => {
+            if (
+              !window.confirm(
+                `Stop tracking ${currency}? Rates already recorded stay, but no new ones are fetched.`,
+              )
+            )
+              return;
+            setError(null);
+            stopTracking.mutate();
+          }}
+        >
+          remove
+        </button>
       </div>
 
       <div className="mb-2 flex flex-wrap items-end gap-3">

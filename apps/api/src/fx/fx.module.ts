@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { FxController } from './fx.controller';
+import { FxSyncScheduler } from './fx-sync.scheduler';
 import { FxService } from './fx.service';
 
 /**
@@ -10,7 +11,7 @@ import { FxService } from './fx.service';
 @Global()
 @Module({
   controllers: [FxController],
-  providers: [FxService],
+  providers: [FxService, FxSyncScheduler],
   exports: [FxService],
 })
 export class FxModule {}

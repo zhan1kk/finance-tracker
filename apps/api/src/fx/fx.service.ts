@@ -8,7 +8,7 @@ import {
   applySpread,
   BASE_CURRENCY,
   DEFAULT_RATES,
-  FOREIGN_CURRENCIES,
+  isCurrencyCode,
   MAX_SPREAD_PCT,
   pickRate,
   type RatePoint,
@@ -105,25 +105,109 @@ export class FxService {
     return { currency, date, rate, recomputed };
   }
 
-  /** Every supported foreign currency with the user's exchange-fee spread. */
+  /**
+   * The currencies *this* user tracks, with their exchange-fee spreads.
+   *
+   * Drawn from their own preferences plus any currency their accounts actually
+   * use — never from a built-in list, which previously meant every user was
+   * shown the currencies one person happened to need.
+   */
   async listPreferences(userId: string) {
-    const prefs = await this.prisma.currencyPreference.findMany({
-      where: { userId },
-      select: { currency: true, spreadPct: true },
-    });
-    const byCurrency = new Map(prefs.map((p) => [p.currency, p.spreadPct]));
+    const [prefs, accountCurrencies, user] = await Promise.all([
+      this.prisma.currencyPreference.findMany({
+        where: { userId },
+        select: { currency: true, spreadPct: true, autoSync: true },
+        orderBy: { currency: 'asc' },
+      }),
+      this.prisma.account.findMany({
+        where: { userId },
+        select: { currency: true },
+        distinct: ['currency'],
+      }),
+      this.prisma.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { baseCurrency: true },
+      }),
+    ]);
+
+    const byCurrency = new Map(prefs.map((p) => [p.currency, p]));
+    // An account in a currency you have no preference row for still needs a
+    // rate, so surface it rather than letting it convert silently at 1:1.
+    for (const { currency } of accountCurrencies) {
+      if (currency !== user.baseCurrency && !byCurrency.has(currency)) {
+        byCurrency.set(currency, { currency, spreadPct: 0, autoSync: false });
+      }
+    }
     return {
-      baseCurrency: BASE_CURRENCY,
-      currencies: FOREIGN_CURRENCIES.map((currency) => ({
-        currency,
-        spreadPct: byCurrency.get(currency) ?? 0,
-      })),
+      baseCurrency: user.baseCurrency,
+      currencies: [...byCurrency.values()].sort((a, b) =>
+        a.currency.localeCompare(b.currency),
+      ),
     };
+  }
+
+  /**
+   * Starts tracking a currency. The rate is fetched immediately: without one,
+   * conversions fall back to 1:1 and quietly report nonsense, so a currency
+   * that cannot be priced is not worth adding.
+   */
+  async addCurrency(userId: string, currency: string) {
+    if (!isCurrencyCode(currency)) {
+      throw new BadRequestException(
+        `"${currency}" is not a three-letter currency code (e.g. USD)`,
+      );
+    }
+    const { baseCurrency } = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { baseCurrency: true },
+    });
+    if (currency === baseCurrency) {
+      throw new BadRequestException(
+        `${currency} is your base currency — it needs no rate`,
+      );
+    }
+    // Throws a clear 503 when the code is unknown to the rate source, which is
+    // also how a typo like "EURO" gets caught.
+    const mid = await fetchMidRate(currency);
+    await this.prisma.currencyPreference.upsert({
+      where: { userId_currency: { userId, currency } },
+      update: {},
+      create: { userId, currency },
+    });
+    const today = new Date().toISOString().slice(0, 10);
+    await this.setRate(userId, currency, today, mid);
+    return { currency, spreadPct: 0, autoSync: false, rate: mid };
+  }
+
+  /** Stops tracking a currency. Rates already recorded are left alone. */
+  async removeCurrency(userId: string, currency: string) {
+    const inUse = await this.prisma.account.count({
+      where: { userId, currency },
+    });
+    if (inUse > 0) {
+      throw new BadRequestException(
+        `${inUse} account(s) still use ${currency}, so its rate is needed`,
+      );
+    }
+    await this.prisma.currencyPreference.deleteMany({
+      where: { userId, currency },
+    });
+    return { currency, removed: true };
+  }
+
+  /** Turns the daily rate fetch on or off for one currency. */
+  async setAutoSync(userId: string, currency: string, autoSync: boolean) {
+    await this.prisma.currencyPreference.upsert({
+      where: { userId_currency: { userId, currency } },
+      update: { autoSync },
+      create: { userId, currency, autoSync },
+    });
+    return { currency, autoSync };
   }
 
   /** Sets the exchange-fee spread (0–MAX) for a currency. */
   async setSpread(userId: string, currency: string, spreadPct: number) {
-    if (!FOREIGN_CURRENCIES.includes(currency)) {
+    if (!isCurrencyCode(currency)) {
       throw new BadRequestException(`Unsupported currency: ${currency}`);
     }
     if (
@@ -149,7 +233,7 @@ export class FxService {
    * affected transactions). On-demand — the market call is the only external I/O.
    */
   async syncRate(userId: string, currency: string) {
-    if (!FOREIGN_CURRENCIES.includes(currency)) {
+    if (!isCurrencyCode(currency)) {
       throw new BadRequestException(`Unsupported currency: ${currency}`);
     }
     const mid = await fetchMidRate(currency);

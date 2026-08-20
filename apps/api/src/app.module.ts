@@ -31,7 +31,10 @@ import { SplitModule } from './split/split.module';
         limit: process.env.NODE_ENV === 'test' ? 10_000 : 20,
       },
     ]),
-    ScheduleModule.forRoot(),
+    // Not under jest: the suite drives time-sensitive flows and tears the app
+    // down repeatedly, and background timers have nothing to contribute there
+    // except a source of non-determinism. @Cron methods simply go unregistered.
+    ...(process.env.NODE_ENV === 'test' ? [] : [ScheduleModule.forRoot()]),
     PrismaModule,
     FxModule,
     AuthModule,

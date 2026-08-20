@@ -15,8 +15,17 @@ export const BASE_CURRENCY = 'EUR';
  */
 export const DEFAULT_RATES: Record<string, number> = { KZT: 540, USD: 1.08 };
 
-/** Non-base currencies the app supports. */
+/**
+ * Seed suggestions only. Which currencies a user actually tracks lives in their
+ * CurrencyPreference rows — this list must never decide that, or every user
+ * inherits one person's currencies.
+ */
 export const FOREIGN_CURRENCIES = Object.keys(DEFAULT_RATES);
+
+/** A syntactically valid ISO-4217-style code; existence is proven by fetching. */
+export function isCurrencyCode(value: string): boolean {
+  return /^[A-Z]{3}$/.test(value);
+}
 
 /** Currencies the UI offers for accounts (base first). */
 export const SUPPORTED_CURRENCIES = [BASE_CURRENCY, ...FOREIGN_CURRENCIES];

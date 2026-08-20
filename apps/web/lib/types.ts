@@ -99,7 +99,8 @@ export type FxRates = {
 /** Tracked foreign currencies and the exchange-fee spread the user set for each. */
 export type FxPreferences = {
   baseCurrency: string;
-  currencies: { currency: string; spreadPct: number }[];
+  /** The currencies this user tracks — theirs, not a built-in list. */
+  currencies: { currency: string; spreadPct: number; autoSync: boolean }[];
 };
 
 export const TRANSACTION_CATEGORIES = [
