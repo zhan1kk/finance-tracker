@@ -38,7 +38,7 @@ export class FxController {
   /** Fetch today's market rate for a currency, apply its spread, and store it. */
   @Post('rates/sync')
   syncRate(@CurrentUser() user: AuthUser, @Body() body: SyncRateDTO) {
-    return this.fx.syncRate(user.userId, body.currency);
+    return this.fx.syncRate(user.userId, body.currency, body.date);
   }
 
   /** The tracked foreign currencies and their exchange-fee spreads. */

@@ -264,19 +264,22 @@ export class FxService {
    * the user's exchange-fee spread, and stores it effective today (recomputing
    * affected transactions). On-demand — the market call is the only external I/O.
    */
-  async syncRate(userId: string, currency: string) {
+  async syncRate(userId: string, currency: string, dateISO?: string) {
     if (!isCurrencyCode(currency)) {
       throw new BadRequestException(`Unsupported currency: ${currency}`);
     }
-    const mid = await fetchMidRate(currency);
+    const today = new Date().toISOString().slice(0, 10);
+    if (dateISO && dateISO > today) {
+      throw new BadRequestException('Cannot fetch a rate for a future date');
+    }
+    const mid = await fetchMidRate(currency, dateISO);
     const pref = await this.prisma.currencyPreference.findUnique({
       where: { userId_currency: { userId, currency } },
       select: { spreadPct: true },
     });
     const spreadPct = pref?.spreadPct ?? 0;
     const rate = applySpread(mid, spreadPct);
-    const today = new Date().toISOString().slice(0, 10);
-    const result = await this.setRate(userId, currency, today, rate);
+    const result = await this.setRate(userId, currency, dateISO ?? today, rate);
     return { ...result, mid, spreadPct };
   }
 
@@ -332,11 +335,19 @@ export class FxService {
  * (covers KZT, USD, etc.). Tries the CDN then a mirror; throws a clear 503 if
  * both are unreachable so the caller can fall back to a manual rate.
  */
-async function fetchMidRate(currency: string): Promise<number> {
+async function fetchMidRate(
+  currency: string,
+  dateISO?: string,
+): Promise<number> {
   const code = currency.toLowerCase();
+  // The source publishes a snapshot per day, so a past date can be priced
+  // properly instead of being left to the built-in seed rate.
+  const version = dateISO ?? 'latest';
   const urls = [
-    'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/eur.json',
-    'https://latest.currency-api.pages.dev/v1/currencies/eur.json',
+    `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${version}/v1/currencies/eur.json`,
+    dateISO
+      ? `https://${dateISO}.currency-api.pages.dev/v1/currencies/eur.json`
+      : 'https://latest.currency-api.pages.dev/v1/currencies/eur.json',
   ];
   for (const url of urls) {
     try {

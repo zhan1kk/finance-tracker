@@ -19,6 +19,12 @@ describe('Auth (e2e)', () => {
     app = moduleFixture.createNestApplication({ bodyParser: false });
     configureApp(app);
     await app.init();
+    // Bind once for the whole suite. Handing supertest an unbound server makes
+    // it listen on an ephemeral port and close it per request; under a fast
+    // suite those cycles race, and a request lands on a socket being torn down
+    // — which surfaced as random 200/404/hang-ups with empty bodies on routes
+    // that cannot produce them.
+    await app.listen(0);
     prisma = app.get(PrismaService);
     http = app.getHttpServer();
   });

@@ -158,10 +158,12 @@ function CurrencyRates({
   };
 
   const sync = useMutation({
-    mutationFn: () =>
+    // With a date, fetches the rate as it was that day — needed for older
+    // transactions, which otherwise fall back to a rough built-in rate.
+    mutationFn: (date?: string) =>
       api("/fx/rates/sync", {
         method: "POST",
-        body: JSON.stringify({ currency }),
+        body: JSON.stringify(date ? { currency, date } : { currency }),
       }),
     onSuccess: invalidate,
     onError: setError,
@@ -245,7 +247,7 @@ function CurrencyRates({
           disabled={sync.isPending}
           onClick={() => {
             setError(null);
-            sync.mutate();
+            sync.mutate(undefined);
           }}
         >
           {sync.isPending ? "Syncing…" : "Sync now"}
@@ -267,6 +269,27 @@ function CurrencyRates({
         >
           remove
         </button>
+      </div>
+
+      <div className="mb-2 flex flex-wrap items-end gap-2">
+        <Field label="Fetch the rate for a past day">
+          <Input
+            type="date"
+            className="w-auto"
+            max={new Date().toISOString().slice(0, 10)}
+            onChange={(e) => {
+              const date = e.target.value;
+              if (!date) return;
+              setError(null);
+              sync.mutate(date);
+              e.target.value = "";
+            }}
+          />
+        </Field>
+        <p className="pb-2 text-xs text-zinc-500">
+          Older transactions use the rate in effect on their date. With none,
+          they fall back to a rough built-in rate.
+        </p>
       </div>
 
       <div className="mb-2 flex flex-wrap items-end gap-3">

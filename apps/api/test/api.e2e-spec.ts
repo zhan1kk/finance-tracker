@@ -21,6 +21,12 @@ describe('API (e2e)', () => {
     app = moduleFixture.createNestApplication({ bodyParser: false });
     configureApp(app);
     await app.init();
+    // Bind once for the whole suite. Handing supertest an unbound server makes
+    // it listen on an ephemeral port and close it per request; under a fast
+    // suite those cycles race, and a request lands on a socket being torn down
+    // — which surfaced as random 200/404/hang-ups with empty bodies on routes
+    // that cannot produce them.
+    await app.listen(0);
     prisma = app.get(PrismaService);
     http = app.getHttpServer();
   });
@@ -36,12 +42,37 @@ describe('API (e2e)', () => {
     await app.close();
   });
 
+  /**
+   * Asserts a status and, when it differs, puts the server's own response in the
+   * failure message.
+   *
+   * This suite has a known intermittent failure — roughly one run in six, a
+   * different test each time, always an unexpected status on a request that
+   * should have succeeded. Its cause is still unidentified, and a bare
+   * "expected 201, got 401" hides the one clue that would separate the
+   * candidates ("Missing access token" means the token never arrived;
+   * "Invalid or expired access token" means it was rejected). Keep this until
+   * the flake is understood.
+   */
+  const expectStatus = (res: request.Response, status: number) => {
+    if (res.status !== status) {
+      throw new Error(
+        `Expected ${status}, got ${res.status}. Body: ${JSON.stringify(res.body)}`,
+      );
+    }
+    return res;
+  };
+
   const registerUser = async (email: string): Promise<string> => {
-    const res = await request(http)
-      .post('/auth/register')
-      .send({ email, password: 'password123' })
-      .expect(201);
-    return (res.body as { accessToken: string }).accessToken;
+    const res = expectStatus(
+      await request(http).post('/auth/register').send({ email, password: 'password123' }),
+      201,
+    );
+    const token = (res.body as { accessToken?: string }).accessToken;
+    if (!token) {
+      throw new Error(`Register returned no token: ${JSON.stringify(res.body)}`);
+    }
+    return token;
   };
 
   const createAccount = async (
@@ -76,11 +107,13 @@ describe('API (e2e)', () => {
     category: string,
     asToken = token,
   ) => {
-    const res = await request(http)
-      .post('/subcategories')
-      .set('Authorization', `Bearer ${asToken}`)
-      .send({ name, category })
-      .expect(201);
+    const res = expectStatus(
+      await request(http)
+        .post('/subcategories')
+        .set('Authorization', `Bearer ${asToken}`)
+        .send({ name, category }),
+      201,
+    );
     return res.body as { id: string };
   };
 
