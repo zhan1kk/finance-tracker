@@ -348,36 +348,78 @@ function CurrencyRates({
       </form>
 
       {rates.data && rates.data.rates.length > 0 && (
-        <ul className="mt-2 flex flex-col gap-1 text-sm">
-          {rates.data.rates.map((r) => (
-            <li key={r.id} className="flex items-center gap-2">
-              <span className="w-24 text-zinc-500">{r.date.slice(0, 10)}</span>
-              <span>
-                1 {base} = {round(r.rate)} {currency}
-              </span>
-              <button
-                type="button"
-                className="text-xs text-red-600 hover:underline"
-                onClick={() => {
-                  // Removing a rate re-converts every transaction that used it,
-                  // so the card's own warning deserves a confirmation.
-                  if (
-                    !window.confirm(
-                      `Remove the ${r.date.slice(0, 10)} rate? Transactions converted with it are recalculated at the next rate that applies.`,
-                    )
-                  )
-                    return;
-                  setError(null);
-                  remove.mutate(r.id);
-                }}
-              >
-                remove
-              </button>
-            </li>
-          ))}
-        </ul>
+        <RateHistory
+          rates={rates.data.rates}
+          base={base}
+          currency={currency}
+          onRemove={(id, date) => {
+            // Removing a rate re-converts every transaction that used it, so
+            // the card's own warning deserves a confirmation.
+            if (
+              !window.confirm(
+                `Remove the ${date} rate? Transactions converted with it are recalculated at the next rate that applies.`,
+              )
+            )
+              return;
+            setError(null);
+            remove.mutate(id);
+          }}
+        />
       )}
       <ErrorText error={error} />
+    </div>
+  );
+}
+
+/**
+ * Rate history, newest first. Daily sync adds a row a day, so only the few most
+ * recent are shown and the rest sit behind a count — a wall of near-identical
+ * numbers is not history anyone reads.
+ */
+function RateHistory({
+  rates,
+  base,
+  currency,
+  onRemove,
+}: {
+  rates: { id: string; date: string; rate: number }[];
+  base: string;
+  currency: string;
+  onRemove: (id: string, date: string) => void;
+}) {
+  const RECENT = 3;
+  const recent = rates.slice(0, RECENT);
+  const older = rates.slice(RECENT);
+
+  const row = (r: { id: string; date: string; rate: number }) => (
+    <li key={r.id} className="flex items-center gap-2">
+      <span className="w-24 text-zinc-500 tabular-nums">
+        {r.date.slice(0, 10)}
+      </span>
+      <span className="tabular-nums">
+        1 {base} = {round(r.rate)} {currency}
+      </span>
+      <button
+        type="button"
+        className="ml-auto text-xs text-zinc-400 hover:text-red-600"
+        onClick={() => onRemove(r.id, r.date.slice(0, 10))}
+      >
+        remove
+      </button>
+    </li>
+  );
+
+  return (
+    <div className="mt-2 text-sm">
+      <ul className="flex flex-col gap-1">{recent.map(row)}</ul>
+      {older.length > 0 && (
+        <details className="mt-1">
+          <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
+            {older.length} older rate{older.length === 1 ? "" : "s"}
+          </summary>
+          <ul className="mt-1 flex flex-col gap-1">{older.map(row)}</ul>
+        </details>
+      )}
     </div>
   );
 }
