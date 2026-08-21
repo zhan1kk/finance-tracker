@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { optionalSetting } from '../common/env';
 import { PrismaService } from '../prisma.service';
 import { DEFAULT_SUBCATEGORIES } from '../subcategories/default-subcategories';
 import { REFRESH_TOKEN_TTL_DAYS } from './auth.constants';
@@ -37,10 +38,15 @@ export class AuthService {
   }): Promise<{ user: PublicUser; tokens: AuthTokens }> {
     // With INVITE_CODE set, registration is invite-only. Digest comparison
     // keeps it constant-time even when the lengths differ.
-    const requiredCode = this.config.get<string>('INVITE_CODE');
+    //
+    // Read through optionalSetting: compose passes this as `${INVITE_CODE:-}`,
+    // so an unset variable arrives as `''` — and a falsy code here does not fail
+    // closed, it removes the gate entirely and opens registration to anyone.
+    // Trimming also stops a stray space in .env from becoming the real code.
+    const requiredCode = optionalSetting(this.config, 'INVITE_CODE');
     if (requiredCode) {
       const supplied = createHash('sha256')
-        .update(input.inviteCode ?? '')
+        .update(input.inviteCode?.trim() ?? '')
         .digest();
       const expected = createHash('sha256').update(requiredCode).digest();
       if (!timingSafeEqual(supplied, expected)) {
