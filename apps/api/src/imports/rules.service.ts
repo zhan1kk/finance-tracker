@@ -9,8 +9,16 @@ import { normalizeMerchant } from './normalization';
 
 /** A rule assigns a subcategory, a transfer counter account, or marks internal. */
 export type RuleTarget =
-  | { subcategoryId: string; counterAccountId?: never; excludeFromStats?: never }
-  | { counterAccountId: string; subcategoryId?: never; excludeFromStats?: never }
+  | {
+      subcategoryId: string;
+      counterAccountId?: never;
+      excludeFromStats?: never;
+    }
+  | {
+      counterAccountId: string;
+      subcategoryId?: never;
+      excludeFromStats?: never;
+    }
   | { excludeFromStats: true; subcategoryId?: never; counterAccountId?: never };
 
 export type RuleMatch = RuleTarget & { ruleId: string };

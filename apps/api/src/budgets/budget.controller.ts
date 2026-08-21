@@ -47,10 +47,7 @@ export class BudgetController {
 
   /** Clear one month: revert all overrides for it and delete one-off budgets in it. */
   @Delete('month/:period')
-  clearMonth(
-    @CurrentUser() user: AuthUser,
-    @Param('period') period: string,
-  ) {
+  clearMonth(@CurrentUser() user: AuthUser, @Param('period') period: string) {
     return this.budgetService.clearMonth(user.userId, period);
   }
 

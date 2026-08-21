@@ -107,10 +107,7 @@ export class TransactionService {
 
     const all = await this.prisma.transaction.findMany({
       where: {
-        OR: [
-          { accountId },
-          { type: 'TRANSFER', counterAccountId: accountId },
-        ],
+        OR: [{ accountId }, { type: 'TRANSFER', counterAccountId: accountId }],
       },
       select: {
         id: true,
@@ -282,7 +279,10 @@ export class TransactionService {
     }
 
     const oldDelta = signedDelta(existing.type, existing.amount);
-    const newDelta = signedDelta(existing.type, input.amount ?? existing.amount);
+    const newDelta = signedDelta(
+      existing.type,
+      input.amount ?? existing.amount,
+    );
 
     // Amount and date both feed the base conversion (date picks the rate).
     const newDate = input.date ? new Date(input.date) : existing.date;
@@ -370,11 +370,7 @@ export class TransactionService {
    * on the same account and date. Because the parts sum to the original amount,
    * the account balance is unchanged.
    */
-  async splitTransaction(
-    userId: string,
-    id: string,
-    parts: SplitPartInput[],
-  ) {
+  async splitTransaction(userId: string, id: string, parts: SplitPartInput[]) {
     if (parts.length < 2) {
       throw new BadRequestException('A split needs at least two parts');
     }
@@ -464,7 +460,10 @@ export class TransactionService {
     if (ids.length === 0) {
       throw new BadRequestException('No transactions selected');
     }
-    if (patch.subcategoryId === undefined && patch.excludeFromStats === undefined) {
+    if (
+      patch.subcategoryId === undefined &&
+      patch.excludeFromStats === undefined
+    ) {
       throw new BadRequestException('Nothing to update');
     }
 

@@ -8,7 +8,10 @@ import {
 
 describe('extractInstallment', () => {
   it('reads an N/M marker as paid/total', () => {
-    expect(extractInstallment('1/3 payment for the sofa')).toEqual({ paid: 1, total: 3 });
+    expect(extractInstallment('1/3 payment for the sofa')).toEqual({
+      paid: 1,
+      total: 3,
+    });
     expect(extractInstallment('Bfs · 7/12')).toEqual({ paid: 7, total: 12 });
     expect(extractInstallment('TV plan 3/42')).toEqual({ paid: 3, total: 42 });
     expect(extractInstallment('3 / 3 final')).toEqual({ paid: 3, total: 3 });
@@ -146,7 +149,10 @@ describe('coerceExtractedReminders', () => {
       { index: 1, label: 'x', installmentsTotal: 1, installmentsPaid: 1 },
       { index: 2, label: 'y', installmentsTotal: 3, installmentsPaid: 9 },
     ]);
-    expect(a).toMatchObject({ installmentsTotal: null, installmentsPaid: null });
+    expect(a).toMatchObject({
+      installmentsTotal: null,
+      installmentsPaid: null,
+    });
     expect(b).toMatchObject({ installmentsTotal: 3, installmentsPaid: 3 });
   });
 

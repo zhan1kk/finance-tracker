@@ -104,7 +104,9 @@ export class GuidedCaptureService {
       _count: true,
     });
     if (groups.length === 0) {
-      return { text: 'You have no categories for this yet — add one in the web app.' };
+      return {
+        text: 'You have no categories for this yet — add one in the web app.',
+      };
     }
 
     return {
@@ -215,7 +217,11 @@ export class GuidedCaptureService {
   }
 
   /** "Add note" / "Change amount" — start listening for the typed follow-up. */
-  promptEdit(chatId: string, field: 'note' | 'amount', transactionId: string): BotReply {
+  promptEdit(
+    chatId: string,
+    field: 'note' | 'amount',
+    transactionId: string,
+  ): BotReply {
     this.setPending(chatId, field, transactionId);
     return {
       text:
@@ -231,7 +237,10 @@ export class GuidedCaptureService {
    * (an amount, or the dash format) that should start a new capture instead —
    * so a bare "40" after booking is a new expense, not a note.
    */
-  async applyPendingText(chatId: string, text: string): Promise<BotReply | null> {
+  async applyPendingText(
+    chatId: string,
+    text: string,
+  ): Promise<BotReply | null> {
     const p = this.pending.get(chatId);
     if (!p) return null;
     if (Date.now() - p.at > PENDING_TTL_MS) {
@@ -245,7 +254,9 @@ export class GuidedCaptureService {
       const parsed = parseAmountOnly(text);
       if (!parsed) {
         // Keep listening — they mistyped the amount.
-        return { text: 'That is not an amount. Send just the number, e.g. 12.50.' };
+        return {
+          text: 'That is not an amount. Send just the number, e.g. 12.50.',
+        };
       }
       const context = await this.context(chatId);
       if ('error' in context) {
@@ -306,7 +317,12 @@ export class GuidedCaptureService {
 
   /** A compact one-line summary of a transaction after an edit. */
   private summary(
-    t: { type: string; amount: number; description: string | null; subcategory: { name: string } | null },
+    t: {
+      type: string;
+      amount: number;
+      description: string | null;
+      subcategory: { name: string } | null;
+    },
     account: { name: string; currency: string; balance: number },
   ): string {
     const sign = t.type === 'INCOME' ? '+' : '−';
@@ -362,7 +378,9 @@ export class GuidedCaptureService {
   /** The linked user and the account captures are booked to. */
   private async context(
     chatId: string,
-  ): Promise<{ userId: string; accountId: string; currency: string } | { error: string }> {
+  ): Promise<
+    { userId: string; accountId: string; currency: string } | { error: string }
+  > {
     const user = await this.prisma.user.findUnique({
       where: { telegramChatId: chatId },
       select: { id: true, defaultAccountId: true },
@@ -406,7 +424,8 @@ export class GuidedCaptureService {
 /** Income subcategories for income, everything else for expenses. */
 function signFilter(type: CaptureType) {
   return {
-    category: type === 'INCOME' ? ('Income' as const) : { not: 'Income' as const },
+    category:
+      type === 'INCOME' ? ('Income' as const) : { not: 'Income' as const },
   };
 }
 

@@ -6,7 +6,11 @@ import { TransactionService } from './transaction.service';
 
 @Module({
   controllers: [TransactionController],
-  providers: [TransactionService, TransactionStatsService, InsightSummaryService],
+  providers: [
+    TransactionService,
+    TransactionStatsService,
+    InsightSummaryService,
+  ],
   exports: [TransactionService],
 })
 export class TransactionModule {}

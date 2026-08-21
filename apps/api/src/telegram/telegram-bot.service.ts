@@ -129,7 +129,10 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       // A just-booked capture may be waiting for a typed note / new amount; that
       // claims this message first, unless it's itself a fresh capture (then
       // applyPendingText returns null and we fall through as usual).
-      const pending = await this.guided.applyPendingText(chatId, ctx.message.text);
+      const pending = await this.guided.applyPendingText(
+        chatId,
+        ctx.message.text,
+      );
       if (pending) {
         await ctx.reply(pending.text, markup(pending));
         return;
@@ -182,7 +185,9 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       }
       if (data.startsWith('note:') || data.startsWith('amt:')) {
         const field = data.startsWith('note:') ? 'note' : 'amount';
-        const id = data.slice(field === 'note' ? 'note:'.length : 'amt:'.length);
+        const id = data.slice(
+          field === 'note' ? 'note:'.length : 'amt:'.length,
+        );
         const reply = this.guided.promptEdit(String(chatId), field, id);
         await ctx.answerCallbackQuery();
         await ctx.editMessageText(reply.text, markup(reply));
@@ -296,10 +301,12 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   ): Promise<boolean> {
     if (!this.bot) return false;
     const keyboard = buttons?.length
-      ? { reply_markup: buttons.reduce(
-          (kb, b) => kb.text(b.label, b.data),
-          new InlineKeyboard(),
-        ) }
+      ? {
+          reply_markup: buttons.reduce(
+            (kb, b) => kb.text(b.label, b.data),
+            new InlineKeyboard(),
+          ),
+        }
       : undefined;
     try {
       await this.bot.api.sendMessage(chatId, text, keyboard);

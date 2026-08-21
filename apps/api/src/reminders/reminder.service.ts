@@ -21,7 +21,12 @@ import { detectRecurringBills } from './recurring-detect';
 
 // Cadences a plain (non-installment) recurring reminder can roll forward on
 // when it's marked paid for the period.
-const RECURRING_CADENCES = new Set(['weekly', 'monthly', 'quarterly', 'yearly']);
+const RECURRING_CADENCES = new Set([
+  'weekly',
+  'monthly',
+  'quarterly',
+  'yearly',
+]);
 
 const REMINDER_INCLUDE = {
   subcategory: { select: { id: true, name: true, category: true } },

@@ -53,8 +53,18 @@ describe('detectRecurringBills', () => {
   it('flags a yearly bill', () => {
     const res = detectRecurringBills(
       [
-        txn({ id: 'a', subcategoryId: 'y', name: 'Domain', date: day('2025-05-01') }),
-        txn({ id: 'b', subcategoryId: 'y', name: 'Domain', date: day('2026-05-01') }),
+        txn({
+          id: 'a',
+          subcategoryId: 'y',
+          name: 'Domain',
+          date: day('2025-05-01'),
+        }),
+        txn({
+          id: 'b',
+          subcategoryId: 'y',
+          name: 'Domain',
+          date: day('2026-05-01'),
+        }),
       ],
       day('2026-06-01'),
     );
@@ -67,8 +77,18 @@ describe('detectRecurringBills', () => {
   it('flags a quarterly bill', () => {
     const res = detectRecurringBills(
       [
-        txn({ id: 'a', subcategoryId: 'q', name: 'Insurance', date: day('2025-12-01') }),
-        txn({ id: 'b', subcategoryId: 'q', name: 'Insurance', date: day('2026-03-02') }),
+        txn({
+          id: 'a',
+          subcategoryId: 'q',
+          name: 'Insurance',
+          date: day('2025-12-01'),
+        }),
+        txn({
+          id: 'b',
+          subcategoryId: 'q',
+          name: 'Insurance',
+          date: day('2026-03-02'),
+        }),
       ],
       now,
     );
@@ -93,11 +113,35 @@ describe('detectRecurringBills', () => {
     const res = detectRecurringBills(
       [
         // March: two streaming services on different days.
-        txn({ id: 'n1', subcategoryId: 'subs', name: 'Subscriptions', date: day('2026-03-05'), amount: 999 }),
-        txn({ id: 's1', subcategoryId: 'subs', name: 'Subscriptions', date: day('2026-03-12'), amount: 1_099 }),
+        txn({
+          id: 'n1',
+          subcategoryId: 'subs',
+          name: 'Subscriptions',
+          date: day('2026-03-05'),
+          amount: 999,
+        }),
+        txn({
+          id: 's1',
+          subcategoryId: 'subs',
+          name: 'Subscriptions',
+          date: day('2026-03-12'),
+          amount: 1_099,
+        }),
         // April: the same two.
-        txn({ id: 'n2', subcategoryId: 'subs', name: 'Subscriptions', date: day('2026-04-05'), amount: 999 }),
-        txn({ id: 's2', subcategoryId: 'subs', name: 'Subscriptions', date: day('2026-04-12'), amount: 1_099 }),
+        txn({
+          id: 'n2',
+          subcategoryId: 'subs',
+          name: 'Subscriptions',
+          date: day('2026-04-05'),
+          amount: 999,
+        }),
+        txn({
+          id: 's2',
+          subcategoryId: 'subs',
+          name: 'Subscriptions',
+          date: day('2026-04-12'),
+          amount: 1_099,
+        }),
       ],
       now,
     );
@@ -115,13 +159,43 @@ describe('detectRecurringBills', () => {
     const res = detectRecurringBills(
       [
         // Full months: two streaming services each.
-        txn({ id: 'm1', subcategoryId: 'subs', name: 'Streaming', date: day('2026-03-05'), amount: 999 }),
-        txn({ id: 'm2', subcategoryId: 'subs', name: 'Streaming', date: day('2026-03-12'), amount: 1_099 }),
-        txn({ id: 'a1', subcategoryId: 'subs', name: 'Streaming', date: day('2026-04-05'), amount: 999 }),
-        txn({ id: 'a2', subcategoryId: 'subs', name: 'Streaming', date: day('2026-04-12'), amount: 1_099 }),
+        txn({
+          id: 'm1',
+          subcategoryId: 'subs',
+          name: 'Streaming',
+          date: day('2026-03-05'),
+          amount: 999,
+        }),
+        txn({
+          id: 'm2',
+          subcategoryId: 'subs',
+          name: 'Streaming',
+          date: day('2026-03-12'),
+          amount: 1_099,
+        }),
+        txn({
+          id: 'a1',
+          subcategoryId: 'subs',
+          name: 'Streaming',
+          date: day('2026-04-05'),
+          amount: 999,
+        }),
+        txn({
+          id: 'a2',
+          subcategoryId: 'subs',
+          name: 'Streaming',
+          date: day('2026-04-12'),
+          amount: 1_099,
+        }),
         // Only one has posted so far this (current) month — don't let it
         // understate the reminder amount.
-        txn({ id: 'p1', subcategoryId: 'subs', name: 'Streaming', date: day('2026-05-05'), amount: 999 }),
+        txn({
+          id: 'p1',
+          subcategoryId: 'subs',
+          name: 'Streaming',
+          date: day('2026-05-05'),
+          amount: 999,
+        }),
       ],
       asOf,
     );
@@ -132,9 +206,19 @@ describe('detectRecurringBills', () => {
   it('marks a recurring bill as a limited plan when the description says "N/M"', () => {
     const res = detectRecurringBills(
       [
-        txn({ id: 'a', name: 'Course', date: day('2026-03-10'), description: 'Business course 2/6' }),
+        txn({
+          id: 'a',
+          name: 'Course',
+          date: day('2026-03-10'),
+          description: 'Business course 2/6',
+        }),
         // The anchor (latest) carries the current progress.
-        txn({ id: 'b', name: 'Course', date: day('2026-04-10'), description: 'Business course 3/6' }),
+        txn({
+          id: 'b',
+          name: 'Course',
+          date: day('2026-04-10'),
+          description: 'Business course 3/6',
+        }),
       ],
       now,
     );
@@ -164,7 +248,15 @@ describe('detectRecurringBills', () => {
   it('ignores a single charge even for a bill that looks obvious', () => {
     // No hardcoded bill names — a lone "Rent" charge has no pattern yet.
     const res = detectRecurringBills(
-      [txn({ id: 'a', subcategoryId: 'r', name: 'Rent', date: day('2026-04-01'), amount: 80_000 })],
+      [
+        txn({
+          id: 'a',
+          subcategoryId: 'r',
+          name: 'Rent',
+          date: day('2026-04-01'),
+          amount: 80_000,
+        }),
+      ],
       now,
     );
     expect(res).toEqual([]);

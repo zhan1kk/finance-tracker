@@ -103,7 +103,8 @@ export class PdfImportService {
     currency?: string,
   ): Promise<ExtractedTransaction[]> {
     const baseUrl =
-      optionalSetting(this.config, 'OLLAMA_BASE_URL') ?? 'http://localhost:11434';
+      optionalSetting(this.config, 'OLLAMA_BASE_URL') ??
+      'http://localhost:11434';
     // A leaner model can be set for extraction jobs via OLLAMA_EXTRACTION_MODEL
     // (see the reminder extractor); falls back to OLLAMA_MODEL.
     const model =

@@ -50,8 +50,9 @@ export class TransactionStatsService {
       );
     const scope = (extra: Prisma.Sql) => scopeIn(extra, range);
 
-    const [monthly, byCategory, incomeByCategory] = await this.prisma.$transaction([
-      this.prisma.$queryRaw<MonthlyStat[]>`
+    const [monthly, byCategory, incomeByCategory] =
+      await this.prisma.$transaction([
+        this.prisma.$queryRaw<MonthlyStat[]>`
         SELECT
           ${periodOf(effectiveDate)} AS month,
           COALESCE(SUM(t."amountBase") FILTER (
@@ -74,7 +75,7 @@ export class TransactionStatsService {
         GROUP BY 1
         ORDER BY 1
       `,
-      this.prisma.$queryRaw<CategoryStat[]>`
+        this.prisma.$queryRaw<CategoryStat[]>`
         SELECT
           s."id" AS "subcategoryId",
           s."name",
@@ -105,10 +106,10 @@ export class TransactionStatsService {
         GROUP BY s."id", s."name", s."category"
         ORDER BY amount DESC
       `,
-      // Income by subcategory: real income only (reimbursements, which carry a
-      // parent, are money coming back — not earnings — so they are excluded,
-      // matching how monthly income is counted).
-      this.prisma.$queryRaw<CategoryStat[]>`
+        // Income by subcategory: real income only (reimbursements, which carry a
+        // parent, are money coming back — not earnings — so they are excluded,
+        // matching how monthly income is counted).
+        this.prisma.$queryRaw<CategoryStat[]>`
         SELECT
           s."id" AS "subcategoryId",
           s."name",
@@ -123,7 +124,7 @@ export class TransactionStatsService {
         GROUP BY s."id", s."name", s."category"
         ORDER BY amount DESC
       `,
-    ]);
+      ]);
 
     return { monthly, byCategory, incomeByCategory };
   }

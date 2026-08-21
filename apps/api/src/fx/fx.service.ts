@@ -49,7 +49,11 @@ export class FxService {
     amount: number,
   ): Promise<number> {
     if (currency === BASE_CURRENCY) return amount;
-    return toBase(amount, currency, await this.resolveRate(userId, currency, date));
+    return toBase(
+      amount,
+      currency,
+      await this.resolveRate(userId, currency, date),
+    );
   }
 
   /**
@@ -59,7 +63,8 @@ export class FxService {
   async converterFor(userId: string, currency: string): Promise<Converter> {
     if (currency === BASE_CURRENCY) return (_date, amount) => amount;
     const rates = await this.ratesFor(userId, currency);
-    return (date, amount) => toBase(amount, currency, pickRate(rates, date, currency));
+    return (date, amount) =>
+      toBase(amount, currency, pickRate(rates, date, currency));
   }
 
   /** Rates + the effective-today rate for a currency, for the settings UI. */
@@ -86,7 +91,12 @@ export class FxService {
    * amounts of that currency's transactions from that date onward, so a
    * corrected rate immediately fixes historical totals.
    */
-  async setRate(userId: string, currency: string, dateISO: string, rate: number) {
+  async setRate(
+    userId: string,
+    currency: string,
+    dateISO: string,
+    rate: number,
+  ) {
     if (currency === BASE_CURRENCY) {
       throw new BadRequestException(
         `${BASE_CURRENCY} is the base currency and needs no rate`,
@@ -208,7 +218,12 @@ export class FxService {
       update: {},
       create: { userId, currency },
     });
-    await this.setRate(userId, currency, new Date().toISOString().slice(0, 10), mid);
+    await this.setRate(
+      userId,
+      currency,
+      new Date().toISOString().slice(0, 10),
+      mid,
+    );
   }
 
   /** Stops tracking a currency. Rates already recorded are left alone. */

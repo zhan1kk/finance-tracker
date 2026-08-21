@@ -23,9 +23,14 @@ export class FxController {
 
   /** Rates + effective-today rate for a currency (e.g. ?currency=KZT). */
   @Get('rates')
-  listRates(@CurrentUser() user: AuthUser, @Query('currency') currency?: string) {
+  listRates(
+    @CurrentUser() user: AuthUser,
+    @Query('currency') currency?: string,
+  ) {
     if (!currency || !/^[A-Z]{3}$/.test(currency)) {
-      throw new BadRequestException('currency query param (3-letter code) is required');
+      throw new BadRequestException(
+        'currency query param (3-letter code) is required',
+      );
     }
     return this.fx.listRates(user.userId, currency);
   }
@@ -83,7 +88,11 @@ export class FxController {
     @Param('currency') currency: string,
     @Body() body: SetSpreadDTO,
   ) {
-    return this.fx.setSpread(user.userId, currency.toUpperCase(), body.spreadPct);
+    return this.fx.setSpread(
+      user.userId,
+      currency.toUpperCase(),
+      body.spreadPct,
+    );
   }
 
   @Delete('rates/:id')

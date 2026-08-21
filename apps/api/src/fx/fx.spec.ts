@@ -35,7 +35,9 @@ describe('pickRate', () => {
   });
 
   it('resolves a mid-day timestamp against the same calendar day', () => {
-    expect(pickRate(rates, new Date('2026-07-01T21:30:00.000Z'), 'KZT')).toBe(545);
+    expect(pickRate(rates, new Date('2026-07-01T21:30:00.000Z'), 'KZT')).toBe(
+      545,
+    );
   });
 
   it('always uses 1 for the base currency', () => {
@@ -79,6 +81,9 @@ describe('applySpread', () => {
 
   it('clamps out-of-range fees to the allowed band', () => {
     expect(applySpread(540, -5)).toBe(540); // clamped to 0
-    expect(applySpread(540, 50)).toBeCloseTo(540 * (1 - MAX_SPREAD_PCT / 100), 5);
+    expect(applySpread(540, 50)).toBeCloseTo(
+      540 * (1 - MAX_SPREAD_PCT / 100),
+      5,
+    );
   });
 });

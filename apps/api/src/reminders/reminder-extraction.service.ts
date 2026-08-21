@@ -28,7 +28,8 @@ export class ReminderExtractionService {
   async extract(candidates: ReminderCandidate[]): Promise<ExtractedReminder[]> {
     if (candidates.length === 0) return [];
     const baseUrl =
-      optionalSetting(this.config, 'OLLAMA_BASE_URL') ?? 'http://localhost:11434';
+      optionalSetting(this.config, 'OLLAMA_BASE_URL') ??
+      'http://localhost:11434';
     // Extraction is structured and forgiving, so it can run on a leaner (faster,
     // lighter) model than the categorizer — set OLLAMA_EXTRACTION_MODEL to point
     // the reminder/PDF jobs at e.g. llama3.2:3b. Falls back to OLLAMA_MODEL.

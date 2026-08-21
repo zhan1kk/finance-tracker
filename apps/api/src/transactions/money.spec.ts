@@ -16,9 +16,15 @@ describe('effectOnAccount', () => {
   };
 
   it('income/expense affect only their own account', () => {
-    expect(effectOnAccount({ type: 'INCOME', amount: 100, accountId: 'a' }, 'a')).toBe(100);
-    expect(effectOnAccount({ type: 'EXPENSE', amount: 100, accountId: 'a' }, 'a')).toBe(-100);
-    expect(effectOnAccount({ type: 'INCOME', amount: 100, accountId: 'a' }, 'b')).toBe(0);
+    expect(
+      effectOnAccount({ type: 'INCOME', amount: 100, accountId: 'a' }, 'a'),
+    ).toBe(100);
+    expect(
+      effectOnAccount({ type: 'EXPENSE', amount: 100, accountId: 'a' }, 'a'),
+    ).toBe(-100);
+    expect(
+      effectOnAccount({ type: 'INCOME', amount: 100, accountId: 'a' }, 'b'),
+    ).toBe(0);
   });
 
   it('transfer subtracts from source, adds to counter, ignores others', () => {

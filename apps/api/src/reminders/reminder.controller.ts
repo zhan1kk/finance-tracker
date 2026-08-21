@@ -65,7 +65,11 @@ export class ReminderController {
     @Param('id') id: string,
     @Body() body: LinkPaymentDTO,
   ) {
-    return this.reminderService.linkPayment(user.userId, id, body.transactionId);
+    return this.reminderService.linkPayment(
+      user.userId,
+      id,
+      body.transactionId,
+    );
   }
 
   @Patch(':id')

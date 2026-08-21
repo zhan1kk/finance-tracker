@@ -358,8 +358,6 @@ export class TelegramService {
       where: { id: reminderId, userId: user.id },
       data: { done: true },
     });
-    return count > 0
-      ? '✅ Marked done.'
-      : 'That reminder is gone already.';
+    return count > 0 ? '✅ Marked done.' : 'That reminder is gone already.';
   }
 }

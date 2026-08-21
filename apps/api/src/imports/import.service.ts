@@ -58,7 +58,9 @@ function mergedDescription(row: {
   userNote: string | null;
 }): string {
   if (!row.userNote) return row.description;
-  return row.description ? `${row.description} · ${row.userNote}` : row.userNote;
+  return row.description
+    ? `${row.description} · ${row.userNote}`
+    : row.userNote;
 }
 
 // Amount columns are Postgres `Int` (32-bit). A value past this can't be stored
@@ -277,7 +279,9 @@ export class ImportService {
 
     // Trimmed; an empty string clears the note.
     const userNote =
-      choice.userNote !== undefined ? choice.userNote.trim() || null : undefined;
+      choice.userNote !== undefined
+        ? choice.userNote.trim() || null
+        : undefined;
 
     const asInternal = choice.excludeFromStats === true;
     const asTransfer = Boolean(choice.counterAccountId);
@@ -431,11 +435,7 @@ export class ImportService {
       row.subcategoryId !== null ||
       row.counterAccountId !== null ||
       row.excludeFromStats;
-    const status = skipped
-      ? 'SKIPPED'
-      : hasDecision
-        ? 'READY'
-        : 'NEEDS_REVIEW';
+    const status = skipped ? 'SKIPPED' : hasDecision ? 'READY' : 'NEEDS_REVIEW';
 
     return this.prisma.importRow.update({
       where: { id: rowId },
@@ -538,7 +538,9 @@ export class ImportService {
         const alreadyCommitted = new Set(
           (
             await tx.transaction.findMany({
-              where: { dedupeHash: { in: committable.map((r) => r.dedupeHash) } },
+              where: {
+                dedupeHash: { in: committable.map((r) => r.dedupeHash) },
+              },
               select: { dedupeHash: true },
             })
           ).map((t) => t.dedupeHash),
@@ -595,7 +597,10 @@ export class ImportService {
               where: { id: row.id },
               data: { transactionId: transaction.id, status: 'COMMITTED' },
             });
-            bump(batch.accountId, row.type === 'INCOME' ? row.amount : -row.amount);
+            bump(
+              batch.accountId,
+              row.type === 'INCOME' ? row.amount : -row.amount,
+            );
           }
 
           if (row.corrected) {

@@ -55,7 +55,9 @@ export function detectRecurringBills(
 
   const out: RecurringCandidate[] = [];
   for (const [subcategoryId, list] of groups) {
-    const sorted = [...list].sort((a, b) => a.date.getTime() - b.date.getTime());
+    const sorted = [...list].sort(
+      (a, b) => a.date.getTime() - b.date.getTime(),
+    );
     const latest = sorted[sorted.length - 1];
     // Collapse to one point per calendar month, so a subcategory that lumps
     // several services (many charges a month, on different days) still reads as
@@ -114,7 +116,9 @@ function monthBuckets(sorted: BillTxn[]): MonthBucket[] {
     if (bucket) bucket.total += t.amount;
     else byMonth.set(key, { date: t.date, total: t.amount });
   }
-  return [...byMonth.values()].sort((a, b) => a.date.getTime() - b.date.getTime());
+  return [...byMonth.values()].sort(
+    (a, b) => a.date.getTime() - b.date.getTime(),
+  );
 }
 
 /**
@@ -128,7 +132,9 @@ function inferCadence(months: MonthBucket[]): Cadence | null {
   if (months.length < 2) return null;
   const intervals: number[] = [];
   for (let i = 1; i < months.length; i++) {
-    intervals.push((months[i].date.getTime() - months[i - 1].date.getTime()) / DAY);
+    intervals.push(
+      (months[i].date.getTime() - months[i - 1].date.getTime()) / DAY,
+    );
   }
   const med = median(intervals);
   if (med >= 25 && med <= 35) return 'monthly';

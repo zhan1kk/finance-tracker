@@ -34,7 +34,8 @@ export class InsightSummaryService {
     if (facts.length === 0) return { summary: null };
 
     const baseUrl =
-      optionalSetting(this.config, 'OLLAMA_BASE_URL') ?? 'http://localhost:11434';
+      optionalSetting(this.config, 'OLLAMA_BASE_URL') ??
+      'http://localhost:11434';
     const model =
       optionalSetting(this.config, 'OLLAMA_EXTRACTION_MODEL') ??
       optionalSetting(this.config, 'OLLAMA_MODEL') ??

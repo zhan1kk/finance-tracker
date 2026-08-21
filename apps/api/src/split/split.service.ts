@@ -86,7 +86,11 @@ export class SplitService {
       ...dto.participants.map((p) => p.friendId),
     ]);
 
-    const shares = computeShares(dto.splitMethod, dto.amountCents, dto.participants);
+    const shares = computeShares(
+      dto.splitMethod,
+      dto.amountCents,
+      dto.participants,
+    );
 
     return this.prisma.sharedExpense.create({
       data: {
@@ -173,10 +177,16 @@ export class SplitService {
         where: { id: userId },
         select: { baseCurrency: true },
       }),
-      this.prisma.friend.findMany({ where: { userId }, select: { id: true, name: true } }),
+      this.prisma.friend.findMany({
+        where: { userId },
+        select: { id: true, name: true },
+      }),
       this.prisma.sharedExpense.findMany({
         where: { userId },
-        select: { payerFriendId: true, shares: { select: { friendId: true, amountCents: true } } },
+        select: {
+          payerFriendId: true,
+          shares: { select: { friendId: true, amountCents: true } },
+        },
       }),
       this.prisma.settlement.findMany({
         where: { userId },
@@ -203,7 +213,8 @@ export class SplitService {
     }
 
     const nameOf = new Map(friends.map((f) => [f.id, f.name]));
-    const label = (key: string) => (key === YOU ? 'You' : (nameOf.get(key) ?? '(removed)'));
+    const label = (key: string) =>
+      key === YOU ? 'You' : (nameOf.get(key) ?? '(removed)');
     const idOf = (key: string) => (key === YOU ? null : key);
 
     const parties = [YOU, ...friends.map((f) => f.id)];
@@ -223,9 +234,21 @@ export class SplitService {
         seen.add(pair);
         const net = (owe.get(`${a}|${b}`) ?? 0) - (owe.get(`${b}|${a}`) ?? 0);
         if (net > 0) {
-          balances.push({ fromId: idOf(a), fromName: label(a), toId: idOf(b), toName: label(b), amountCents: net });
+          balances.push({
+            fromId: idOf(a),
+            fromName: label(a),
+            toId: idOf(b),
+            toName: label(b),
+            amountCents: net,
+          });
         } else if (net < 0) {
-          balances.push({ fromId: idOf(b), fromName: label(b), toId: idOf(a), toName: label(a), amountCents: -net });
+          balances.push({
+            fromId: idOf(b),
+            fromName: label(b),
+            toId: idOf(a),
+            toName: label(a),
+            amountCents: -net,
+          });
         }
       }
     }
@@ -257,7 +280,9 @@ export class SplitService {
       where: { userId, id: { in: unique } },
     });
     if (found !== unique.length) {
-      throw new BadRequestException('This expense references an unknown friend');
+      throw new BadRequestException(
+        'This expense references an unknown friend',
+      );
     }
   }
 }

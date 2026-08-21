@@ -64,13 +64,13 @@ export class ReminderPingService {
 
       const todays = due.filter((r) => {
         const days = daysUntil(today, r.dueDate as Date);
-        if (!shouldPing(days, user.reminderLeadDays, user.reminderIntervalDays)) {
+        if (
+          !shouldPing(days, user.reminderLeadDays, user.reminderIntervalDays)
+        ) {
           return false;
         }
         // Guard against a second run on the same day (redeploy, manual trigger).
-        return (
-          !r.lastPingedOn || daysUntil(r.lastPingedOn, today) > 0
-        );
+        return !r.lastPingedOn || daysUntil(r.lastPingedOn, today) > 0;
       });
       if (todays.length === 0) continue;
 
@@ -109,7 +109,9 @@ export class ReminderPingService {
     }
 
     if (sent > 0) {
-      this.logger.log(`Nudged ${users.length} user(s) about ${sent} payment(s)`);
+      this.logger.log(
+        `Nudged ${users.length} user(s) about ${sent} payment(s)`,
+      );
     }
     return { users: users.length, sent };
   }

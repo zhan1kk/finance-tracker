@@ -1,6 +1,9 @@
 import { computeShares } from './split.service';
 
-const P = (friendId?: string, amountCents?: number) => ({ friendId, amountCents });
+const P = (friendId?: string, amountCents?: number) => ({
+  friendId,
+  amountCents,
+});
 
 describe('computeShares', () => {
   it('splits equally and hands the remainder to the first participants', () => {
@@ -26,7 +29,11 @@ describe('computeShares', () => {
   });
 
   it('rejects exact shares that do not add up, or are negative', () => {
-    expect(() => computeShares('exact', 100, [P('a', 70), P('b', 20)])).toThrow();
-    expect(() => computeShares('exact', 100, [P('a', 120), P('b', -20)])).toThrow();
+    expect(() =>
+      computeShares('exact', 100, [P('a', 70), P('b', 20)]),
+    ).toThrow();
+    expect(() =>
+      computeShares('exact', 100, [P('a', 120), P('b', -20)]),
+    ).toThrow();
   });
 });

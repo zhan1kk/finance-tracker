@@ -80,7 +80,11 @@ export class TransactionController {
     @Param('id') id: string,
     @Body() body: SplitTransactionDTO,
   ) {
-    return this.transactionService.splitTransaction(user.userId, id, body.parts);
+    return this.transactionService.splitTransaction(
+      user.userId,
+      id,
+      body.parts,
+    );
   }
 
   /** Applies a category and/or the internal flag to many rows at once. */

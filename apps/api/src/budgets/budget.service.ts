@@ -143,7 +143,9 @@ export class BudgetService {
     // Budgets cover variable spending only: the Expenses category (Bills,
     // Subscriptions, Debts and Savings are fixed/exact and tracked elsewhere).
     if (hasCat && dto.category !== 'Expenses') {
-      throw new BadRequestException('Budgets can only target the Expenses category');
+      throw new BadRequestException(
+        'Budgets can only target the Expenses category',
+      );
     }
 
     if (hasSub) {
@@ -212,7 +214,9 @@ export class BudgetService {
 
   /** Deletes every budget the user has (all months). */
   async removeAll(userId: string): Promise<{ deleted: number }> {
-    const { count } = await this.prisma.budget.deleteMany({ where: { userId } });
+    const { count } = await this.prisma.budget.deleteMany({
+      where: { userId },
+    });
     return { deleted: count };
   }
 
@@ -225,7 +229,11 @@ export class BudgetService {
   async clearMonth(
     userId: string,
     period: string,
-  ): Promise<{ period: string; clearedOverrides: number; deletedOneOffs: number }> {
+  ): Promise<{
+    period: string;
+    clearedOverrides: number;
+    deletedOneOffs: number;
+  }> {
     const { monthStartDay } = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
       select: { monthStartDay: true },
@@ -338,4 +346,3 @@ export class BudgetService {
     return { monthStartDay };
   }
 }
-

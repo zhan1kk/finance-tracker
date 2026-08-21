@@ -195,7 +195,8 @@ export function coerceExtractedReminders(raw: unknown): ExtractedReminder[] {
           ? Number(r.amount)
           : null;
     const dueDate =
-      typeof r.dueDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.dueDate.trim())
+      typeof r.dueDate === 'string' &&
+      /^\d{4}-\d{2}-\d{2}$/.test(r.dueDate.trim())
         ? r.dueDate.trim()
         : null;
     const cadence =

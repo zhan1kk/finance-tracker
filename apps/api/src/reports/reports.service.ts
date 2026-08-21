@@ -185,4 +185,3 @@ function monthToIndex(month: string): number {
   const [year, m] = month.split('-').map(Number);
   return year * 12 + (m - 1);
 }
-

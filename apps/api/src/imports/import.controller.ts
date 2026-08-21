@@ -113,7 +113,12 @@ export class ImportController {
     @Param('rowId') rowId: string,
     @Body() body: SkipRowDTO,
   ) {
-    return this.importService.setRowSkipped(user.userId, id, rowId, body.skipped);
+    return this.importService.setRowSkipped(
+      user.userId,
+      id,
+      rowId,
+      body.skipped,
+    );
   }
 
   /** Force-include a row flagged as a duplicate ("import anyway"). */
