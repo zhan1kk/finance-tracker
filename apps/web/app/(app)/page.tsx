@@ -12,7 +12,7 @@ import { Button, Card } from "@/components/ui";
 import { TYPE_ACCENT, TYPE_BADGE } from "@/lib/account-style";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { formatCents } from "@/lib/format";
+import { formatCents, formatDate } from "@/lib/format";
 import {
   formatPeriod,
   periodOf,
@@ -372,7 +372,7 @@ export default function OverviewPage() {
                     className={days < 0 ? "text-red-600" : "text-zinc-500"}
                   >
                     {when} ·{" "}
-                    {new Date(r.dueDate as string).toLocaleDateString(undefined, {
+                    {formatDate(r.dueDate as string, {
                       day: "numeric",
                       month: "short",
                     })}

@@ -6,6 +6,8 @@
  * is the month the money covers.
  */
 
+import { formatDate } from "./format";
+
 const pad = (n: number) => String(n).padStart(2, "0");
 const label = (date: Date) =>
   `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}`;
@@ -77,10 +79,6 @@ export function formatPeriod(
 
   const { from, to } = periodRange(periodLabel, monthStartDay);
   const short = (iso: string) =>
-    new Date(`${iso}T00:00:00Z`).toLocaleDateString(undefined, {
-      day: "numeric",
-      month: "short",
-      timeZone: "UTC",
-    });
+    formatDate(`${iso}T00:00:00Z`, { day: "numeric", month: "short" });
   return `${name} · ${short(from)} – ${short(to)}`;
 }

@@ -6,6 +6,7 @@ import { AccuracyCard } from "@/components/accuracy-card";
 import { ImportReview } from "@/components/import-review";
 import { Button, Card, ErrorText, Field, Select } from "@/components/ui";
 import { api } from "@/lib/api";
+import { formatTimestamp } from "@/lib/format";
 import { runJob } from "@/lib/poll-job";
 import {
   type Account,
@@ -381,6 +382,10 @@ const BATCH_STATUS_LABEL: Record<string, string> = {
   UNDONE: "Undone",
 };
 
+/** Statements arrive about monthly, so a year in and the full list is only
+ *  scrollable, not readable — show the recent ones and fold the rest away. */
+const RECENT_BATCHES = 8;
+
 function History({ onOpen }: { onOpen: (batchId: string) => void }) {
   const batches = useQuery({
     queryKey: ["import-batches"],
@@ -391,33 +396,48 @@ function History({ onOpen }: { onOpen: (batchId: string) => void }) {
     return null;
   }
 
+  const row = (batch: ImportBatchSummary) => {
+    const total = Object.values(batch.counts).reduce((a, b) => a + b, 0);
+    return (
+      <li key={batch.id}>
+        <button
+          onClick={() => onOpen(batch.id)}
+          className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 py-2 text-left hover:opacity-80"
+        >
+          <span className="font-medium">{batch.filename}</span>
+          <span className="text-sm text-zinc-500">
+            {batch.account.name} · {total} rows
+          </span>
+          <span className="ml-auto text-xs text-zinc-500">
+            {formatTimestamp(batch.createdAt)}
+          </span>
+          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs dark:bg-zinc-800">
+            {BATCH_STATUS_LABEL[batch.status] ?? batch.status}
+          </span>
+        </button>
+      </li>
+    );
+  };
+
+  const recent = batches.data.slice(0, RECENT_BATCHES);
+  const older = batches.data.slice(RECENT_BATCHES);
+
   return (
     <Card>
       <h2 className="mb-3 font-medium">Import history</h2>
       <ul className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-900">
-        {batches.data.map((batch) => {
-          const total = Object.values(batch.counts).reduce((a, b) => a + b, 0);
-          return (
-            <li key={batch.id}>
-              <button
-                onClick={() => onOpen(batch.id)}
-                className="flex w-full items-center gap-3 py-2 text-left hover:opacity-80"
-              >
-                <span className="font-medium">{batch.filename}</span>
-                <span className="text-sm text-zinc-500">
-                  {batch.account.name} · {total} rows
-                </span>
-                <span className="ml-auto text-xs text-zinc-500">
-                  {new Date(batch.createdAt).toLocaleDateString()}
-                </span>
-                <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs dark:bg-zinc-800">
-                  {BATCH_STATUS_LABEL[batch.status] ?? batch.status}
-                </span>
-              </button>
-            </li>
-          );
-        })}
+        {recent.map(row)}
       </ul>
+      {older.length > 0 && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
+            {older.length} older import{older.length === 1 ? "" : "s"}
+          </summary>
+          <ul className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-900">
+            {older.map(row)}
+          </ul>
+        </details>
+      )}
     </Card>
   );
 }

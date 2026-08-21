@@ -10,9 +10,22 @@ import type { Account, CategorizationRule, Subcategory } from "@/lib/types";
 const SUB = "sub:";
 const ACC = "acc:";
 
+/** What a rule does, as one line — shown in the table and searched against, so
+ *  typing a category name finds its rules and not just merchant text. */
+function targetLabel(rule: CategorizationRule): string {
+  if (rule.excludeFromStats) return "⊘ Internal (excluded)";
+  if (rule.counterAccount) return `⇄ ${rule.counterAccount.name}`;
+  return rule.subcategory?.name ?? "—";
+}
+
+/** Below this the whole list fits on a screen and a search box is just clutter. */
+const SEARCHABLE_FROM = 8;
+
 export default function RulesPage() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<unknown>(null);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<"pattern" | "hits">("pattern");
 
   const rules = useQuery({
     queryKey: ["rules"],
@@ -66,6 +79,19 @@ export default function RulesPage() {
     );
   };
 
+  const all = rules.data ?? [];
+  const query = search.trim().toLowerCase();
+  const shown = all
+    .filter(
+      (r) =>
+        !query ||
+        r.pattern.toLowerCase().includes(query) ||
+        targetLabel(r).toLowerCase().includes(query),
+    )
+    // The server sorts by pattern; "most used" is the view that answers "which
+    // of these am I actually relying on, and which are dead weight?".
+    .sort((a, b) => (sort === "hits" ? b.hitCount - a.hitCount : 0));
+
   return (
     <main className="flex flex-col gap-6">
       <Card>
@@ -113,13 +139,44 @@ export default function RulesPage() {
       </Card>
 
       <Card>
-        {rules.data && rules.data.length === 0 && (
+        {rules.data && all.length === 0 && (
           <p className="text-sm text-zinc-500">
             No rules yet. Add one above, or correct an imported transaction and a
             rule is created automatically.
           </p>
         )}
-        {rules.data && rules.data.length > 0 && (
+
+        {all.length >= SEARCHABLE_FROM && (
+          <div className="mb-3 flex flex-wrap items-center gap-3">
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search rules…"
+              aria-label="Search rules"
+              className="w-56"
+            />
+            <Select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as typeof sort)}
+              aria-label="Sort rules"
+              className="w-auto"
+            >
+              <option value="pattern">A–Z</option>
+              <option value="hits">Most used</option>
+            </Select>
+            <span className="text-sm text-zinc-500">
+              {query ? `${shown.length} of ${all.length}` : `${all.length} rules`}
+            </span>
+          </div>
+        )}
+
+        {all.length > 0 && shown.length === 0 && (
+          <p className="text-sm text-zinc-500">
+            No rule matches “{search.trim()}”.
+          </p>
+        )}
+
+        {shown.length > 0 && (
           <div className="overflow-x-auto">
           <table className="w-full min-w-[22rem] text-sm">
             <thead>
@@ -131,7 +188,7 @@ export default function RulesPage() {
               </tr>
             </thead>
             <tbody>
-              {rules.data.map((rule) => (
+              {shown.map((rule) => (
                 <tr
                   key={rule.id}
                   className="border-b border-zinc-100 dark:border-zinc-900"
@@ -144,13 +201,7 @@ export default function RulesPage() {
                       </span>
                     )}
                   </td>
-                  <td className="py-2 pr-3">
-                    {rule.excludeFromStats
-                      ? "⊘ Internal (excluded)"
-                      : rule.counterAccount
-                        ? `⇄ ${rule.counterAccount.name}`
-                        : (rule.subcategory?.name ?? "—")}
-                  </td>
+                  <td className="py-2 pr-3">{targetLabel(rule)}</td>
                   <td className="py-2 pr-3 text-right tabular-nums text-zinc-500">
                     {rule.hitCount}
                   </td>

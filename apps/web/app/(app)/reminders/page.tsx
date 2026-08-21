@@ -6,7 +6,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { formatCents, parseAmountToCents } from "@/lib/format";
+import { formatCents, formatDate, parseAmountToCents } from "@/lib/format";
 import { runJob } from "@/lib/poll-job";
 import type {
   RecurringCadence,
@@ -109,11 +109,7 @@ function IncomePicker({
 
 function formatDue(iso: string | null): string {
   if (!iso) return "no date";
-  return new Date(iso).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return formatDate(iso);
 }
 
 /** Whole months a due date is in the past (0 if under a month), so we can hint
