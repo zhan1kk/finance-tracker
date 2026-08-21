@@ -17,7 +17,7 @@ const subs: SubcategoryLite[] = [
 ];
 
 const mockFetchResolve = (value: unknown) =>
-  jest.spyOn(global, 'fetch').mockResolvedValue(value as unknown as Response);
+  jest.spyOn(global, 'fetch').mockResolvedValue(value as Response);
 
 describe('OllamaCategorizationProvider', () => {
   const provider = new OllamaCategorizationProvider(
@@ -36,13 +36,14 @@ describe('OllamaCategorizationProvider', () => {
     // answers in aliases; the provider must translate back to the real ids.
     mockFetchResolve({
       ok: true,
-      json: async () => ({
-        message: {
-          content: JSON.stringify({
-            items: [{ rowId: '1', subcategoryId: 'a', confidence: 0.9 }],
-          }),
-        },
-      }),
+      json: () =>
+        Promise.resolve({
+          message: {
+            content: JSON.stringify({
+              items: [{ rowId: '1', subcategoryId: 'a', confidence: 0.9 }],
+            }),
+          },
+        }),
     });
     expect(await provider.categorize([input('r1')], subs)).toEqual([
       { rowId: 'r1', subcategoryId: 'a', confidence: 0.9 },
@@ -55,7 +56,11 @@ describe('OllamaCategorizationProvider', () => {
   });
 
   it('falls back to null predictions on a non-OK response', async () => {
-    mockFetchResolve({ ok: false, status: 500, json: async () => ({}) });
+    mockFetchResolve({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({}),
+    });
     expect(await provider.categorize([input('r1')], subs)).toEqual([
       { rowId: 'r1', subcategoryId: null, confidence: 0 },
     ]);
@@ -64,7 +69,8 @@ describe('OllamaCategorizationProvider', () => {
   it('falls back when the model returns content that is not JSON', async () => {
     mockFetchResolve({
       ok: true,
-      json: async () => ({ message: { content: 'sorry, I cannot do that' } }),
+      json: () =>
+        Promise.resolve({ message: { content: 'sorry, I cannot do that' } }),
     });
     expect(await provider.categorize([input('r1')], subs)).toEqual([
       { rowId: 'r1', subcategoryId: null, confidence: 0 },

@@ -1350,28 +1350,30 @@ function QuickAdd({
     queryKey: ["telegram-settings"],
     queryFn: () => api<TelegramSettings>("/telegram/settings"),
   });
-  const [accountId, setAccountId] = useState("");
-  const [counterAccountId, setCounterAccountId] = useState("");
+  // Only what the user actually picked is stored; "" means "not chosen yet" and
+  // the default below stands in. Storing the resolved id instead meant an effect
+  // writing state on every render pass that found it empty — and a default that
+  // could not correct itself once the accounts or settings finished loading.
+  const [accountChoice, setAccountChoice] = useState("");
+  const [counterChoice, setCounterChoice] = useState("");
   const [date, setDate] = useState(todayISO());
 
   // Prefer the account chosen as default, else the first one.
-  useEffect(() => {
-    if (accountId || accounts.length === 0) return;
-    const preferred = settings.data?.defaultAccountId;
-    setAccountId(
-      preferred && accounts.some((a) => a.id === preferred)
+  const preferred = settings.data?.defaultAccountId;
+  const accountId =
+    accountChoice ||
+    (accounts.length === 0
+      ? ""
+      : preferred && accounts.some((a) => a.id === preferred)
         ? preferred
-        : accounts[0].id,
-    );
-  }, [accountId, accounts, settings.data?.defaultAccountId]);
+        : accounts[0].id);
 
   // Default the transfer destination to a different account than the source.
-  useEffect(() => {
-    if (counterAccountId || accounts.length === 0) return;
-    setCounterAccountId(
-      (accounts.find((a) => a.id !== accountId) ?? accounts[0]).id,
-    );
-  }, [counterAccountId, accountId, accounts]);
+  const counterAccountId =
+    counterChoice ||
+    (accounts.length === 0
+      ? ""
+      : (accounts.find((a) => a.id !== accountId) ?? accounts[0]).id);
 
   // A transfer can't cross currencies (two amounts + a fee) — warn before submit.
   const fromCurrency = accounts.find((a) => a.id === accountId)?.currency;
@@ -1384,8 +1386,14 @@ function QuickAdd({
 
   // Restore the last date used on this device (read after mount, so the
   // server-rendered markup and the first client render still agree).
+  //
+  // set-state-in-effect is suppressed rather than satisfied here: the server
+  // cannot read localStorage, so resolving this during render — a lazy
+  // initializer — would emit markup the client disagrees with and break
+  // hydration. Setting it after mount is the intended pattern, not a shortcut.
   useEffect(() => {
     const saved = window.localStorage.getItem(LAST_DATE_KEY);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved)) setDate(saved);
   }, []);
 
@@ -1505,7 +1513,7 @@ function QuickAdd({
             name="accountId"
             required
             value={accountId}
-            onChange={(e) => setAccountId(e.target.value)}
+            onChange={(e) => setAccountChoice(e.target.value)}
           >
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
@@ -1520,7 +1528,7 @@ function QuickAdd({
               name="counterAccountId"
               required
               value={counterAccountId}
-              onChange={(e) => setCounterAccountId(e.target.value)}
+              onChange={(e) => setCounterChoice(e.target.value)}
             >
               {accounts.map((a) => (
                 <option key={a.id} value={a.id}>

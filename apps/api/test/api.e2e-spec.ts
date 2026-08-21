@@ -65,12 +65,16 @@ describe('API (e2e)', () => {
 
   const registerUser = async (email: string): Promise<string> => {
     const res = expectStatus(
-      await request(http).post('/auth/register').send({ email, password: 'password123' }),
+      await request(http)
+        .post('/auth/register')
+        .send({ email, password: 'password123' }),
       201,
     );
     const token = (res.body as { accessToken?: string }).accessToken;
     if (!token) {
-      throw new Error(`Register returned no token: ${JSON.stringify(res.body)}`);
+      throw new Error(
+        `Register returned no token: ${JSON.stringify(res.body)}`,
+      );
     }
     return token;
   };
@@ -92,7 +96,6 @@ describe('API (e2e)', () => {
       });
     if (res.status !== 201) {
       // Diagnostic for an intermittent failure: surface the real body/URL.
-      // eslint-disable-next-line no-console
       console.error(
         `createAccount got ${res.status}; text=${JSON.stringify(res.text)}; headers=${JSON.stringify(res.headers)}`,
       );
@@ -1550,14 +1553,16 @@ describe('API (e2e)', () => {
         .send({
           accountId: other.id,
           filename: 'b.csv',
-          csv: ['Date,Amount,Description', '2026-07-10,100.00,From checking'].join(
-            '\n',
-          ),
+          csv: [
+            'Date,Amount,Description',
+            '2026-07-10,100.00,From checking',
+          ].join('\n'),
           mapping: MAPPING,
         })
         .expect(201);
-      const bBatch = (bRes.body as { batch: { id: string; rows: { id: string }[] } })
-        .batch;
+      const bBatch = (
+        bRes.body as { batch: { id: string; rows: { id: string }[] } }
+      ).batch;
       await request(http)
         .patch(`/imports/${bBatch.id}/rows/${bBatch.rows[0].id}`)
         .set('Authorization', `Bearer ${token}`)
@@ -1595,14 +1600,16 @@ describe('API (e2e)', () => {
         .send({
           accountId: other.id,
           filename: 'b.csv',
-          csv: ['Date,Amount,Description', '2026-07-13,100.00,From checking'].join(
-            '\n',
-          ),
+          csv: [
+            'Date,Amount,Description',
+            '2026-07-13,100.00,From checking',
+          ].join('\n'),
           mapping: MAPPING,
         })
         .expect(201);
-      const bBatch = (bRes.body as { batch: { id: string; rows: { id: string }[] } })
-        .batch;
+      const bBatch = (
+        bRes.body as { batch: { id: string; rows: { id: string }[] } }
+      ).batch;
 
       // Marking it a transfer surfaces a warning note rather than silently
       // merging (which once dropped genuine repeats) — the user Skips if it's
@@ -2018,7 +2025,11 @@ describe('API (e2e)', () => {
 
       await createBudget({ monthlyLimit: 1_000 }, 400); // neither scope
       await createBudget(
-        { monthlyLimit: 1_000, subcategoryId: groceriesId, category: 'Expenses' },
+        {
+          monthlyLimit: 1_000,
+          subcategoryId: groceriesId,
+          category: 'Expenses',
+        },
         400, // both scopes
       );
       await createBudget(
@@ -2460,7 +2471,9 @@ describe('API (e2e)', () => {
         .set('Authorization', `Bearer ${token}`)
         .expect(201);
       expect(paid.body).toMatchObject({ done: false });
-      expect((paid.body as { dueDate: string }).dueDate).toContain('2026-09-15');
+      expect((paid.body as { dueDate: string }).dueDate).toContain(
+        '2026-09-15',
+      );
     });
 
     it('detects a recurring monthly bill and does not duplicate it', async () => {
@@ -2499,9 +2512,9 @@ describe('API (e2e)', () => {
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
       expect(
-        (list.body as { cadence: string; subcategory: { id: string } | null }[]).some(
-          (r) => r.cadence === 'monthly' && r.subcategory?.id === sub,
-        ),
+        (
+          list.body as { cadence: string; subcategory: { id: string } | null }[]
+        ).some((r) => r.cadence === 'monthly' && r.subcategory?.id === sub),
       ).toBe(true);
 
       // Re-running doesn't double up — the subcategory already has a reminder.
@@ -2514,7 +2527,8 @@ describe('API (e2e)', () => {
 
     it('reconciles a paid installment forward so it no longer shows overdue', async () => {
       const acc = (await createAccount(100_000)).id;
-      const sub = (await createSubcategory('Phone Plan Installment', 'Bills')).id;
+      const sub = (await createSubcategory('Phone Plan Installment', 'Bills'))
+        .id;
       // A stale installment reminder: 6/12 paid, next payment "due" a past month.
       const created = await addReminder({
         label: 'Phone Plan Installment',
@@ -2618,8 +2632,20 @@ describe('API (e2e)', () => {
 
       // Alex owes You 10 − 6 = 4; Sam owes You 10. (You-involving first, big first.)
       expect((await balances()).balances).toEqual([
-        { fromId: sam, fromName: 'Sam', toId: null, toName: 'You', amountCents: 1000 },
-        { fromId: alex, fromName: 'Alex', toId: null, toName: 'You', amountCents: 400 },
+        {
+          fromId: sam,
+          fromName: 'Sam',
+          toId: null,
+          toName: 'You',
+          amountCents: 1000,
+        },
+        {
+          fromId: alex,
+          fromName: 'Alex',
+          toId: null,
+          toName: 'You',
+          amountCents: 400,
+        },
       ]);
 
       // Alex settles the 4.00 → only Sam's 10 remains.
@@ -2630,7 +2656,13 @@ describe('API (e2e)', () => {
         .expect(201);
 
       expect((await balances()).balances).toEqual([
-        { fromId: sam, fromName: 'Sam', toId: null, toName: 'You', amountCents: 1000 },
+        {
+          fromId: sam,
+          fromName: 'Sam',
+          toId: null,
+          toName: 'You',
+          amountCents: 1000,
+        },
       ]);
     });
 
@@ -2644,7 +2676,10 @@ describe('API (e2e)', () => {
           amountCents: 1000,
           date: '2026-08-01',
           splitMethod: 'exact',
-          participants: [{ amountCents: 400 }, { friendId: jo, amountCents: 400 }],
+          participants: [
+            { amountCents: 400 },
+            { friendId: jo, amountCents: 400 },
+          ],
         })
         .expect(400);
 
@@ -2656,7 +2691,10 @@ describe('API (e2e)', () => {
           amountCents: 1000,
           date: '2026-08-01',
           splitMethod: 'exact',
-          participants: [{ amountCents: 400 }, { friendId: jo, amountCents: 600 }],
+          participants: [
+            { amountCents: 400 },
+            { friendId: jo, amountCents: 600 },
+          ],
         })
         .expect(201);
 

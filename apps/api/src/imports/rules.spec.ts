@@ -9,13 +9,18 @@ const rule = (
   id: string,
   pattern: string,
   type: TransactionType,
-  target: { subcategoryId?: string; counterAccountId?: string },
+  target: {
+    subcategoryId?: string;
+    counterAccountId?: string;
+    excludeFromStats?: boolean;
+  },
 ) => ({
   id,
   pattern,
   type,
   subcategoryId: target.subcategoryId ?? null,
   counterAccountId: target.counterAccountId ?? null,
+  excludeFromStats: target.excludeFromStats ?? false,
 });
 
 describe('RulesService.match', () => {
@@ -31,9 +36,10 @@ describe('RulesService.match', () => {
   ];
 
   it('prefers the longest pattern, so the joint account beats either name', () => {
-    expect(
-      rules.match(set, 'from maria santos john smith', 'INCOME'),
-    ).toEqual({ counterAccountId: 'joint', ruleId: 'r2' });
+    expect(rules.match(set, 'from maria santos john smith', 'INCOME')).toEqual({
+      counterAccountId: 'joint',
+      ruleId: 'r2',
+    });
   });
 
   it('matches each name on its own', () => {
@@ -117,9 +123,7 @@ describe('RulesService.match', () => {
         { counterAccountId: 'joint' },
       ),
     ];
-    const joint = normalizeMerchant(
-      'Transfer from MARIA SANTOS & JOHN SMITH',
-    );
+    const joint = normalizeMerchant('Transfer from MARIA SANTOS & JOHN SMITH');
     const hers = normalizeMerchant('Transfer from MARIA SANTOS');
 
     expect(rules.match(typed, joint, 'INCOME')).toMatchObject({

@@ -12,7 +12,7 @@ describe('JobsService', () => {
   });
 
   it('runs work in the background and exposes its result', async () => {
-    const id = jobs.start('u1', async () => ({ ok: 42 }));
+    const id = jobs.start('u1', () => Promise.resolve({ ok: 42 }));
     // Synchronously after start it is still running.
     expect(jobs.get('u1', id).status).toBe('running');
 
@@ -24,9 +24,7 @@ describe('JobsService', () => {
   });
 
   it('captures a rejected job as an error with its message', async () => {
-    const id = jobs.start('u1', async () => {
-      throw new Error('boom');
-    });
+    const id = jobs.start('u1', () => Promise.reject(new Error('boom')));
     await tick();
     const job = jobs.get('u1', id);
     expect(job.status).toBe('error');
@@ -34,7 +32,7 @@ describe('JobsService', () => {
   });
 
   it("never returns another user's job, or an unknown id", () => {
-    const id = jobs.start('u1', async () => 1);
+    const id = jobs.start('u1', () => Promise.resolve(1));
     expect(() => jobs.get('u2', id)).toThrow(NotFoundException);
     expect(() => jobs.get('u1', 'no-such-id')).toThrow(NotFoundException);
   });

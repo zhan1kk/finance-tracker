@@ -18,7 +18,7 @@ describe('daysUntil', () => {
 
 describe('shouldPing', () => {
   it('nudges on the pattern the user asked for (lead 10, every 3)', () => {
-    const pinged = [];
+    const pinged: number[] = [];
     for (let d = 14; d >= 0; d--) if (shouldPing(d, 10, 3)) pinged.push(d);
     expect(pinged).toEqual([10, 7, 4, 1, 0]);
   });
@@ -26,12 +26,12 @@ describe('shouldPing', () => {
   it('always nudges the day before, whatever the interval works out to', () => {
     // every 4 from a lead of 10 lands on 10, 6, 2 — which would skip the two
     // days that matter most, so they are added unconditionally.
-    const pinged = [];
+    const pinged: number[] = [];
     for (let d = 12; d >= 0; d--) if (shouldPing(d, 10, 4)) pinged.push(d);
     expect(pinged).toEqual([10, 6, 2, 1, 0]);
 
     // A single long interval still gets the last-minute pair.
-    const sparse = [];
+    const sparse: number[] = [];
     for (let d = 12; d >= 0; d--) if (shouldPing(d, 10, 30)) sparse.push(d);
     expect(sparse).toEqual([10, 1, 0]);
   });
