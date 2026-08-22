@@ -382,8 +382,9 @@ const BATCH_STATUS_LABEL: Record<string, string> = {
   UNDONE: "Undone",
 };
 
-/** Statements arrive about monthly, so a year in and the full list is only
- *  scrollable, not readable — show the recent ones and fold the rest away. */
+/** Statements arrive about monthly, so a year in the full list is only
+ *  scrollable, not readable — once opened, show the recent ones and fold the
+ *  rest away. */
 const RECENT_BATCHES = 8;
 
 function History({ onOpen }: { onOpen: (batchId: string) => void }) {
@@ -391,6 +392,10 @@ function History({ onOpen }: { onOpen: (batchId: string) => void }) {
     queryKey: ["import-batches"],
     queryFn: () => api<ImportBatchSummary[]>("/imports"),
   });
+  // Collapsed by default: this page is for importing a statement, and the past
+  // ones are reference you go looking for rather than something to scroll past
+  // every time. The count in the heading is the part worth seeing at a glance.
+  const [open, setOpen] = useState(false);
 
   if (!batches.data || batches.data.length === 0) {
     return null;
@@ -424,19 +429,34 @@ function History({ onOpen }: { onOpen: (batchId: string) => void }) {
 
   return (
     <Card>
-      <h2 className="mb-3 font-medium">Import history</h2>
-      <ul className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-900">
-        {recent.map(row)}
-      </ul>
-      {older.length > 0 && (
-        <details className="mt-2">
-          <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
-            {older.length} older import{older.length === 1 ? "" : "s"}
-          </summary>
+      <div className="flex items-center justify-between">
+        <h2 className="font-medium">
+          Import history
+          <span className="ml-2 text-sm font-normal text-zinc-500">
+            {batches.data.length}
+          </span>
+        </h2>
+        <Button variant="ghost" onClick={() => setOpen((o) => !o)}>
+          {open ? "Hide" : "Show"}
+        </Button>
+      </div>
+
+      {open && (
+        <div className="mt-3">
           <ul className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-900">
-            {older.map(row)}
+            {recent.map(row)}
           </ul>
-        </details>
+          {older.length > 0 && (
+            <details className="mt-2">
+              <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
+                {older.length} older import{older.length === 1 ? "" : "s"}
+              </summary>
+              <ul className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-900">
+                {older.map(row)}
+              </ul>
+            </details>
+          )}
+        </div>
       )}
     </Card>
   );
