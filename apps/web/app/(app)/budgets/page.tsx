@@ -225,8 +225,8 @@ export default function BudgetsPage() {
               </Button>
             )}
             {(budgets.data?.length ?? 0) > 0 && (
-              <button
-                className="px-1 text-sm text-zinc-400 hover:text-red-600"
+              <Button
+                variant="danger"
                 title="Delete every budget, all months"
                 onClick={() => {
                   setError(null);
@@ -234,7 +234,7 @@ export default function BudgetsPage() {
                 }}
               >
                 Delete all
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -403,10 +403,10 @@ function BudgetRow({
           <button
             aria-label="Delete budget (all months)"
             title="Delete this budget entirely (every month)"
-            className="px-1 text-sm text-zinc-400 hover:text-red-600"
+            className="text-zinc-400 hover:text-red-600"
             onClick={onDelete}
           >
-            Delete
+            ×
           </button>
         </span>
       </div>

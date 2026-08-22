@@ -133,7 +133,7 @@ export function MonthlyTrendChart({
                 key={d.month}
                 className="border-b border-zinc-100 dark:border-zinc-900"
               >
-                <td className="py-1.5">{d.month}</td>
+                <td className="py-1.5">{monthLabel(d.month)}</td>
                 <td className="py-1.5 text-right tabular-nums">
                   {formatCents(d.income, currency)}
                 </td>

@@ -257,24 +257,21 @@ export default function OverviewPage() {
           </label>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <Card>
-            <p className="text-sm text-zinc-500">Income</p>
-            <p className="text-2xl font-semibold">
-              {formatCents(income, currency)}
-            </p>
-          </Card>
-          <Card>
-            <p className="text-sm text-zinc-500">Spending</p>
-            <p className="text-2xl font-semibold">
-              {formatCents(expenses, currency)}
-            </p>
-          </Card>
-          <Card>
-            <p className="text-sm text-zinc-500">Net</p>
-            <p className="text-2xl font-semibold">
-              {formatCents(income - expenses, currency)}
-            </p>
-          </Card>
+          <HeadlineStat
+            label="Income"
+            cents={monthStats.data ? income : null}
+            currency={currency}
+          />
+          <HeadlineStat
+            label="Spending"
+            cents={monthStats.data ? expenses : null}
+            currency={currency}
+          />
+          <HeadlineStat
+            label="Net"
+            cents={monthStats.data ? income - expenses : null}
+            currency={currency}
+          />
         </div>
       </section>
 
@@ -699,6 +696,41 @@ function Onboarding({
  * A collapsed, full picture of the month: every subcategory with income and
  * spending, filterable by category type. Complements the spending-only bars.
  */
+/**
+ * One of the month's headline numbers, or a skeleton until it arrives.
+ *
+ * These used to format a `?? 0` fallback, so the first thing on screen each day
+ * was "€0.00" for as long as the fetch took — which reads as "no income this
+ * month" rather than "not loaded yet". The bar is the height of the text it
+ * replaces, so nothing shifts when the real figure lands.
+ */
+function HeadlineStat({
+  label,
+  cents,
+  currency,
+}: {
+  label: string;
+  cents: number | null;
+  currency: string;
+}) {
+  return (
+    <Card>
+      <p className="text-sm text-zinc-500">{label}</p>
+      {cents === null ? (
+        <div className="flex h-8 items-center">
+          <div
+            role="status"
+            aria-label={`${label} loading`}
+            className="h-6 w-28 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800"
+          />
+        </div>
+      ) : (
+        <p className="text-2xl font-semibold">{formatCents(cents, currency)}</p>
+      )}
+    </Card>
+  );
+}
+
 function FullBreakdown({
   stats,
   currency,
