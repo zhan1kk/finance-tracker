@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
+import { ConfirmPhrase } from "@/components/confirm-phrase";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { formatCents, parseAmountToCents, todayISO } from "@/lib/format";
@@ -31,6 +32,7 @@ function cadenceLabel(cadence: RecurringCadence, interval: number): string {
 
 export default function RecurringPage() {
   const queryClient = useQueryClient();
+  const [confirmingWipe, setConfirmingWipe] = useState(false);
 
   const rules = useQuery({
     queryKey: ["recurring"],
@@ -76,15 +78,7 @@ export default function RecurringPage() {
           {hasRules && (
             <Button
               variant="danger"
-              onClick={() => {
-                if (
-                  window.confirm(
-                    "Delete ALL recurring rules? Transactions they already posted stay put. This cannot be undone.",
-                  )
-                ) {
-                  removeAll.mutate();
-                }
-              }}
+              onClick={() => setConfirmingWipe(true)}
               disabled={removeAll.isPending}
             >
               Delete all
@@ -109,6 +103,21 @@ export default function RecurringPage() {
           ))}
         </ul>
       </Card>
+
+      {confirmingWipe && (
+        <ConfirmPhrase
+          title="Delete every recurring rule?"
+          body="This removes all of your scheduled transactions — rent, salary, subscriptions — so nothing posts itself again. Transactions they already posted stay put and your history is untouched, but the schedules are gone for good."
+          confirmLabel="Delete all rules"
+          busy={removeAll.isPending}
+          onCancel={() => setConfirmingWipe(false)}
+          onConfirm={() =>
+            removeAll.mutate(undefined, {
+              onSuccess: () => setConfirmingWipe(false),
+            })
+          }
+        />
+      )}
     </main>
   );
 }
