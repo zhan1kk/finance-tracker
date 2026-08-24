@@ -18,15 +18,7 @@ import {
   type ReminderCandidate,
 } from './reminder-prompt';
 import { detectRecurringBills } from './recurring-detect';
-
-// Cadences a plain (non-installment) recurring reminder can roll forward on
-// when it's marked paid for the period.
-const RECURRING_CADENCES = new Set([
-  'weekly',
-  'monthly',
-  'quarterly',
-  'yearly',
-]);
+import { advanceDate, planSettlement } from './settle';
 
 const REMINDER_INCLUDE = {
   subcategory: { select: { id: true, name: true, category: true } },
@@ -196,40 +188,18 @@ export class ReminderService {
       throw new NotFoundException(`Reminder with id ${id} was not found`);
     }
 
-    if (reminder.installmentsTotal != null) {
-      const paid = Math.min(
-        (reminder.installmentsPaid ?? 0) + 1,
-        reminder.installmentsTotal,
+    const plan = planSettlement(reminder);
+    if (plan.kind === 'nothing-to-advance') {
+      throw new BadRequestException(
+        'This reminder has nothing to advance — use Done to dismiss it.',
       );
-      const done = paid >= reminder.installmentsTotal;
-      // Advance to the next payment date unless we're finished.
-      const dueDate =
-        !done && reminder.dueDate && reminder.cadence
-          ? advanceDate(reminder.dueDate, reminder.cadence)
-          : reminder.dueDate;
-
-      return this.prisma.reminder.update({
-        where: { id },
-        data: { installmentsPaid: paid, done, dueDate },
-        include: REMINDER_INCLUDE,
-      });
     }
 
-    if (
-      reminder.dueDate &&
-      reminder.cadence &&
-      RECURRING_CADENCES.has(reminder.cadence)
-    ) {
-      return this.prisma.reminder.update({
-        where: { id },
-        data: { dueDate: advanceDate(reminder.dueDate, reminder.cadence) },
-        include: REMINDER_INCLUDE,
-      });
-    }
-
-    throw new BadRequestException(
-      'This reminder has nothing to advance — use Done to dismiss it.',
-    );
+    return this.prisma.reminder.update({
+      where: { id },
+      data: plan.data,
+      include: REMINDER_INCLUDE,
+    });
   }
 
   /**
@@ -568,23 +538,3 @@ export class ReminderService {
 }
 
 /** Moves a date forward by one cadence period; unknown cadence → unchanged. */
-function advanceDate(date: Date, cadence: string): Date {
-  const d = new Date(date);
-  switch (cadence) {
-    case 'weekly':
-      d.setUTCDate(d.getUTCDate() + 7);
-      break;
-    case 'monthly':
-      d.setUTCMonth(d.getUTCMonth() + 1);
-      break;
-    case 'quarterly':
-      d.setUTCMonth(d.getUTCMonth() + 3);
-      break;
-    case 'yearly':
-      d.setUTCFullYear(d.getUTCFullYear() + 1);
-      break;
-    default:
-      break;
-  }
-  return d;
-}

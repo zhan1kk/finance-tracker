@@ -3,6 +3,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { BASE_CURRENCY } from '../fx/fx';
 import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
+import { planSettlement } from '../reminders/settle';
 import { TransactionService } from '../transactions/transaction.service';
 import {
   matchSubcategory,
@@ -349,15 +350,54 @@ export class TelegramService {
   }
 
   /** Settles a reminder from its nudge message. Scoped to the chat's own user. */
+  /**
+   * Settles the reminder behind a nudge's ✓ button.
+   *
+   * This used to write `done: true` outright, which quietly dismissed
+   * installment plans and recurring bills instead of advancing them — one tap
+   * on a "TV 4/12" nudge threw away the remaining eight payments. It now asks
+   * planSettlement, exactly as the web app's Paid button does, so the two
+   * cannot disagree; `done` is only for a one-off with nothing to advance.
+   */
   async markReminderDone(chatId: string, reminderId: string): Promise<string> {
     const user = await this.prisma.user.findUnique({
       where: { telegramChatId: chatId },
     });
     if (!user) return 'This chat is not linked.';
-    const { count } = await this.prisma.reminder.updateMany({
-      where: { id: reminderId, userId: user.id },
-      data: { done: true },
+
+    const reminder = await this.prisma.reminder.findFirst({
+      where: { id: reminderId, userId: user.id, done: false },
     });
-    return count > 0 ? '✅ Marked done.' : 'That reminder is gone already.';
+    if (!reminder) return 'That reminder is gone already.';
+
+    const plan = planSettlement(reminder);
+    const when = (d: Date) =>
+      d.toLocaleDateString('en-GB', {
+        day: 'numeric',
+        month: 'short',
+        timeZone: 'UTC',
+      });
+
+    if (plan.kind === 'nothing-to-advance') {
+      await this.prisma.reminder.update({
+        where: { id: reminder.id },
+        data: { done: true },
+      });
+      return '✅ Marked done.';
+    }
+
+    await this.prisma.reminder.update({
+      where: { id: reminder.id },
+      data: plan.data,
+    });
+
+    if (plan.kind === 'installment') {
+      return plan.finished
+        ? `✅ ${reminder.label} — final payment ${plan.paid}/${plan.total}. All paid off.`
+        : `✅ ${reminder.label} — ${plan.paid}/${plan.total} paid. Next due ${
+            plan.nextDue ? when(plan.nextDue) : 'later'
+          }.`;
+    }
+    return `✅ ${reminder.label} paid. Next due ${when(plan.nextDue)}.`;
   }
 }
