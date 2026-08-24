@@ -160,6 +160,9 @@ export class ReminderService {
         label: input.label,
         subcategoryId: input.subcategoryId ?? null,
         dueDate: input.dueDate ? new Date(input.dueDate) : null,
+        dueAnchorDay: input.dueDate
+          ? new Date(input.dueDate).getUTCDate()
+          : null,
         amountCents: input.amountCents ?? null,
         currency: input.currency ?? null,
         cadence: input.cadence ?? null,
@@ -415,7 +418,15 @@ export class ReminderService {
     data: Prisma.ReminderUncheckedCreateInput,
   ): Promise<boolean> {
     try {
-      await this.prisma.reminder.create({ data });
+      // Every scan/detect path lands here, so the schedule anchor is filled in
+      // one place rather than at each call site.
+      const dueDate = data.dueDate ? new Date(data.dueDate) : null;
+      await this.prisma.reminder.create({
+        data: {
+          ...data,
+          dueAnchorDay: data.dueAnchorDay ?? dueDate?.getUTCDate() ?? null,
+        },
+      });
       return true;
     } catch (err) {
       if (

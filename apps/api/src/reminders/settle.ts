@@ -1,3 +1,5 @@
+import { addDays, addMonths } from '../common/date';
+
 /**
  * What "settling" a reminder means, in one place.
  *
@@ -19,40 +21,20 @@ export const RECURRING_CADENCES = new Set([
   'yearly',
 ]);
 
-/**
- * Adds whole months, clamping to the end of the target month.
- *
- * Plain setUTCMonth() overflows: a bill due the 31st advanced by a month
- * becomes "31 February", which JS silently rolls into March — so the reminder
- * skips a month entirely and then nags on the wrong date forever after. Due the
- * 31st means the 30th in a 30-day month, and the 28th (or 29th) in February.
- */
-function addMonths(date: Date, months: number): Date {
-  const day = date.getUTCDate();
-  const d = new Date(date);
-  // Move off the day-of-month first, so changing the month cannot overflow.
-  d.setUTCDate(1);
-  d.setUTCMonth(d.getUTCMonth() + months);
-  const lastDayOfMonth = new Date(
-    Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0),
-  ).getUTCDate();
-  d.setUTCDate(Math.min(day, lastDayOfMonth));
-  return d;
-}
-
-export function advanceDate(date: Date, cadence: string): Date {
+export function advanceDate(
+  date: Date,
+  cadence: string,
+  anchorDay?: number,
+): Date {
   switch (cadence) {
-    case 'weekly': {
-      const d = new Date(date);
-      d.setUTCDate(d.getUTCDate() + 7);
-      return d;
-    }
+    case 'weekly':
+      return addDays(date, 7);
     case 'monthly':
-      return addMonths(date, 1);
+      return addMonths(date, 1, anchorDay);
     case 'quarterly':
-      return addMonths(date, 3);
+      return addMonths(date, 3, anchorDay);
     case 'yearly':
-      return addMonths(date, 12);
+      return addMonths(date, 12, anchorDay);
     default:
       return new Date(date);
   }
@@ -63,6 +45,10 @@ export type SettleInput = {
   cadence: string | null;
   installmentsTotal: number | null;
   installmentsPaid: number | null;
+  /** The day of the month the schedule is anchored to, so a bill due the 31st
+   *  returns to the 31st after a short month. Null on reminders created before
+   *  the column existed; then the current due date's day is used. */
+  dueAnchorDay?: number | null;
 };
 
 export type Settlement =
@@ -88,7 +74,11 @@ export function planSettlement(reminder: SettleInput): Settlement {
     // Advance to the next payment date unless we're finished.
     const dueDate =
       !finished && reminder.dueDate && reminder.cadence
-        ? advanceDate(reminder.dueDate, reminder.cadence)
+        ? advanceDate(
+            reminder.dueDate,
+            reminder.cadence,
+            reminder.dueAnchorDay ?? undefined,
+          )
         : reminder.dueDate;
     return {
       kind: 'installment',
@@ -105,7 +95,11 @@ export function planSettlement(reminder: SettleInput): Settlement {
     reminder.cadence &&
     RECURRING_CADENCES.has(reminder.cadence)
   ) {
-    const nextDue = advanceDate(reminder.dueDate, reminder.cadence);
+    const nextDue = advanceDate(
+      reminder.dueDate,
+      reminder.cadence,
+      reminder.dueAnchorDay ?? undefined,
+    );
     return { kind: 'recurring', data: { dueDate: nextDue }, nextDue };
   }
 

@@ -74,7 +74,14 @@ export class ReminderPingService {
       });
       if (todays.length === 0) continue;
 
-      const lines = todays.map((r) => {
+      // One message per reminder rather than one message listing all of them.
+      // Settling edits the message it belongs to, and Telegram drops a
+      // message's whole keyboard when its text is edited — so a combined nudge
+      // lost the other reminders' buttons the moment you pressed any one of
+      // them. Separate messages make that impossible instead of merely
+      // unlikely, and each nudge can name its own amount and due date.
+      const pinged: string[] = [];
+      for (const r of todays) {
         const days = daysUntil(today, r.dueDate as Date);
         const when =
           days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`;
@@ -82,28 +89,20 @@ export class ReminderPingService {
           r.amountCents === null
             ? ''
             : ` · ${money(r.amountCents, r.currency ?? user.baseCurrency)}`;
-        return `• ${r.label} — due ${when}${amount}`;
-      });
-      const text = [
-        todays.length === 1 ? '⏰ Coming up' : `⏰ ${todays.length} coming up`,
-        '',
-        ...lines,
-      ].join('\n');
-      // One button per reminder, so settling does not need the web app.
-      const buttons = todays.map((r) => ({
-        label: todays.length === 1 ? '✓ Done' : `✓ ${r.label}`.slice(0, 30),
-        data: `rdone:${r.id}`,
-      }));
+        const text = `⏰ ${r.label} — due ${when}${amount}`;
 
-      const delivered = await this.bot.sendMessage(
-        user.telegramChatId as string,
-        text,
-        buttons,
-      );
-      if (!delivered) continue;
-      sent += todays.length;
+        const delivered = await this.bot.sendMessage(
+          user.telegramChatId as string,
+          text,
+          [{ label: '✓ Paid', data: `rdone:${r.id}` }],
+        );
+        // A failed send is left unpinged so tomorrow's run tries it again.
+        if (delivered) pinged.push(r.id);
+      }
+      if (pinged.length === 0) continue;
+      sent += pinged.length;
       await this.prisma.reminder.updateMany({
-        where: { id: { in: todays.map((r) => r.id) } },
+        where: { id: { in: pinged } },
         data: { lastPingedOn: today },
       });
     }

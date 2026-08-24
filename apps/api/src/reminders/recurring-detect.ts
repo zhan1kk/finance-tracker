@@ -5,6 +5,7 @@
  * created for the next occurrence. Purely functional for easy testing.
  */
 
+import { addMonths } from '../common/date';
 import { extractInstallment } from './reminder-prompt';
 
 const DAY = 86_400_000;
@@ -146,12 +147,13 @@ function inferCadence(months: MonthBucket[]): Cadence | null {
 
 /** The next expected occurrence: a single step from `from`, so a payment that
  * fell due before today (but isn't recorded yet) shows as overdue rather than
- * being rolled forward to a future date. */
+ * being rolled forward to a future date.
+ *
+ * Uses the shared month math: stepping with setUTCMonth turned a bill charged
+ * on the 31st into the 3rd of the month after next. */
 function nextOccurrence(from: Date, cadence: Cadence): Date {
   const months = cadence === 'monthly' ? 1 : cadence === 'quarterly' ? 3 : 12;
-  const d = new Date(from);
-  d.setUTCMonth(d.getUTCMonth() + months);
-  return d;
+  return addMonths(from, months);
 }
 
 function median(values: number[]): number {

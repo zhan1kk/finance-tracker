@@ -589,6 +589,11 @@ model Reminder {
   currency    String?
   /// Free-text cadence label ("monthly", "quarterly", "one-off").
   cadence     String?
+  /// Day of the month the schedule is anchored to (1-31). Advancing a due date
+  /// clamps to a short month but returns to this day afterwards, so a bill due
+  /// the 31st does not sag to the 28th forever once it passes February. Null on
+  /// reminders created before this column; the due date's own day is used then.
+  dueAnchorDay Int?
   /// For a fixed-length installment plan (e.g. "1/3"): total number of payments
   /// and how many are done. Both null for ongoing/one-off reminders. When
   /// installmentsPaid reaches installmentsTotal the reminder auto-completes.
