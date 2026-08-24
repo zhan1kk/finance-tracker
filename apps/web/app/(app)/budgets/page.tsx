@@ -5,6 +5,7 @@ import { useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { BudgetCompare, BudgetSummary } from "@/components/budget-stats";
 import { ConfirmPhrase } from "@/components/confirm-phrase";
+import { PromptDialog } from "@/components/prompt-dialog";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatCents, parseAmountToCents } from "@/lib/format";
@@ -22,6 +23,7 @@ export default function BudgetsPage() {
   const [error, setError] = useState<unknown>(null);
   // Same treatment as wiping transactions: irreversible, so it is typed.
   const [confirmingWipe, setConfirmingWipe] = useState(false);
+  const [editingLimit, setEditingLimit] = useState<Budget | null>(null);
   const currency = user?.baseCurrency ?? "EUR";
   const monthStartDay = user?.monthStartDay ?? 1;
 
@@ -255,24 +257,8 @@ export default function BudgetsPage() {
               currency={currency}
               monthLabel={formatPeriod(shown, monthStartDay)}
               onEdit={() => {
-                const isOneOff = budget.oneOffPeriod != null;
-                const raw = window.prompt(
-                  isOneOff
-                    ? `Limit for ${formatPeriod(shown, monthStartDay)} (this-month-only budget)`
-                    : `Limit for ${formatPeriod(shown, monthStartDay)}`,
-                  (budget.limit / 100).toFixed(2),
-                );
-                if (raw === null) return;
-                const cents = parseAmountToCents(raw);
-                if (cents === null || cents < 1) {
-                  setError(new Error("Invalid amount"));
-                  return;
-                }
                 setError(null);
-                // A one-off has no separate default vs override — edit its own
-                // limit; a recurring budget gets a per-month override instead.
-                if (isOneOff) updateLimit.mutate({ id: budget.id, limit: cents });
-                else setMonthLimit.mutate({ id: budget.id, limit: cents });
+                setEditingLimit(budget);
               }}
               onReset={
                 budget.isOverride && budget.oneOffPeriod == null
@@ -302,6 +288,42 @@ export default function BudgetsPage() {
         monthStartDay={monthStartDay}
         currency={currency}
       />
+
+      {editingLimit && (
+        <PromptDialog
+          title={
+            editingLimit.subcategory?.name ??
+            editingLimit.category ??
+            "Budget limit"
+          }
+          help={
+            editingLimit.oneOffPeriod != null
+              ? `A one-off budget for ${formatPeriod(shown, monthStartDay)} only.`
+              : `Sets the limit for ${formatPeriod(shown, monthStartDay)}. Other months keep the default.`
+          }
+          label={`Limit (${currency})`}
+          inputMode="decimal"
+          initialValue={(editingLimit.limit / 100).toFixed(2)}
+          busy={updateLimit.isPending || setMonthLimit.isPending}
+          validate={(raw) => {
+            const cents = parseAmountToCents(raw);
+            return cents === null || cents < 1 ? "Invalid amount" : null;
+          }}
+          onCancel={() => setEditingLimit(null)}
+          onSubmit={(raw) => {
+            const cents = parseAmountToCents(raw);
+            if (cents === null || cents < 1) return;
+            // A one-off has no separate default vs override — edit its own
+            // limit; a recurring budget gets a per-month override instead.
+            if (editingLimit.oneOffPeriod != null) {
+              updateLimit.mutate({ id: editingLimit.id, limit: cents });
+            } else {
+              setMonthLimit.mutate({ id: editingLimit.id, limit: cents });
+            }
+            setEditingLimit(null);
+          }}
+        />
+      )}
 
       {confirmingWipe && (
         <ConfirmPhrase

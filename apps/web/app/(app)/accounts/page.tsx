@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { ExchangeRatesCard } from "@/components/exchange-rates-card";
+import { PromptDialog } from "@/components/prompt-dialog";
 import { TelegramCard } from "@/components/telegram-card";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api, downloadFile } from "@/lib/api";
@@ -124,6 +125,12 @@ export default function AccountsPage() {
     );
   };
 
+  // Which account is being edited in the prompt dialog, and which field.
+  const [editing, setEditing] = useState<{
+    kind: "name" | "balance";
+    account: Account;
+  } | null>(null);
+
   const pinned = accounts.data?.filter((a) => a.pinned) ?? [];
   const unpinned = accounts.data?.filter((a) => !a.pinned) ?? [];
 
@@ -208,11 +215,8 @@ export default function AccountsPage() {
           variant="ghost"
           disabled={rowBusy}
           onClick={() => {
-            const name = window.prompt("New name", account.name);
-            if (name && name !== account.name) {
-              setError(null);
-              rename.mutate({ id: account.id, name });
-            }
+            setError(null);
+            setEditing({ kind: "name", account });
           }}
         >
           Rename
@@ -221,20 +225,8 @@ export default function AccountsPage() {
           variant="ghost"
           disabled={rowBusy}
           onClick={() => {
-            const raw = window.prompt(
-              "Starting balance on day one (negative = credit card debt, e.g. -478.42). Later transactions stay applied on top.",
-              (account.initialBalance / 100).toFixed(2),
-            );
-            if (raw === null) return;
-            const initialBalance = parseSignedAmountToCents(raw);
-            if (initialBalance === null) {
-              setError(new Error("Invalid amount — e.g. 100 or -478.42"));
-              return;
-            }
-            if (initialBalance !== account.initialBalance) {
-              setError(null);
-              setStartingBalance.mutate({ id: account.id, initialBalance });
-            }
+            setError(null);
+            setEditing({ kind: "balance", account });
           }}
         >
           Set balance
@@ -363,6 +355,54 @@ export default function AccountsPage() {
           </Button>
         </div>
       </Card>
+
+      {editing?.kind === "name" && (
+        <PromptDialog
+          title={`Rename "${editing.account.name}"`}
+          label="Account name"
+          initialValue={editing.account.name}
+          busy={rename.isPending}
+          validate={(raw) => (raw.trim() ? null : "Enter a name")}
+          onCancel={() => setEditing(null)}
+          onSubmit={(raw) => {
+            const name = raw.trim();
+            if (name !== editing.account.name) {
+              rename.mutate({ id: editing.account.id, name });
+            }
+            setEditing(null);
+          }}
+        />
+      )}
+
+      {editing?.kind === "balance" && (
+        <PromptDialog
+          title={`Starting balance for "${editing.account.name}"`}
+          help="The balance on day one, before any transaction you have recorded. Negative means debt, e.g. -478.42 for a credit card. Later transactions stay applied on top."
+          label={`Amount (${editing.account.currency})`}
+          inputMode="decimal"
+          initialValue={(editing.account.initialBalance / 100).toFixed(2)}
+          busy={setStartingBalance.isPending}
+          validate={(raw) =>
+            parseSignedAmountToCents(raw) === null
+              ? "Invalid amount — e.g. 100 or -478.42"
+              : null
+          }
+          onCancel={() => setEditing(null)}
+          onSubmit={(raw) => {
+            const initialBalance = parseSignedAmountToCents(raw);
+            if (
+              initialBalance !== null &&
+              initialBalance !== editing.account.initialBalance
+            ) {
+              setStartingBalance.mutate({
+                id: editing.account.id,
+                initialBalance,
+              });
+            }
+            setEditing(null);
+          }}
+        />
+      )}
     </main>
   );
 }
