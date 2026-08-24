@@ -95,6 +95,15 @@ export default function SubcategoriesPage() {
         <ErrorText error={error} />
       </Card>
 
+      {subcategories.isLoading && (
+        <p className="text-sm text-zinc-500">Loading…</p>
+      )}
+      {subcategories.data?.length === 0 && (
+        <p className="text-sm text-zinc-500">
+          No subcategories yet — add one above.
+        </p>
+      )}
+
       {grouped.map(({ category, items }) => (
         <section key={category}>
           <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-zinc-500">

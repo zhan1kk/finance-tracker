@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { type ReactNode, useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -15,6 +15,44 @@ import type {
 
 /** The user themselves, as a party key in the form (sent as a null friend id). */
 const YOU = "you";
+
+/** Shared expenses and settlements accumulate for as long as you split things
+ *  with people and are never cleaned up, so show the recent ones and fold the
+ *  rest away — the same shape as the import and FX-rate histories. Both lists
+ *  arrive newest-first (date desc), so slicing off the top is the recent end. */
+const RECENT_ROWS = 10;
+
+function RecentList<T>({
+  rows,
+  render,
+  noun,
+}: {
+  rows: T[];
+  render: (row: T) => ReactNode;
+  noun: string;
+}) {
+  const recent = rows.slice(0, RECENT_ROWS);
+  const older = rows.slice(RECENT_ROWS);
+  const list = (items: T[]) => (
+    <ul className="flex flex-col divide-y divide-zinc-100 text-sm dark:divide-zinc-900">
+      {items.map(render)}
+    </ul>
+  );
+  return (
+    <>
+      {list(recent)}
+      {older.length > 0 && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
+            {older.length} older {noun}
+            {older.length === 1 ? "" : "s"}
+          </summary>
+          <div className="mt-1">{list(older)}</div>
+        </details>
+      )}
+    </>
+  );
+}
 
 export default function SplitPage() {
   const qc = useQueryClient();
@@ -92,6 +130,9 @@ export default function SplitPage() {
           real accounts). Record who paid and who shares it; this nets out the
           balances. Nothing here touches your transactions.
         </p>
+        {balances.isLoading && (
+          <p className="text-sm text-zinc-500">Loading…</p>
+        )}
         {balances.data && balances.data.balances.length === 0 && (
           <p className="text-sm text-zinc-500">All settled up. ✨</p>
         )}
@@ -199,8 +240,10 @@ export default function SplitPage() {
       {(settlements.data?.length ?? 0) > 0 && (
         <Card>
           <h2 className="mb-3 font-medium">Settlements</h2>
-          <ul className="flex flex-col divide-y divide-zinc-100 text-sm dark:divide-zinc-900">
-            {settlements.data?.map((s) => (
+          <RecentList
+            rows={settlements.data ?? []}
+            noun="settlement"
+            render={(s) => (
               <li key={s.id} className="flex flex-wrap items-center gap-x-2 py-1.5">
                 <span>{s.date.slice(0, 10)}</span>
                 <span className="font-medium">{nameOf(s.fromFriendId)}</span>
@@ -227,16 +270,18 @@ export default function SplitPage() {
                   ×
                 </button>
               </li>
-            ))}
-          </ul>
+            )}
+          />
         </Card>
       )}
 
       {(expenses.data?.length ?? 0) > 0 && (
         <Card>
           <h2 className="mb-3 font-medium">Shared expenses</h2>
-          <ul className="flex flex-col divide-y divide-zinc-100 text-sm dark:divide-zinc-900">
-            {expenses.data?.map((e) => (
+          <RecentList
+            rows={expenses.data ?? []}
+            noun="shared expense"
+            render={(e) => (
               <li key={e.id} className="flex flex-wrap items-center gap-x-2 py-1.5">
                 <span className="text-zinc-500">{e.date.slice(0, 10)}</span>
                 <span className="font-medium">{e.description}</span>
@@ -264,8 +309,8 @@ export default function SplitPage() {
                   ×
                 </button>
               </li>
-            ))}
-          </ul>
+            )}
+          />
         </Card>
       )}
     </main>
@@ -475,13 +520,9 @@ function ExpenseForm({
             Add expense
           </Button>
           {friends.length > 0 && (
-            <button
-              type="button"
-              onClick={toggleAll}
-              className="rounded border border-zinc-200 px-2 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-            >
+            <Button type="button" variant="ghost" onClick={toggleAll}>
               {allSelected ? "Clear all" : "Select all"}
-            </button>
+            </Button>
           )}
           {friends.length === 0 && (
             <span className="text-sm text-zinc-500">Add a friend first.</span>

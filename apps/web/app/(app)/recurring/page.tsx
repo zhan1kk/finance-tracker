@@ -33,6 +33,7 @@ function cadenceLabel(cadence: RecurringCadence, interval: number): string {
 export default function RecurringPage() {
   const queryClient = useQueryClient();
   const [confirmingWipe, setConfirmingWipe] = useState(false);
+  const [error, setError] = useState<unknown>(null);
 
   const rules = useQuery({
     queryKey: ["recurring"],
@@ -51,11 +52,18 @@ export default function RecurringPage() {
     mutationFn: () =>
       api<{ transactionsCreated: number }>("/recurring/run", { method: "POST" }),
     onSuccess: invalidate,
+    onError: setError,
   });
 
   const removeAll = useMutation({
     mutationFn: () => api<{ deleted: number }>("/recurring", { method: "DELETE" }),
     onSuccess: invalidate,
+    // Close the dialog too: an error rendered on the page behind the modal is
+    // an error nobody can read, and the dialog looks merely stuck.
+    onError: (e: unknown) => {
+      setError(e);
+      setConfirmingWipe(false);
+    },
   });
 
   const hasRules = (rules.data?.length ?? 0) > 0;
@@ -70,7 +78,10 @@ export default function RecurringPage() {
           <Button
             variant="ghost"
             className="ml-auto"
-            onClick={() => runNow.mutate()}
+            onClick={() => {
+              setError(null);
+              runNow.mutate();
+            }}
             disabled={runNow.isPending}
           >
             Post due now
@@ -78,18 +89,25 @@ export default function RecurringPage() {
           {hasRules && (
             <Button
               variant="danger"
-              onClick={() => setConfirmingWipe(true)}
+              onClick={() => {
+                setError(null);
+                setConfirmingWipe(true);
+              }}
               disabled={removeAll.isPending}
             >
               Delete all
             </Button>
           )}
         </div>
+        <ErrorText error={error} />
         {runNow.data && (
           <p className="mb-2 text-sm text-emerald-600">
             Posted {runNow.data.transactionsCreated} transaction
             {runNow.data.transactionsCreated === 1 ? "" : "s"}.
           </p>
+        )}
+        {rules.isLoading && (
+          <p className="text-sm text-zinc-500">Loading…</p>
         )}
         {rules.data && rules.data.length === 0 && (
           <p className="text-sm text-zinc-500">

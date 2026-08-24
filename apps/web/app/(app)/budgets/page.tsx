@@ -238,6 +238,9 @@ export default function BudgetsPage() {
             )}
           </div>
         </div>
+        {budgets.isLoading && (
+          <p className="text-sm text-zinc-500">Loading…</p>
+        )}
         {budgets.data && budgets.data.length === 0 && (
           <p className="text-sm text-zinc-500">
             No budgets yet — add one above to keep a category in check.

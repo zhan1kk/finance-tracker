@@ -96,6 +96,14 @@ export function TelegramCard({ accounts }: { accounts: Account[] }) {
             <Button
               variant="ghost"
               onClick={() => {
+                // One click otherwise severs the bot: quick-capture stops and,
+                // less obviously, so do the payment reminder nudges.
+                if (
+                  !window.confirm(
+                    "Unlink Telegram? Quick-capture and payment reminders stop until you link the chat again. Nothing you have already recorded is affected.",
+                  )
+                )
+                  return;
                 setError(null);
                 unlink.mutate();
               }}
