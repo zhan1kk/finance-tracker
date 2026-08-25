@@ -116,6 +116,12 @@ const STEPS: Step[] = [
           be split into parts that add up to the original amount, so each part
           lands in the right category.
         </Point>
+        <Point label="Sort by amount to find the big ones.">
+          The list is newest-first by default, but you can order it by largest
+          or smallest amount. Across accounts in different currencies it sorts
+          on the converted value, so a tenge charge and a euro one compare
+          properly instead of by their digits.
+        </Point>
         <Point label="Hide something from the stats.">
           Any transaction can be marked as excluded. It still changes your
           balance, but it stays out of budgets and charts — handy for a
@@ -159,6 +165,17 @@ const STEPS: Step[] = [
           asking the model at all — so imports get faster and more accurate the
           more you use it.
         </Point>
+        <Point label="Correcting a rule’s guess changes only that row.">
+          Two charges from one shop on one day can honestly belong in different
+          categories — IKEA curtains and IKEA meatballs. So if a rule already
+          categorized a row and you change it, only that row changes. Rewriting
+          the rule for good is done on the Rules page, on purpose.
+        </Point>
+        <Point label="“Accept N suggestions” is a subset, not a rival count.">
+          Some rows needing review still carry a guess the categorizer wasn’t
+          confident enough to apply on its own. That button takes those in one
+          click. The rest have no suggestion, so they wait for you.
+        </Point>
       </>
     ),
   },
@@ -173,6 +190,11 @@ const STEPS: Step[] = [
           total, budget and chart will follow your pay cycle instead of the
           calendar.
         </Point>
+        <Point label="Hide a category to see past it.">
+          One big item flattens everything else on the spending chart. Click a
+          name in the legend to hide it and the rest rescale. What’s hidden is
+          always listed above the chart, so a total can’t quietly mislead you.
+        </Point>
         <Point label="“vs average” compares like with like.">
           The trend figure measures this month against your own recent months,
           not against a target — so it tells you whether this month is unusual
@@ -184,20 +206,31 @@ const STEPS: Step[] = [
   {
     icon: "🎯",
     title: "Budgets",
-    body: "Set a monthly cap on variable spending like Dining or Groceries. A bar shows how much you've used — green under, red over.",
+    body: "Set a monthly cap on variable spending like Dining or Groceries. A bar shows how much you've used, and a small mark shows how far through the month you are.",
     example: (
       <Eg>
         <div className="mb-1 flex items-center justify-between">
           <span>Dining out</span>
           <span className="tabular-nums text-zinc-500">€180 / €200</span>
         </div>
-        <div className="h-2 rounded bg-zinc-200 dark:bg-zinc-700">
-          <div className="h-2 w-[90%] rounded bg-emerald-600" />
+        <div className="relative h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700">
+          <div className="h-1.5 w-[90%] rounded-full bg-emerald-400 dark:bg-emerald-500/70" />
+          <span className="absolute top-0 left-[60%] h-1.5 w-px bg-zinc-400/80 dark:bg-zinc-500" />
         </div>
       </Eg>
     ),
     details: (
       <>
+        <Point label="The mark on the bar is the date, not a target.">
+          It sits where the month itself has got to. Half the month gone with
+          half the bar filled means you’re on plan. Without it a bar can only
+          say how much is spent, never whether that’s a lot for the 12th.
+        </Point>
+        <Point label="Anything over budget floats to the top.">
+          In a normal month several categories go over, and scattering them
+          through a long list makes the whole page feel like bad news. The ones
+          that need you sit first, deepest overspend at the top.
+        </Point>
         <Point label="Every month, or just this one.">
           A normal budget repeats. A one-off budget applies to a single month —
           right for a holiday in July that you don’t want haunting August.
@@ -233,6 +266,25 @@ const STEPS: Step[] = [
           Detect recurring looks for charges that repeat at a steady interval —
           monthly, quarterly or yearly — and offers them as reminders. Nothing
           is created behind your back; you approve what becomes a reminder.
+        </Point>
+        <Point label="The bot nudges you, and you settle it from the chat.">
+          Reminders can arrive in Telegram before a payment is due. Tapping
+          “✓ Paid” books that payment and moves the plan on, replying with
+          where it now stands — “4/12 paid, next due 24 Sep”. It doesn’t
+          dismiss the whole plan.
+        </Point>
+        <Point label="You choose how often it nudges.">
+          Set how many days ahead to start and how often to repeat. Ten days
+          ahead every five days means a nudge at ten days, five days, the day
+          before and the day itself. The last two always arrive, whatever the
+          arithmetic works out to.
+        </Point>
+        <Point label="Overdue goes quiet, so ask it with /due.">
+          Once a payment is late the nudges stop, because a daily nag about a
+          bill you already know about helps nobody. Send{" "}
+          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">/due</code>{" "}
+          to the bot for everything owed in the next ten days, overdue ones
+          first.
         </Point>
         <Point label="They fix themselves when the payment arrives.">
           If you already paid but only import the statement later, the reminder
@@ -325,7 +377,49 @@ const STEPS: Step[] = [
         <Point label="Rules are yours to edit.">
           Everything the app learned from your corrections is listed under Rules
           — you can change or delete any of them if a merchant should be
-          categorized differently.
+          categorized differently. Once the list grows there’s a search box and
+          a “most used” sort, so you can find one or spot the dead weight.
+        </Point>
+        <Point label="Teach a category several words at once.">
+          On the Rules page you can add a batch of merchant words to one
+          category — cafe, restaurant, bar for Dining Out. Before anything is
+          saved it shows what each word would have caught in your own history,
+          so a keyword that also matches something unrelated is obvious rather
+          than a surprise later.
+        </Point>
+        <Point label="Foreign accounts, at the right rate.">
+          Track whichever currencies you actually use. Rates can update daily on
+          their own, you can add a rate for a past date, and every conversion is
+          stored against the transaction, so adding a rate later never quietly
+          rewrites last month’s totals.
+        </Point>
+        <Point label="Your data stays yours.">
+          The Accounts page can hand you everything as one file — accounts,
+          transactions, categories, rules, budgets and recurring — plus a
+          transactions CSV. Worth doing occasionally as your own backup.
+        </Point>
+        <Point label="The dangerous buttons ask twice.">
+          Anything that wipes a whole list makes you type the word DELETE
+          first. A misclick can’t take your history with it.
+        </Point>
+      </>
+    ),
+  },
+  {
+    icon: "📱",
+    title: "On your phone",
+    body: "Open the site on your phone and add it to the home screen. It launches like an app, with its own icon and no address bar.",
+    details: (
+      <>
+        <Point label="How to add it.">
+          On iPhone: Share, then “Add to Home Screen”. On Android: the browser
+          menu, then “Install app” or “Add to Home screen”. There is nothing to
+          download.
+        </Point>
+        <Point label="Wide tables scroll on their own.">
+          Long lists like transactions and imports scroll sideways inside their
+          own card rather than dragging the whole page with them, so the rest of
+          the screen stays put.
         </Point>
       </>
     ),
