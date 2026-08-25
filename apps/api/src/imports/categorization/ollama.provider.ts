@@ -14,9 +14,23 @@ import {
 
 // Local models have smaller context windows than a hosted one, so fewer rows
 // per request keeps the prompt comfortably in range and accuracy steady.
-const CHUNK_SIZE = 25;
+//
+// Measured on the 4-CPU server with qwen3:4b, asking for N rows in one call:
+//   10 rows -> 10 answers in ~32s     (reliable)
+//   15 rows -> 25 answers in ~91s     (over-generates, ignores the row count)
+//   20 rows -> 21 answers in ~76s     (over-generates)
+//   25 rows ->  1 answer  in ~9s      (gives up after one)
+// Above ten it stops tracking how many rows it was given, so ten it is. Bigger
+// batches were not merely slower — they silently returned nothing usable.
+const CHUNK_SIZE = 10;
 // A cold local model (first load into memory) can take a while to respond.
 const REQUEST_TIMEOUT_MS = 120_000;
+// Ollama's default context (4k) has to hold the prompt AND the answer; give the
+// reply room rather than letting a long chunk quietly truncate.
+const NUM_CTX = 8192;
+// Keep the model resident between chunks — an import is a burst of calls, and
+// reloading 2.5GB from disk between each one dwarfs the inference itself.
+const KEEP_ALIVE = '10m';
 
 /**
  * Local LLM categorizer via Ollama's HTTP API (default http://localhost:11434).
@@ -80,8 +94,15 @@ export class OllamaCategorizationProvider implements CategorizationProvider {
         body: JSON.stringify({
           model: this.model,
           stream: false,
+          // qwen3 and other hybrid models reason before answering unless told
+          // not to. On CPU that is most of the cost: a prompt as trivial as
+          // "reply with the word ok" spent 637 characters thinking and 16s.
+          // Every categorization call used to blow its two-minute budget this
+          // way, and the whole import fell back to "needs review".
+          think: false,
+          keep_alive: KEEP_ALIVE,
           format: CATEGORIZATION_RESPONSE_SCHEMA,
-          options: { temperature: 0 },
+          options: { temperature: 0, num_ctx: NUM_CTX },
           messages: [
             { role: 'system', content: CATEGORIZATION_SYSTEM_PROMPT },
             {

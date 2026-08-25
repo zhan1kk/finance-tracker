@@ -11,7 +11,10 @@ export type InsightSummaryInput = {
   movers: string[];
 };
 
-const TIMEOUT_MS = 30_000;
+// A couple of sentences from a 4B model on CPU takes tens of seconds; 30s was
+// tight even before accounting for a cold load, and this is a button the user
+// is actively waiting on, so it fails visibly rather than silently.
+const TIMEOUT_MS = 90_000;
 
 /**
  * Turns the dashboard's exact spending facts into one or two friendly
@@ -60,6 +63,11 @@ export class InsightSummaryService {
         body: JSON.stringify({
           model,
           stream: false,
+          // Hybrid models (qwen3) reason at length before answering unless
+          // told not to; on CPU that reasoning is most of the wall time and is
+          // what pushed these calls past their timeout. See ollama.provider.ts.
+          think: false,
+          keep_alive: '10m',
           options: { temperature: 0.3 },
           messages: [
             { role: 'system', content: system },

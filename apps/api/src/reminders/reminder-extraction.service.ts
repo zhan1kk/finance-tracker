@@ -48,6 +48,11 @@ export class ReminderExtractionService {
         body: JSON.stringify({
           model,
           stream: false,
+          // Hybrid models (qwen3) reason at length before answering unless
+          // told not to; on CPU that reasoning is most of the wall time and is
+          // what pushed these calls past their timeout. See ollama.provider.ts.
+          think: false,
+          keep_alive: '10m',
           format: REMINDER_EXTRACTION_SCHEMA,
           options: { temperature: 0, num_ctx: NUM_CTX },
           messages: [
