@@ -218,10 +218,13 @@ export function ImportReview({
                     )
                   }
                   disabled={acceptAll.isPending}
+                  title={`${suggested.length} of the ${reviewCount} rows needing review carry a guess the categorizer was not confident enough to apply on its own. This accepts those, and leaves the rest for you.`}
                 >
                   {acceptAll.isPending
                     ? "Accepting…"
-                    : `Accept ${suggested.length} suggested`}
+                    : `Accept ${suggested.length} suggestion${
+                        suggested.length === 1 ? "" : "s"
+                      }`}
                 </Button>
               )}
               <Button
@@ -271,6 +274,16 @@ export function ImportReview({
         <p className="mb-3 text-sm text-amber-600">
           {reviewCount} transaction{reviewCount === 1 ? "" : "s"} still need a
           category and won&apos;t be imported until you pick one.
+          {/* Without this, "Accept 2 suggestions" next to "24 need a category"
+              reads like a bug — the 2 is a subset of the 24, not a rival count. */}
+          {suggested.length > 0 && (
+            <>
+              {" "}
+              {suggested.length} of {reviewCount} came with a suggestion the
+              categorizer wasn&apos;t sure enough to apply — the button above
+              accepts those in one go.
+            </>
+          )}
         </p>
       )}
 
