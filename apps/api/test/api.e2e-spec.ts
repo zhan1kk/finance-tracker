@@ -1295,6 +1295,58 @@ describe('API (e2e)', () => {
       return found.id;
     };
 
+    // Two charges from one merchant on one day, honestly belonging to different
+    // categories (IKEA curtains vs IKEA meatballs). Recategorising the second
+    // must not repoint the learned "ikea" rule for every future import.
+    it('a correction that disagrees with a rule does not repoint the rule', async () => {
+      const shopping = await subId('Shopping');
+      const groceries = await subId('Groceries');
+
+      // Teach the rule explicitly, the way the Rules page would.
+      await request(http)
+        .post('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ pattern: 'ikea', subcategoryId: shopping })
+        .expect(201);
+
+      const batch = await doImport(
+        [
+          'Date,Amount,Description',
+          '2026-07-04,-167.85,Ikea',
+          '2026-07-04,-13.45,Ikea',
+        ].join('\n'),
+      );
+      // Both rows arrive categorised by the rule.
+      expect(batch.rows.every((r) => r.subcategory?.name === 'Shopping')).toBe(
+        true,
+      );
+
+      // The user corrects one of them to Groceries, then commits.
+      await request(http)
+        .patch(`/imports/${batch.id}/rows/${batch.rows[1].id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId: groceries })
+        .expect(200);
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      const rules = await request(http)
+        .get('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const ikea = (
+        rules.body as {
+          pattern: string;
+          subcategory: { name: string } | null;
+        }[]
+      ).filter((r) => r.pattern === 'ikea');
+      expect(ikea).toHaveLength(1);
+      // Still Shopping. The one-off correction applied to its own row only.
+      expect(ikea[0].subcategory?.name).toBe('Shopping');
+    });
+
     const doImport = async (csv = CSV, withMapping = true): Promise<Batch> => {
       const res = await request(http)
         .post('/imports')

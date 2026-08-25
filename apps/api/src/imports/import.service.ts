@@ -603,7 +603,15 @@ export class ImportService {
             );
           }
 
-          if (row.corrected) {
+          // A correction teaches a rule, with one exception: if a *rule* had
+          // already categorized this row, the user is disagreeing with that
+          // rule on one transaction, and upserting would silently repoint it
+          // for every future import. Two IKEA charges on one day, curtains and
+          // meatballs, are one merchant with two honest answers; recategorizing
+          // the meatballs must not turn every future IKEA row into Groceries.
+          // Redefining a rule is done deliberately on the Rules page instead.
+          const disagreesWithRule = row.predictionSource === 'RULE';
+          if (row.corrected && !disagreesWithRule) {
             const target = row.counterAccountId
               ? { counterAccountId: row.counterAccountId }
               : row.subcategoryId

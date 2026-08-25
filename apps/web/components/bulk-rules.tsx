@@ -248,6 +248,16 @@ export function BulkRules({
 
               <div className="flex items-center gap-3">
                 <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setRows(null);
+                    setPicked(new Set());
+                    setError(null);
+                  }}
+                >
+                  Back
+                </Button>
+                <Button
                   disabled={
                     add.isPending || picked.size === 0 || subcategoryId === ""
                   }
