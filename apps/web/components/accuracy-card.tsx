@@ -51,8 +51,24 @@ export function AccuracyCard() {
           <p className="mb-2 text-xs font-medium tracking-wide text-zinc-500 uppercase">
             Per import, over time
           </p>
-          <ul className="flex flex-col gap-1.5">
-            {byBatch.map((batch) => (
+          <RecentBatches rows={byBatch} />
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** Statements accumulate one row a month and are never cleaned up, so show the
+ *  recent ones and fold the rest — the same shape as the import history and FX
+ *  rate lists sitting beside this card. */
+const RECENT_BATCHES = 8;
+
+function RecentBatches({ rows }: { rows: AccuracyStats["byBatch"] }) {
+  const recent = rows.slice(0, RECENT_BATCHES);
+  const older = rows.slice(RECENT_BATCHES);
+  const list = (items: AccuracyStats["byBatch"]) => (
+    <ul className="flex flex-col gap-1.5">
+      {items.map((batch) => (
               <li key={batch.batchId} className="flex items-center gap-3">
                 <span
                   className="w-32 shrink-0 truncate text-sm"
@@ -75,12 +91,23 @@ export function AccuracyCard() {
                 <span className="w-16 shrink-0 text-right text-xs tabular-nums text-zinc-400">
                   {batch.correct}/{batch.predicted}
                 </span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        </li>
+      ))}
+    </ul>
+  );
+
+  return (
+    <>
+      {list(recent)}
+      {older.length > 0 && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
+            {older.length} older import{older.length === 1 ? "" : "s"}
+          </summary>
+          <div className="mt-1.5">{list(older)}</div>
+        </details>
       )}
-    </Card>
+    </>
   );
 }
 

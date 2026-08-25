@@ -9,7 +9,12 @@ import { PromptDialog } from "@/components/prompt-dialog";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatCents, parseAmountToCents } from "@/lib/format";
-import { formatPeriod, periodOf, shiftPeriod } from "@/lib/period";
+import {
+  formatPeriod,
+  periodOf,
+  periodRange,
+  shiftPeriod,
+} from "@/lib/period";
 import { revivePeriod, useStickyState } from "@/lib/sticky-state";
 import {
   BUDGETABLE_CATEGORIES,
@@ -27,13 +32,28 @@ export default function BudgetsPage() {
   const currency = user?.baseCurrency ?? "EUR";
   const monthStartDay = user?.monthStartDay ?? 1;
 
-  const currentPeriod = periodOf(new Date(), monthStartDay);
+  // One clock read for the whole render: the period we are in, and how far
+  // through it we are, must agree with each other.
+  const now = new Date();
+  const currentPeriod = periodOf(now, monthStartDay);
   const [period, setPeriod] = useStickyState<string | null>(
     "ft:budgets.period",
     null,
     revivePeriod,
   );
   const shown = period ?? currentPeriod;
+
+  // How far through the shown period we are, for the pace tick on each bar.
+  // Null for a period already finished — a marker pinned at 100% says nothing.
+  const elapsed = (() => {
+    const { from, to } = periodRange(shown, monthStartDay);
+    const start = new Date(`${from}T00:00:00Z`).getTime();
+    const end = new Date(`${to}T00:00:00Z`).getTime();
+    const at = now.getTime();
+    if (at >= end || end <= start) return null;
+    return Math.max(0, Math.min(1, (at - start) / (end - start)));
+  })();
+
 
   const budgets = useQuery({
     queryKey: ["budgets", shown],
@@ -42,6 +62,14 @@ export default function BudgetsPage() {
   const subcategories = useQuery({
     queryKey: ["subcategories"],
     queryFn: () => api<Subcategory[]>("/subcategories"),
+  });
+
+  // Over-budget first, deepest overspend at the top. Scattering the coloured
+  // rows through the list made the whole page feel alarming; grouped, the same
+  // information reads as a short list of problems above a calm remainder.
+  const ordered = [...(budgets.data ?? [])].sort((a, b) => {
+    if (a.overBudget !== b.overBudget) return a.overBudget ? -1 : 1;
+    return b.percent - a.percent;
   });
 
   // Invalidate every period: an override changes only `shown`, but a create or
@@ -250,12 +278,13 @@ export default function BudgetsPage() {
         )}
         <BudgetSummary budgets={budgets.data ?? []} currency={currency} />
         <ul className="flex flex-col gap-4">
-          {budgets.data?.map((budget) => (
+          {ordered.map((budget) => (
             <BudgetRow
               key={budget.id}
               budget={budget}
               currency={currency}
               monthLabel={formatPeriod(shown, monthStartDay)}
+              elapsed={elapsed}
               onEdit={() => {
                 setError(null);
                 setEditingLimit(budget);
@@ -347,6 +376,7 @@ function BudgetRow({
   budget,
   currency,
   monthLabel,
+  elapsed,
   onEdit,
   onReset,
   onDelete,
@@ -354,6 +384,8 @@ function BudgetRow({
   budget: Budget;
   currency: string;
   monthLabel: string;
+  /** How far through the period we are (0-1), or null once it has ended. */
+  elapsed: number | null;
   onEdit: () => void;
   onReset?: () => void;
   onDelete: () => void;
@@ -371,12 +403,17 @@ function BudgetRow({
     : budget.limit > 0 && budget.spentCents === budget.limit
       ? "full"
       : "under";
+  // Deliberately softened. In a normal month most of these rows are genuinely
+  // over — that is real and stays visible — but a column of saturated red-600
+  // bars reads as an emergency rather than a summary. Lower-chroma fills at the
+  // same hues keep the meaning and lose the alarm, and the figure beside each
+  // bar carries the detail anyway.
   const barColor =
     status === "over"
-      ? "bg-red-600"
+      ? "bg-rose-400 dark:bg-rose-500/70"
       : status === "full"
-        ? "bg-blue-600"
-        : "bg-emerald-600";
+        ? "bg-sky-400 dark:bg-sky-500/70"
+        : "bg-emerald-400 dark:bg-emerald-500/70";
 
   return (
     <li>
@@ -405,14 +442,17 @@ function BudgetRow({
             custom
           </span>
         )}
+        {/* Only "over" is coloured. Marking the healthy rows green too meant
+            every single row competed for attention, which is the same problem
+            as everything being red. */}
         {status === "over" ? (
-          <span className="text-sm font-medium text-red-600">
+          <span className="text-sm text-rose-600 dark:text-rose-400">
             over by {formatCents(-budget.remainingCents, currency)}
           </span>
         ) : status === "full" ? (
-          <span className="text-sm font-medium text-blue-600">fully used</span>
+          <span className="text-sm text-zinc-500">fully used</span>
         ) : (
-          <span className="text-sm text-emerald-600">
+          <span className="text-sm text-zinc-500">
             {formatCents(budget.remainingCents, currency)} left
           </span>
         )}
@@ -441,12 +481,24 @@ function BudgetRow({
         aria-valuemin={0}
         aria-valuemax={100}
         aria-label={`${name} budget usage`}
-        className="h-2 rounded bg-zinc-100 dark:bg-zinc-800"
+        className="relative h-1.5 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800"
       >
         <div
-          className={`h-2 rounded ${barColor}`}
+          className={`h-1.5 rounded-full ${barColor}`}
           style={{ width: `${width}%` }}
         />
+        {/* Where the month itself has got to. Half way through the month, half
+            the bar filled is on plan — without this the bar only ever says
+            "how much is gone", never "is that a lot for the 12th". Hidden once
+            the period is over, where it would just sit at the far end. */}
+        {elapsed !== null && (
+          <span
+            aria-hidden
+            title={`${Math.round(elapsed * 100)}% of the month gone`}
+            className="absolute top-0 h-1.5 w-px bg-zinc-400/80 dark:bg-zinc-500"
+            style={{ left: `${Math.round(elapsed * 100)}%` }}
+          />
+        )}
       </div>
     </li>
   );

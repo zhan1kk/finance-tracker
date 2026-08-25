@@ -25,7 +25,7 @@ function MonthCell({
   if (!info) return <span className="text-zinc-400">—</span>;
   return (
     <span className="tabular-nums">
-      <span className={info.over ? "font-medium text-red-600" : ""}>
+      <span className={info.over ? "text-rose-600 dark:text-rose-400" : ""}>
         {formatCents(info.spent, currency)}
       </span>
       <span className="text-zinc-400"> / {formatCents(info.limit, currency)}</span>
@@ -43,12 +43,12 @@ function Stat({
   value: string;
   tone?: "default" | "good" | "bad";
 }) {
+  // "good" is deliberately the plain ink colour: a grid where every tile is
+  // coloured has no emphasis left to spend on the one that matters.
   const color =
     tone === "bad"
-      ? "text-red-600"
-      : tone === "good"
-        ? "text-emerald-600"
-        : "text-zinc-900 dark:text-zinc-100";
+      ? "text-rose-600 dark:text-rose-400"
+      : "text-zinc-900 dark:text-zinc-100";
   return (
     <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
       <p className="text-xs text-zinc-500">{label}</p>
@@ -104,7 +104,11 @@ export function BudgetSummary({
         </div>
         <div className="h-2 rounded bg-zinc-100 dark:bg-zinc-800">
           <div
-            className={`h-2 rounded ${over ? "bg-red-600" : "bg-emerald-600"}`}
+            className={`h-2 rounded ${
+              over
+                ? "bg-rose-400 dark:bg-rose-500/70"
+                : "bg-emerald-400 dark:bg-emerald-500/70"
+            }`}
             style={{ width: `${width}%` }}
           />
         </div>
@@ -312,7 +316,13 @@ function Delta({
   const up = diff > 0;
   const pct = a > 0 ? Math.round((diff / a) * 100) : null;
   return (
-    <span className={up ? "text-red-600" : "text-emerald-600"}>
+    <span
+      className={
+        up
+          ? "text-rose-600 dark:text-rose-400"
+          : "text-emerald-600 dark:text-emerald-400"
+      }
+    >
       {up ? "▲" : "▼"} {formatCents(Math.abs(diff), currency)}
       {pct != null && ` (${up ? "+" : ""}${pct}%)`}
     </span>
