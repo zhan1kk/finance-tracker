@@ -15,14 +15,18 @@ import {
 // Local models have smaller context windows than a hosted one, so fewer rows
 // per request keeps the prompt comfortably in range and accuracy steady.
 //
-// Measured on the 4-CPU server with qwen3:4b, asking for N rows in one call:
-//   10 rows -> 10 answers in ~32s     (reliable)
-//   15 rows -> 25 answers in ~91s     (over-generates, ignores the row count)
-//   20 rows -> 21 answers in ~76s     (over-generates)
-//   25 rows ->  1 answer  in ~9s      (gives up after one)
-// Above ten it stops tracking how many rows it was given, so ten it is. Bigger
-// batches were not merely slower — they silently returned nothing usable.
-const CHUNK_SIZE = 10;
+// Measured on the 4-CPU server with qwen3:4b against ten labelled merchants
+// (REWE, Netflix, Deutsche Bahn, Shell, McDonald's...), scoring correctness
+// rather than merely whether an answer came back:
+//   5 rows/call  -> 10/10 correct, 32s
+//   8 rows/call  ->  8/10 correct, 32s
+//   10 rows/call ->  4/10 correct, 38s   <- answers everything, 60% wrong
+//   25 rows/call ->  1 answer for 25 rows, then it gives up
+// Quality collapses long before the row count does, and ten is already the bad
+// case: it fills in every row confidently and most are wrong, which is worse
+// than returning nothing because it reads like success. Five is the size that
+// is actually right, and it costs no more wall time per row.
+const CHUNK_SIZE = 5;
 // A cold local model (first load into memory) can take a while to respond.
 const REQUEST_TIMEOUT_MS = 120_000;
 // Ollama's default context (4k) has to hold the prompt AND the answer; give the
