@@ -83,26 +83,48 @@ export function coercePredictions(
     }));
   if (!Array.isArray(items)) return fallback();
 
-  const byRow = new Map<string, CategorizationPrediction>();
-  for (const item of items as Record<string, unknown>[]) {
-    const rowId = typeof item?.rowId === 'string' ? item.rowId : null;
-    if (!rowId) continue;
-    const rawId = item.subcategoryId;
+  const read = (item: Record<string, unknown>) => {
+    const rawId = item?.subcategoryId;
     const subcategoryId =
       typeof rawId === 'string' && allowedIds.has(rawId) ? rawId : null;
     const confidence =
-      typeof item.confidence === 'number' && Number.isFinite(item.confidence)
+      typeof item?.confidence === 'number' && Number.isFinite(item.confidence)
         ? Math.max(0, Math.min(1, item.confidence))
         : 0;
-    byRow.set(rowId, { rowId, subcategoryId, confidence });
+    return { subcategoryId, confidence };
+  };
+
+  const list = items as Record<string, unknown>[];
+  const byRow = new Map<string, CategorizationPrediction>();
+  for (const item of list) {
+    const rowId = typeof item?.rowId === 'string' ? item.rowId : null;
+    if (!rowId) continue;
+    byRow.set(rowId, { rowId, ...read(item) });
   }
 
-  return chunk.map(
-    (c) =>
+  // Small local models are unreliable at echoing an identifier back. Observed
+  // from qwen3:4b, given rows aliased "1".."5": one call answered with
+  // rowId "description", another with "id_1"/"id_2" — while the categories it
+  // chose were correct. Matching on rowId alone threw all of that away and the
+  // whole chunk fell to "needs review", which read as the model being useless
+  // when it had actually got the answers right.
+  //
+  // So: trust explicit ids when they line up, and otherwise fall back to
+  // position, but only when the model returned exactly one item per row. A
+  // length mismatch means it skipped or invented rows, and lining those up by
+  // position would assign real categories to the wrong transactions — worse
+  // than leaving them for review.
+  const matched = chunk.filter((c) => byRow.has(c.rowId)).length;
+  const alignByIndex = matched === 0 && list.length === chunk.length;
+
+  return chunk.map((c, i) => {
+    if (alignByIndex) return { rowId: c.rowId, ...read(list[i]) };
+    return (
       byRow.get(c.rowId) ?? {
         rowId: c.rowId,
         subcategoryId: null,
         confidence: 0,
-      },
-  );
+      }
+    );
+  });
 }

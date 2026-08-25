@@ -15,17 +15,18 @@ import {
 // Local models have smaller context windows than a hosted one, so fewer rows
 // per request keeps the prompt comfortably in range and accuracy steady.
 //
-// Measured on the 4-CPU server with qwen3:4b against ten labelled merchants
+// Measured on the 4-CPU server with qwen3:4b against fifteen labelled merchants
 // (REWE, Netflix, Deutsche Bahn, Shell, McDonald's...), scoring correctness
-// rather than merely whether an answer came back:
-//   5 rows/call  -> 10/10 correct, 32s
-//   8 rows/call  ->  8/10 correct, 32s
-//   10 rows/call ->  4/10 correct, 38s   <- answers everything, 60% wrong
-//   25 rows/call ->  1 answer for 25 rows, then it gives up
-// Quality collapses long before the row count does, and ten is already the bad
-// case: it fills in every row confidently and most are wrong, which is worse
-// than returning nothing because it reads like success. Five is the size that
-// is actually right, and it costs no more wall time per row.
+// rather than whether an answer merely came back, and with the positional
+// fallback in coercePredictions already in place:
+//   5 rows/call  -> 15/15 correct, 0 unanswered, 50s
+//   10 rows/call ->  5/15 correct, 10 unanswered, 32s
+//   15 rows/call -> 13/15 correct, 0 unanswered, 49s
+// Ten is not a midpoint between five and fifteen — the model's reliability at
+// this is erratic above five rather than smoothly degrading, and the run-to-run
+// spread is wide. Five was perfect on every attempt and costs little extra wall
+// time, since the per-call overhead dominates. Roughly five minutes for a
+// hundred rows, which is fine for a background import.
 const CHUNK_SIZE = 5;
 // A cold local model (first load into memory) can take a while to respond.
 const REQUEST_TIMEOUT_MS = 120_000;

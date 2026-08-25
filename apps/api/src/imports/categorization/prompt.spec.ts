@@ -72,3 +72,77 @@ describe('buildCategorizationPrompt', () => {
     expect(prompt).toContain('rowId r1');
   });
 });
+
+describe('coercePredictions — models that do not echo the row id', () => {
+  const chunk = [
+    {
+      rowId: '1',
+      description: 'REWE',
+      amount: -1500,
+      date: '2026-08-10',
+      type: 'EXPENSE' as const,
+    },
+    {
+      rowId: '2',
+      description: 'SPOTIFY',
+      amount: -999,
+      date: '2026-08-10',
+      type: 'EXPENSE' as const,
+    },
+  ];
+  const allowed = new Set(['a', 'd']);
+
+  // Observed from qwen3:4b: it answered with rowId "description" and
+  // "SPOTIFY P1A2B3" while picking the right categories. Matching on id alone
+  // discarded correct answers and sent the whole chunk to manual review.
+  it('falls back to position when no id matches and the count lines up', () => {
+    const out = coercePredictions(
+      [
+        { rowId: 'description', subcategoryId: 'a', confidence: 0.95 },
+        { rowId: 'SPOTIFY P1A2B3', subcategoryId: 'd', confidence: 0.9 },
+      ],
+      chunk,
+      allowed,
+    );
+    expect(out).toEqual([
+      { rowId: '1', subcategoryId: 'a', confidence: 0.95 },
+      { rowId: '2', subcategoryId: 'd', confidence: 0.9 },
+    ]);
+  });
+
+  it('prefers explicit ids, even when they arrive out of order', () => {
+    const out = coercePredictions(
+      [
+        { rowId: '2', subcategoryId: 'd', confidence: 0.9 },
+        { rowId: '1', subcategoryId: 'a', confidence: 0.8 },
+      ],
+      chunk,
+      allowed,
+    );
+    expect(out.map((p) => p.subcategoryId)).toEqual(['a', 'd']);
+  });
+
+  // The dangerous case: guessing by position here would file real categories
+  // against the wrong transactions.
+  it('does NOT align by position when the count differs', () => {
+    const out = coercePredictions(
+      [{ rowId: 'whatever', subcategoryId: 'a', confidence: 0.95 }],
+      chunk,
+      allowed,
+    );
+    expect(out.every((p) => p.subcategoryId === null)).toBe(true);
+  });
+
+  it('still rejects ids the user does not own, positional or not', () => {
+    const out = coercePredictions(
+      [
+        { rowId: 'x', subcategoryId: 'not-mine', confidence: 0.99 },
+        { rowId: 'y', subcategoryId: 'd', confidence: 0.9 },
+      ],
+      chunk,
+      allowed,
+    );
+    expect(out[0].subcategoryId).toBeNull();
+    expect(out[1].subcategoryId).toBe('d');
+  });
+});
