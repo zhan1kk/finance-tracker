@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, ErrorText, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { formatCents } from "@/lib/format";
+import { SubcategoryOptions } from "@/components/subcategory-options";
 import type {
   Account,
   ImportBatch,
@@ -364,6 +365,7 @@ function Row({
   const eligible = subcategories.filter((s) =>
     row.type === "INCOME" ? s.category === "Income" : s.category !== "Income",
   );
+
   const sign = row.type === "INCOME" ? "+" : "−";
   const duplicate = row.status === "DUPLICATE";
   const skipped = row.status === "SKIPPED";
@@ -443,13 +445,7 @@ function Row({
           >
             <option value="">Pick…</option>
             <option value={INT}>⊘ Internal move (exclude from stats)</option>
-            <optgroup label="Category">
-              {eligible.map((s) => (
-                <option key={s.id} value={`${SUB}${s.id}`}>
-                  {s.name}
-                </option>
-              ))}
-            </optgroup>
+            <SubcategoryOptions subcategories={eligible} prefix={SUB} />
             {accounts.length > 0 && (
               <optgroup label="Transfer (not income or spending)">
                 {accounts.map((a) => (

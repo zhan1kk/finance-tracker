@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
+import { SubcategoryOptions } from "@/components/subcategory-options";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import type { Account, CategorizationRule, Subcategory } from "@/lib/types";
@@ -115,13 +116,10 @@ export default function RulesPage() {
               <option value="" disabled>
                 Select…
               </option>
-              <optgroup label="Category">
-                {subcategories.data?.map((s) => (
-                  <option key={s.id} value={`${SUB}${s.id}`}>
-                    {s.name} ({s.category})
-                  </option>
-                ))}
-              </optgroup>
+              <SubcategoryOptions
+                subcategories={subcategories.data ?? []}
+                prefix={SUB}
+              />
               <optgroup label="Transfer between my accounts">
                 {accounts.data?.map((a) => (
                   <option key={a.id} value={`${ACC}${a.id}`}>

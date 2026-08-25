@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { ConfirmPhrase } from "@/components/confirm-phrase";
+import { SubcategoryOptions } from "@/components/subcategory-options";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { formatCents, parseAmountToCents, todayISO } from "@/lib/format";
@@ -312,11 +313,7 @@ function NewRule({ onCreated }: { onCreated: () => void }) {
         </Field>
         <Field label="Category">
           <Select name="subcategoryId" required>
-            {eligible.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
+            <SubcategoryOptions subcategories={eligible} />
           </Select>
         </Field>
         <Field label="Every">

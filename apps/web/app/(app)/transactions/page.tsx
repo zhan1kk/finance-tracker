@@ -5,6 +5,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { ConfirmPhrase } from "@/components/confirm-phrase";
 import { MultiSelect } from "@/components/multi-select";
+import { SubcategoryOptions } from "@/components/subcategory-options";
 import { api, downloadFile } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatCents, parseAmountToCents, todayISO } from "@/lib/format";
@@ -588,11 +589,7 @@ function SelectionBar({
             }}
           >
             <option value="">Categorize…</option>
-            {eligible.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
+            <SubcategoryOptions subcategories={eligible} />
           </Select>
         ) : (
           <span
@@ -782,11 +779,7 @@ function SplitDialog({
                 className="min-w-[9rem]"
                 onChange={(e) => setPart(i, { subcategoryId: e.target.value })}
               >
-                {eligible.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
+                <SubcategoryOptions subcategories={eligible} />
               </Select>
               <Input
                 value={p.description}
@@ -1196,11 +1189,7 @@ function TransactionRow({
                 onChange={(e) => setSubcategoryId(e.target.value)}
                 disabled={excludeFromStats}
               >
-                {eligible.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
+                <SubcategoryOptions subcategories={eligible} />
               </Select>
               <label className="mt-1 flex items-center gap-1 text-xs text-zinc-500">
                 <input
@@ -1578,11 +1567,7 @@ function QuickAdd({
         ) : internal ? null : (
           <Field label="Category">
             <Select name="subcategoryId" required>
-              {eligibleSubcategories.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} ({s.category})
-                </option>
-              ))}
+              <SubcategoryOptions subcategories={eligibleSubcategories} />
             </Select>
           </Field>
         )}
