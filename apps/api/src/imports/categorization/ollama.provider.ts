@@ -1,3 +1,4 @@
+import { OLLAMA_KEEP_ALIVE } from '../../common/ollama';
 import { Logger } from '@nestjs/common';
 import type {
   CategorizationInput,
@@ -33,9 +34,6 @@ const REQUEST_TIMEOUT_MS = 120_000;
 // Ollama's default context (4k) has to hold the prompt AND the answer; give the
 // reply room rather than letting a long chunk quietly truncate.
 const NUM_CTX = 8192;
-// Keep the model resident between chunks — an import is a burst of calls, and
-// reloading 2.5GB from disk between each one dwarfs the inference itself.
-const KEEP_ALIVE = '10m';
 
 /**
  * Local LLM categorizer via Ollama's HTTP API (default http://localhost:11434).
@@ -105,7 +103,7 @@ export class OllamaCategorizationProvider implements CategorizationProvider {
           // Every categorization call used to blow its two-minute budget this
           // way, and the whole import fell back to "needs review".
           think: false,
-          keep_alive: KEEP_ALIVE,
+          keep_alive: OLLAMA_KEEP_ALIVE,
           format: CATEGORIZATION_RESPONSE_SCHEMA,
           options: { temperature: 0, num_ctx: NUM_CTX },
           messages: [

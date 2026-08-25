@@ -3,6 +3,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsOptional,
   IsString,
   IsUUID,
@@ -23,6 +24,10 @@ class BulkRuleDTO {
   @IsString()
   @MinLength(1)
   public readonly pattern!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  public readonly wholeWord?: boolean;
 
   @IsOptional()
   @IsUUID()

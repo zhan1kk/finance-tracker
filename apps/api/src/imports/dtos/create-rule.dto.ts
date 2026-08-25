@@ -1,4 +1,10 @@
-import { IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MinLength,
+} from 'class-validator';
 
 /** Exactly one target is expected; the service rejects zero or both. */
 export class CreateRuleDTO {
@@ -6,6 +12,12 @@ export class CreateRuleDTO {
   @IsString()
   @MinLength(1)
   public readonly pattern!: string;
+
+  /** Match only on word boundaries. For short keywords like "cos", which
+   *  otherwise also matches "tesco stores". */
+  @IsOptional()
+  @IsBoolean()
+  public readonly wholeWord?: boolean;
 
   @IsOptional()
   @IsUUID()

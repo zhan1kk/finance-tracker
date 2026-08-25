@@ -1,3 +1,4 @@
+import { OLLAMA_KEEP_ALIVE } from '../common/ollama';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { optionalSetting } from '../common/env';
@@ -67,7 +68,7 @@ export class InsightSummaryService {
           // told not to; on CPU that reasoning is most of the wall time and is
           // what pushed these calls past their timeout. See ollama.provider.ts.
           think: false,
-          keep_alive: '10m',
+          keep_alive: OLLAMA_KEEP_ALIVE,
           options: { temperature: 0.3 },
           messages: [
             { role: 'system', content: system },

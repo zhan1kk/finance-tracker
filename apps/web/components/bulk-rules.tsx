@@ -36,6 +36,10 @@ export function BulkRules({
   const [raw, setRaw] = useState("");
   const [rows, setRows] = useState<Preview[] | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  // Whole-word matching, opt-in per batch. Short keywords need it ("cos" also
+  // sits inside "costa" and "cosmetics"); learned patterns must not have it,
+  // since bank statements truncate names mid-word.
+  const [wholeWord, setWholeWord] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -59,7 +63,11 @@ export function BulkRules({
       api<{ created: number; skipped: string[] }>("/rules/bulk", {
         method: "POST",
         body: JSON.stringify({
-          rules: patterns.map((pattern) => ({ pattern, subcategoryId })),
+          rules: patterns.map((pattern) => ({
+            pattern,
+            subcategoryId,
+            wholeWord,
+          })),
         }),
       }),
     onSuccess: (res) => {
@@ -225,6 +233,18 @@ export function BulkRules({
                   </tbody>
                 </table>
               </div>
+
+              <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={wholeWord}
+                  onChange={(e) => setWholeWord(e.target.checked)}
+                />
+                Match whole words only
+                <span className="text-xs text-zinc-500">
+                  (so “cos” matches “COS Berlin” but not “Costa”)
+                </span>
+              </label>
 
               <div className="flex items-center gap-3">
                 <Button

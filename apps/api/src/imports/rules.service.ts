@@ -27,10 +27,30 @@ type MatchableRule = {
   id: string;
   pattern: string;
   type: TransactionType;
+  /** Match only as a whole word. Optional so older callers keep substring
+   *  behaviour, which is what every learned rule expects. */
+  wholeWord?: boolean;
   subcategoryId: string | null;
   counterAccountId: string | null;
   excludeFromStats: boolean;
 };
+
+/**
+ * Does `pattern` occur in `text`, as a whole word or anywhere?
+ *
+ * normalizeMerchant reduces both sides to lowercase space-separated tokens, so
+ * whole-word matching needs no regex: pad each side with a space and ask for
+ * the padded pattern. That works for multi-word patterns too.
+ */
+export function patternMatches(
+  text: string,
+  pattern: string,
+  wholeWord = false,
+): boolean {
+  return wholeWord
+    ? ` ${text} `.includes(` ${pattern} `)
+    : text.includes(pattern);
+}
 
 @Injectable()
 export class RulesService {
@@ -74,12 +94,12 @@ export class RulesService {
       if (pattern === '') {
         return { input: raw, pattern, matchCount: 0, samples: [], empty: true };
       }
-      const hits = rows.filter((r) => r.normalized.includes(pattern));
+      const hits = rows.filter((r) => patternMatches(r.normalized, pattern));
       // Whole-word hits are the subset that would survive if the pattern were
       // anchored to word boundaries. The gap between the two counts is exactly
       // the "tesco stores" risk, so it is worth surfacing.
       const wholeWord = hits.filter((r) =>
-        ` ${r.normalized} `.includes(` ${pattern} `),
+        patternMatches(r.normalized, pattern, true),
       ).length;
       return {
         input: raw,
@@ -104,6 +124,7 @@ export class RulesService {
     userId: string,
     rules: {
       pattern: string;
+      wholeWord?: boolean;
       subcategoryId?: string;
       counterAccountId?: string;
     }[],
@@ -129,6 +150,7 @@ export class RulesService {
     userId: string,
     input: {
       pattern: string;
+      wholeWord?: boolean;
       subcategoryId?: string | null;
       counterAccountId?: string | null;
     },
@@ -151,6 +173,7 @@ export class RulesService {
         userId,
         pattern,
         type,
+        wholeWord: input.wholeWord ?? false,
         subcategoryId: target.subcategoryId ?? null,
         counterAccountId: target.counterAccountId ?? null,
         source: 'MANUAL',
@@ -228,9 +251,11 @@ export class RulesService {
   }
 
   /**
-   * Best rule for a row: the longest pattern that is a substring of the
-   * normalized description (most specific wins) among rules that apply to the
-   * row's direction — INCOME/EXPENSE rules only match their own sign, TRANSFER
+   * Best rule for a row: the longest pattern that occurs in the normalized
+   * description (most specific wins) among rules that apply to the row's
+   * direction. A rule marked wholeWord must match on token boundaries; the
+   * rest match anywhere, which is what learned rules need since bank
+   * statements truncate merchant names mid-word — INCOME/EXPENSE rules only match their own sign, TRANSFER
    * rules match either. Pure read — hit counts are bumped on commit, not on
    * preview.
    */
@@ -242,7 +267,15 @@ export class RulesService {
     let best: MatchableRule | null = null;
     for (const rule of rules) {
       if (rule.type !== 'TRANSFER' && rule.type !== rowType) continue;
-      if (!normalizedDescription.includes(rule.pattern)) continue;
+      if (
+        !patternMatches(
+          normalizedDescription,
+          rule.pattern,
+          rule.wholeWord ?? false,
+        )
+      ) {
+        continue;
+      }
       if (!best || rule.pattern.length > best.pattern.length) {
         best = rule;
       }

@@ -1076,6 +1076,7 @@ export class ImportService {
         id: true,
         pattern: true,
         type: true,
+        wholeWord: true,
         subcategoryId: true,
         counterAccountId: true,
         excludeFromStats: true,

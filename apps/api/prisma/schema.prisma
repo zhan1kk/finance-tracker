@@ -435,6 +435,13 @@ model CategorizationRule {
   /// rules match either direction, since money moves both ways past the same
   /// counterparty name. Derived by the service, never user-supplied.
   type      TransactionType
+  /// Match `pattern` only as a whole word, not anywhere inside the text.
+  /// Off by default, and deliberately so: rules learned from corrections often
+  /// end mid-word because bank statements truncate merchant names ("agentur fur
+  /// wa"), and anchoring those to word boundaries would stop them matching.
+  /// Turn it on for short keywords, where a bare "cos" otherwise matches
+  /// "tesco stores".
+  wholeWord Boolean              @default(false)
   source    CategorizationSource @default(MANUAL)
   hitCount  Int                  @default(0)
   createdAt DateTime             @default(now())

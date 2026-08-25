@@ -1,6 +1,10 @@
 import type { TransactionType } from '@prisma/client';
 import { normalizeMerchant } from './normalization';
-import { normalizePattern, RulesService } from './rules.service';
+import {
+  normalizePattern,
+  patternMatches,
+  RulesService,
+} from './rules.service';
 
 /** match() is pure, so it needs no database. */
 const rules = new RulesService(null as never);
@@ -132,5 +136,39 @@ describe('RulesService.match', () => {
     expect(rules.match(typed, hers, 'INCOME')).toMatchObject({
       counterAccountId: 'k-rev',
     });
+  });
+});
+
+describe('patternMatches', () => {
+  // The reason wholeWord exists: a short keyword is a substring of longer
+  // words. "cos" (the clothing shop) sits inside "costa" and "cosmetics".
+  it('substring matching catches a keyword inside a longer word', () => {
+    expect(patternMatches('costa coffee', 'cos')).toBe(true);
+    expect(patternMatches('cosmetics shop', 'cos')).toBe(true);
+  });
+
+  it('whole-word matching does not', () => {
+    expect(patternMatches('costa coffee', 'cos', true)).toBe(false);
+    expect(patternMatches('cosmetics shop', 'cos', true)).toBe(false);
+    expect(patternMatches('cos berlin', 'cos', true)).toBe(true);
+  });
+
+  it('handles multi-word patterns on both settings', () => {
+    expect(patternMatches('albert heijn amsterdam', 'albert heijn', true)).toBe(
+      true,
+    );
+    expect(patternMatches('albert heijn amsterdam', 'albert heijn')).toBe(true);
+  });
+
+  // Why the default stays substring: bank statements truncate merchant names,
+  // so a rule learned from a correction can end mid-word. Anchoring those to
+  // word boundaries would stop them matching what they were learned from.
+  it('keeps matching a truncated learned pattern only on substring', () => {
+    expect(
+      patternMatches('agentur fur warenwirtschaft', 'agentur fur wa'),
+    ).toBe(true);
+    expect(
+      patternMatches('agentur fur warenwirtschaft', 'agentur fur wa', true),
+    ).toBe(false);
   });
 });
