@@ -10,6 +10,7 @@ import {
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/types/auth.types';
 import { CreateRuleDTO } from './dtos/create-rule.dto';
+import { BulkCreateRulesDTO, PreviewRulesDTO } from './dtos/preview-rules.dto';
 import { UpdateRuleDTO } from './dtos/update-rule.dto';
 import { RulesService } from './rules.service';
 
@@ -25,6 +26,17 @@ export class RulesController {
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() body: CreateRuleDTO) {
     return this.rulesService.create(user.userId, body);
+  }
+
+  /** Dry run: what each candidate pattern would match. Creates nothing. */
+  @Post('preview')
+  preview(@CurrentUser() user: AuthUser, @Body() body: PreviewRulesDTO) {
+    return this.rulesService.preview(user.userId, body.patterns);
+  }
+
+  @Post('bulk')
+  createMany(@CurrentUser() user: AuthUser, @Body() body: BulkCreateRulesDTO) {
+    return this.rulesService.createMany(user.userId, body.rules);
   }
 
   @Patch(':id')

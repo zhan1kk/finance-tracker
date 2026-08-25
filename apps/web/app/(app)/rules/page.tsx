@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
+import { BulkRules } from "@/components/bulk-rules";
 import { SubcategoryOptions } from "@/components/subcategory-options";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -135,6 +136,11 @@ export default function RulesPage() {
         </form>
         <ErrorText error={error} />
       </Card>
+
+      <BulkRules
+        subcategories={subcategories.data ?? []}
+        onCreated={invalidate}
+      />
 
       <Card>
         {rules.data && all.length === 0 && (

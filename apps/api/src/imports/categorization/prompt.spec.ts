@@ -78,6 +78,7 @@ describe('coercePredictions — models that do not echo the row id', () => {
     {
       rowId: '1',
       description: 'REWE',
+      normalizedDescription: 'rewe',
       amount: -1500,
       date: '2026-08-10',
       type: 'EXPENSE' as const,
@@ -85,6 +86,7 @@ describe('coercePredictions — models that do not echo the row id', () => {
     {
       rowId: '2',
       description: 'SPOTIFY',
+      normalizedDescription: 'spotify',
       amount: -999,
       date: '2026-08-10',
       type: 'EXPENSE' as const,

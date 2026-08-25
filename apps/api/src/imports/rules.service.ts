@@ -47,6 +47,84 @@ export class RulesService {
     });
   }
 
+  /**
+   * What a candidate pattern would have matched, checked against the user's own
+   * transaction history.
+   *
+   * Rules match a substring of the normalized merchant, so a short pattern is
+   * risky: "cos" also sits inside "tesco stores". Rather than guess at a safe
+   * minimum length, show the evidence and let the user judge. The same
+   * normalizer runs here as at match time, so the preview cannot disagree with
+   * what the rule will actually do.
+   */
+  async preview(userId: string, patterns: string[]) {
+    const transactions = await this.prisma.transaction.findMany({
+      where: { account: { userId }, description: { not: null } },
+      select: { description: true, subcategory: { select: { name: true } } },
+      take: 5000,
+    });
+    const rows = transactions.map((t) => ({
+      raw: t.description as string,
+      normalized: normalizeMerchant(t.description as string),
+      current: t.subcategory?.name ?? null,
+    }));
+
+    return patterns.map((raw) => {
+      const pattern = normalizePattern(raw);
+      if (pattern === '') {
+        return { input: raw, pattern, matchCount: 0, samples: [], empty: true };
+      }
+      const hits = rows.filter((r) => r.normalized.includes(pattern));
+      // Whole-word hits are the subset that would survive if the pattern were
+      // anchored to word boundaries. The gap between the two counts is exactly
+      // the "tesco stores" risk, so it is worth surfacing.
+      const wholeWord = hits.filter((r) =>
+        ` ${r.normalized} `.includes(` ${pattern} `),
+      ).length;
+      return {
+        input: raw,
+        pattern,
+        matchCount: hits.length,
+        wholeWordCount: wholeWord,
+        samples: hits.slice(0, 5).map((r) => ({
+          description: r.raw,
+          current: r.current,
+        })),
+        empty: false,
+      };
+    });
+  }
+
+  /**
+   * Creates several rules in one call. A pattern that already exists is counted
+   * as skipped rather than failing the batch: adding twenty keywords where two
+   * are already known should add eighteen, not nothing.
+   */
+  async createMany(
+    userId: string,
+    rules: {
+      pattern: string;
+      subcategoryId?: string;
+      counterAccountId?: string;
+    }[],
+  ) {
+    let created = 0;
+    const skipped: string[] = [];
+    for (const rule of rules) {
+      try {
+        await this.create(userId, rule);
+        created++;
+      } catch (err) {
+        if (err instanceof ConflictException) {
+          skipped.push(normalizePattern(rule.pattern));
+          continue;
+        }
+        throw err;
+      }
+    }
+    return { created, skipped };
+  }
+
   async create(
     userId: string,
     input: {
