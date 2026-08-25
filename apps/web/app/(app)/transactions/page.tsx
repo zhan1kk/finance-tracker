@@ -27,6 +27,9 @@ type Filters = {
   search: string;
   from: string;
   to: string;
+  /** "" is newest-first, the default. Amount sorts on the base-currency value
+   *  server-side, so rows in different account currencies compare properly. */
+  sort: "" | "amount-desc" | "amount-asc" | "date-asc";
   page: number;
 };
 
@@ -39,8 +42,16 @@ const NO_FILTERS: Filters = {
   search: "",
   from: "",
   to: "",
+  sort: "",
   page: 1,
 };
+
+const SORT_OPTIONS: { value: Filters["sort"]; label: string }[] = [
+  { value: "", label: "Newest first" },
+  { value: "date-asc", label: "Oldest first" },
+  { value: "amount-desc", label: "Largest amount" },
+  { value: "amount-asc", label: "Smallest amount" },
+];
 
 /** Accept only a well-formed saved filter set; anything else starts clean. */
 function reviveFilters(saved: unknown): Filters | null {
@@ -56,6 +67,9 @@ function reviveFilters(saved: unknown): Filters | null {
     search: str(s.search),
     from: str(s.from),
     to: str(s.to),
+    sort: SORT_OPTIONS.some((o) => o.value === s.sort)
+      ? (s.sort as Filters["sort"])
+      : "",
     page: typeof s.page === "number" && s.page >= 1 ? Math.floor(s.page) : 1,
   };
 }
@@ -100,6 +114,11 @@ export default function TransactionsPage() {
   if (filters.subcategoryIds.length > 0)
     params.set("subcategoryIds", filters.subcategoryIds.join(","));
   if (filters.search) params.set("search", filters.search);
+  if (filters.sort) {
+    const [sort, dir] = filters.sort.split("-");
+    params.set("sort", sort);
+    params.set("dir", dir);
+  }
   if (filters.from) params.set("from", filters.from);
   if (filters.to) params.set("to", filters.to);
 
@@ -218,6 +237,7 @@ export default function TransactionsPage() {
     filters.accountId !== "" ||
     filters.subcategoryIds.length > 0 ||
     filters.search !== "" ||
+    filters.sort !== "" ||
     filters.from !== "" ||
     filters.to !== "";
   const activePreset = presets.find(
@@ -277,6 +297,24 @@ export default function TransactionsPage() {
                 setFilters({ ...filters, subcategoryIds: ids, page: 1 })
               }
             />
+          </Field>
+          <Field label="Sort">
+            <Select
+              value={filters.sort}
+              onChange={(e) =>
+                setFilters({
+                  ...filters,
+                  sort: e.target.value as Filters["sort"],
+                  page: 1,
+                })
+              }
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
           </Field>
           <Field label="From">
             <Input

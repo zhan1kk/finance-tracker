@@ -32,6 +32,7 @@ const HELP_TEXT = [
   '  DD.MM.YYYY / YYYY-MM-DD; default today).',
   '',
   'Commands:',
+  '  /due — payments due in the next 10 days (/due 30 for a wider window)',
   '  /account — choose which account captures go to',
   '  /rate — view or set the exchange rate (e.g. /rate 540 → 1 EUR = 540 KZT)',
   '  /link <code> — connect this chat (get the code in the web app → Accounts)',
@@ -111,6 +112,19 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       await ctx.reply('Pick the account new captures go to:', {
         reply_markup: keyboard,
       });
+    });
+
+    bot.command(['due', 'reminders'], async (ctx) => {
+      if (ctx.chat.type !== 'private') return;
+      // "/due 30" widens the window; bare /due uses the default 10 days.
+      const asked = Number.parseInt(ctx.match.trim(), 10);
+      const withinDays =
+        Number.isFinite(asked) && asked > 0 ? Math.min(asked, 365) : 10;
+      const text = await this.telegram.listDueReminders(
+        String(ctx.chat.id),
+        withinDays,
+      );
+      await ctx.reply(text);
     });
 
     bot.command('rate', async (ctx) => {

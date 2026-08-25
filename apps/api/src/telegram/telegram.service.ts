@@ -3,6 +3,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { BASE_CURRENCY } from '../fx/fx';
 import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
+import { daysUntil } from '../reminders/ping-schedule';
 import { planSettlement } from '../reminders/settle';
 import { TransactionService } from '../transactions/transaction.service';
 import {
@@ -350,6 +351,76 @@ export class TelegramService {
   }
 
   /** Settles a reminder from its nudge message. Scoped to the chat's own user. */
+  /**
+   * Everything due within `withinDays`, soonest first — the /due command.
+   *
+   * Overdue reminders lead the list even though they are outside that window.
+   * Nudges stay deliberately silent once a payment is late (a daily nag on a
+   * bill you already know about is worse than none), which means a missed one
+   * can sit unnoticed indefinitely. A list the user asked for is exactly where
+   * it should resurface.
+   */
+  async listDueReminders(chatId: string, withinDays = 10): Promise<string> {
+    const user = await this.prisma.user.findUnique({
+      where: { telegramChatId: chatId },
+    });
+    if (!user) return 'This chat is not linked.';
+
+    const today = new Date(`${localTodayISO()}T00:00:00Z`);
+    const horizon = new Date(today);
+    horizon.setUTCDate(horizon.getUTCDate() + withinDays);
+
+    const reminders = await this.prisma.reminder.findMany({
+      where: {
+        userId: user.id,
+        done: false,
+        dueDate: { not: null, lte: horizon },
+      },
+      orderBy: { dueDate: 'asc' },
+      select: {
+        label: true,
+        dueDate: true,
+        amountCents: true,
+        currency: true,
+        installmentsTotal: true,
+        installmentsPaid: true,
+      },
+    });
+
+    if (reminders.length === 0) {
+      return `Nothing due in the next ${withinDays} days. 🎉`;
+    }
+
+    const lines = reminders.map((r) => {
+      const days = daysUntil(today, r.dueDate as Date);
+      const when =
+        days < 0
+          ? `⚠️ ${-days} day${days === -1 ? '' : 's'} overdue`
+          : days === 0
+            ? 'today'
+            : days === 1
+              ? 'tomorrow'
+              : `in ${days} days`;
+      const amount =
+        r.amountCents === null
+          ? ''
+          : ` · ${money(r.amountCents, r.currency ?? user.baseCurrency)}`;
+      const plan =
+        r.installmentsTotal != null
+          ? ` · ${(r.installmentsPaid ?? 0) + 1}/${r.installmentsTotal}`
+          : '';
+      return `• ${r.label} — ${when}${amount}${plan}`;
+    });
+
+    const overdue = reminders.filter(
+      (r) => daysUntil(today, r.dueDate as Date) < 0,
+    ).length;
+    const header = overdue
+      ? `📋 Next ${withinDays} days — ${overdue} overdue`
+      : `📋 Next ${withinDays} days`;
+    return [header, '', ...lines].join('\n');
+  }
+
   /**
    * Settles the reminder behind a nudge's ✓ button.
    *

@@ -25,6 +25,8 @@ export type ListTransactionsQuery = {
   subcategoryIds?: string;
   type?: TransactionType;
   search?: string;
+  sort?: 'date' | 'amount';
+  dir?: 'asc' | 'desc';
   page?: number;
   pageSize?: number;
 };

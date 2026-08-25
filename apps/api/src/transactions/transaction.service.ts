@@ -68,11 +68,20 @@ export class TransactionService {
         : undefined,
     };
 
+    // Default stays newest-first. Sorting by amount uses amountBase so rows in
+    // different account currencies compare on the same scale; date is the
+    // tiebreaker either way, and createdAt keeps paging stable when both match.
+    const dir = query.dir ?? (query.sort === 'amount' ? 'desc' : 'desc');
+    const orderBy: Prisma.TransactionOrderByWithRelationInput[] =
+      query.sort === 'amount'
+        ? [{ amountBase: dir }, { date: 'desc' }, { createdAt: 'desc' }]
+        : [{ date: dir }, { createdAt: dir }];
+
     const [items, total] = await this.prisma.$transaction([
       this.prisma.transaction.findMany({
         where,
         include: TRANSACTION_INCLUDE,
-        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+        orderBy,
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),

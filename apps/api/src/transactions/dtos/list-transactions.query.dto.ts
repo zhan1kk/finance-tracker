@@ -44,6 +44,16 @@ export class ListTransactionsQueryDTO {
   @IsString()
   public readonly search?: string;
 
+  /** What to order by. "amount" sorts on the base-currency value, so a KZT and
+   *  a EUR row compare meaningfully rather than by raw digits. */
+  @IsOptional()
+  @IsIn(['date', 'amount'])
+  public readonly sort?: 'date' | 'amount';
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  public readonly dir?: 'asc' | 'desc';
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()

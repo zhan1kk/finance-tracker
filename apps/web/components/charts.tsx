@@ -392,6 +392,18 @@ export function CategoryDonut({
   const [hover, setHover] = useState<number | null>(null);
   const [asTable, setAsTable] = useState(false);
   const [filter, setFilter] = useState<string>("All");
+  // Categories hidden from this chart, by subcategory id. One big line item
+  // (rent, say) flattens everything else against the same scale, so hiding it
+  // is the difference between a readable chart and four invisible slivers.
+  // Deliberately view-only: local state, nothing saved, nothing else reads it,
+  // and the strip below always names what is hidden so no total is misread.
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const toggleExcluded = (id: string) =>
+    setExcluded((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
 
   // Spend types actually present this period, in a stable order.
   const present = SPENDING_CATEGORY_ORDER.filter((c) =>
@@ -400,8 +412,10 @@ export function CategoryDonut({
   const active = filter !== "All" && present.includes(filter) ? filter : "All";
   const scoped =
     active === "All" ? data : data.filter((d) => d.category === active);
-  const spending = scoped
-    .filter((d) => d.amount > 0)
+  const visible = scoped.filter((d) => d.amount > 0);
+  const hidden = visible.filter((d) => excluded.has(d.subcategoryId));
+  const spending = visible
+    .filter((d) => !excluded.has(d.subcategoryId))
     .sort((a, b) => b.amount - a.amount);
 
   const chip = (on: boolean) =>
@@ -427,10 +441,35 @@ export function CategoryDonut({
     </div>
   );
 
+  // Never let an exclusion be invisible: the totals and percentages below are
+  // computed without these, so they have to be spelled out next to them.
+  const hiddenStrip = hidden.length > 0 && (
+    <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
+      <span>Hidden:</span>
+      {hidden.map((d) => (
+        <button
+          key={d.subcategoryId}
+          onClick={() => toggleExcluded(d.subcategoryId)}
+          title={`Show ${d.name} again`}
+          className="rounded-full bg-zinc-100 px-2 py-0.5 line-through hover:no-underline dark:bg-zinc-800"
+        >
+          {d.name} ×
+        </button>
+      ))}
+      <button
+        onClick={() => setExcluded(new Set())}
+        className="underline hover:text-zinc-700 dark:hover:text-zinc-300"
+      >
+        show all
+      </button>
+    </div>
+  );
+
   if (spending.length === 0) {
     return (
       <div>
         {present.length > 0 && controls}
+        {hiddenStrip}
         <p className="py-8 text-center text-sm text-zinc-500">
           No spending {active === "All" ? "in this period" : `in ${active}`} yet.
         </p>
@@ -446,12 +485,21 @@ export function CategoryDonut({
     return (
       <div>
         {controls}
+        {hiddenStrip}
         <div className="overflow-x-auto">
         <table className="w-full min-w-[20rem] text-sm">
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
             {spending.map((d) => (
               <tr key={d.subcategoryId}>
-                <td className="py-1.5">{d.name}</td>
+                <td className="py-1.5">
+                  <button
+                    className="hover:underline"
+                    title={`Hide ${d.name} from this chart`}
+                    onClick={() => toggleExcluded(d.subcategoryId)}
+                  >
+                    {d.name}
+                  </button>
+                </td>
                 {active === "All" && (
                   <td className="py-1.5">
                     <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
@@ -474,11 +522,18 @@ export function CategoryDonut({
     );
   }
 
-  const slices = spending.slice(0, MAX_CATEGORY_ROWS).map((d, i) => ({
+  const slices: {
+    label: string;
+    amount: number;
+    color: string;
+    isOther: boolean;
+    subcategoryId?: string;
+  }[] = spending.slice(0, MAX_CATEGORY_ROWS).map((d, i) => ({
     label: d.name,
     amount: d.amount,
     color: DONUT_COLORS[i % DONUT_COLORS.length],
     isOther: false,
+    subcategoryId: d.subcategoryId,
   }));
   const tail = spending.slice(MAX_CATEGORY_ROWS);
   if (tail.length > 0) {
@@ -510,6 +565,7 @@ export function CategoryDonut({
   return (
     <div>
       {controls}
+      {hiddenStrip}
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
         <svg
           viewBox={`0 0 ${size} ${size}`}
@@ -594,14 +650,21 @@ export function CategoryDonut({
                 </button>
               </li>
             ) : (
-              <li
-                key={a.label}
-                className="flex items-center gap-2 text-sm"
-                style={dim}
-                onMouseEnter={() => setHover(a.i)}
-                onMouseLeave={() => setHover(null)}
-              >
-                {inner}
+              // Clicking a legend row hides that slice and rescales the rest —
+              // the point of the feature, so it lives on the obvious target.
+              <li key={a.label}>
+                <button
+                  className="flex w-full items-center gap-2 text-sm hover:text-zinc-700 dark:hover:text-zinc-200"
+                  style={dim}
+                  title={`Hide ${a.label} from this chart`}
+                  onMouseEnter={() => setHover(a.i)}
+                  onMouseLeave={() => setHover(null)}
+                  onClick={() =>
+                    a.subcategoryId && toggleExcluded(a.subcategoryId)
+                  }
+                >
+                  {inner}
+                </button>
               </li>
             );
           })}

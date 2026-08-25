@@ -370,6 +370,40 @@ describe('API (e2e)', () => {
       return res.body as { id: string };
     };
 
+    it('sorts by amount in both directions, and by date by default', async () => {
+      // Deliberately out of amount order, and all on the same date so the
+      // amount sort is what decides the order rather than the tiebreaker.
+      await createTransaction('EXPENSE', expenseId, 2_000);
+      await createTransaction('EXPENSE', expenseId, 50_000);
+      await createTransaction('EXPENSE', expenseId, 900);
+
+      const amounts = async (query: string) => {
+        const res = await request(http)
+          .get(`/transactions?${query}`)
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200);
+        return (res.body as { items: { amount: number }[] }).items.map(
+          (t) => t.amount,
+        );
+      };
+
+      expect(await amounts('sort=amount&dir=desc')).toEqual([
+        50_000, 2_000, 900,
+      ]);
+      expect(await amounts('sort=amount&dir=asc')).toEqual([
+        900, 2_000, 50_000,
+      ]);
+      // No sort given: newest first, i.e. reverse insertion order here.
+      expect(await amounts('')).toEqual([900, 50_000, 2_000]);
+    });
+
+    it('rejects an unknown sort field', async () => {
+      await request(http)
+        .get('/transactions?sort=description')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(400);
+    });
+
     it('income increases and expense decreases the account balance', async () => {
       await createTransaction('INCOME', incomeId, 50_000);
       expect(await getBalance(accountId)).toBe(150_000);
