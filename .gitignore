@@ -18,3 +18,5 @@ PLAN.md
 .repowise/
 .claude/
 thesis_related/
+# Thesis working notes — kept on disk, out of git
+docs/
