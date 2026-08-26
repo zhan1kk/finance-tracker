@@ -7,6 +7,7 @@ import type {
   SubcategoryLite,
 } from '../types/import.types';
 import {
+  aliasSubcategories,
   buildCategorizationPrompt,
   CATEGORIZATION_RESPONSE_SCHEMA,
   CATEGORIZATION_SYSTEM_PROMPT,
@@ -86,6 +87,10 @@ export class OllamaCategorizationProvider implements CategorizationProvider {
     // easier to derail with 64-char ids to copy verbatim, and shorter replies
     // generate faster.
     const aliased = chunk.map((c, i) => ({ ...c, rowId: String(i + 1) }));
+    // Category ids are aliased for the same reason as row ids: a local model
+    // asked to copy a UUID verbatim tends to repeat one for the whole batch.
+    const { aliased: aliasedSubs, realIdFor } =
+      aliasSubcategories(subcategories);
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -110,7 +115,7 @@ export class OllamaCategorizationProvider implements CategorizationProvider {
             { role: 'system', content: CATEGORIZATION_SYSTEM_PROMPT },
             {
               role: 'user',
-              content: buildCategorizationPrompt(aliased, subcategories),
+              content: buildCategorizationPrompt(aliased, aliasedSubs),
             },
           ],
         }),
@@ -128,10 +133,12 @@ export class OllamaCategorizationProvider implements CategorizationProvider {
 
       const items = (JSON.parse(content) as { items?: unknown }).items;
       // Predictions come back in aliased-chunk order; restore the real row ids.
-      return coercePredictions(items, aliased, allowedIds).map((p, i) => ({
-        ...p,
-        rowId: chunk[i].rowId,
-      }));
+      return coercePredictions(items, aliased, allowedIds, realIdFor).map(
+        (p, i) => ({
+          ...p,
+          rowId: chunk[i].rowId,
+        }),
+      );
     } catch (err) {
       this.logger.error(
         `Ollama categorization failed: ${err instanceof Error ? err.message : String(err)}`,

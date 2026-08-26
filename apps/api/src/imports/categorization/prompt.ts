@@ -46,6 +46,33 @@ export const CATEGORIZATION_RESPONSE_SCHEMA = {
   required: ['items'],
 };
 
+/**
+ * Swaps real subcategory UUIDs for short numbers before they go in the prompt.
+ *
+ * Row ids were already aliased for exactly this reason; the subcategory ids were
+ * not, and that was worse. To name a category the model had to reproduce one
+ * 36-character UUID exactly, chosen from sixty of them. Small models do not do
+ * that reliably: qwen2.5:7b answered every row in a batch with the same id,
+ * which surfaced as every transaction landing in one arbitrary category with
+ * high confidence. Given "1".."61" instead, the same model on the same batch
+ * separates Groceries, Netflix, Shopping and Dining Out correctly.
+ *
+ * The map back is applied in coercePredictions, so an alias the model invents is
+ * rejected by the same allowed-id check as any other bad value.
+ */
+export function aliasSubcategories(subcategories: SubcategoryLite[]): {
+  aliased: SubcategoryLite[];
+  realIdFor: Map<string, string>;
+} {
+  const realIdFor = new Map<string, string>();
+  const aliased = subcategories.map((s, i) => {
+    const alias = String(i + 1);
+    realIdFor.set(alias, s.id);
+    return { ...s, id: alias };
+  });
+  return { aliased, realIdFor };
+}
+
 /** Renders the subcategory list + a chunk of transactions as the user prompt. */
 export function buildCategorizationPrompt(
   chunk: CategorizationInput[],
@@ -74,6 +101,8 @@ export function coercePredictions(
   items: unknown,
   chunk: CategorizationInput[],
   allowedIds: Set<string>,
+  /** Alias -> real subcategory id, when the prompt used aliases. */
+  realIdFor?: Map<string, string>,
 ): CategorizationPrediction[] {
   const fallback = () =>
     chunk.map((c) => ({
@@ -85,8 +114,15 @@ export function coercePredictions(
 
   const read = (item: Record<string, unknown>) => {
     const rawId = item?.subcategoryId;
+    // Translate the alias first, then validate: an alias the model invented
+    // maps to nothing and falls through the same allowed-id check as a
+    // hallucinated UUID would.
+    const resolved =
+      typeof rawId === 'string' ? (realIdFor?.get(rawId) ?? rawId) : undefined;
     const subcategoryId =
-      typeof rawId === 'string' && allowedIds.has(rawId) ? rawId : null;
+      typeof resolved === 'string' && allowedIds.has(resolved)
+        ? resolved
+        : null;
     const confidence =
       typeof item?.confidence === 'number' && Number.isFinite(item.confidence)
         ? Math.max(0, Math.min(1, item.confidence))

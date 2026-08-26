@@ -1,5 +1,9 @@
 import type { CategorizationInput } from '../types/import.types';
-import { buildCategorizationPrompt, coercePredictions } from './prompt';
+import {
+  aliasSubcategories,
+  buildCategorizationPrompt,
+  coercePredictions,
+} from './prompt';
 
 const input = (rowId: string): CategorizationInput => ({
   rowId,
@@ -146,5 +150,74 @@ describe('coercePredictions — models that do not echo the row id', () => {
     );
     expect(out[0].subcategoryId).toBeNull();
     expect(out[1].subcategoryId).toBe('d');
+  });
+});
+
+describe('aliasSubcategories', () => {
+  const subs = [
+    {
+      id: '6d5d5111-c8db-43ba-a1ce-142c961050c7',
+      name: "Kira's food",
+      category: 'Expenses',
+    },
+    {
+      id: 'b2c3d4e5-0000-0000-0000-000000000000',
+      name: 'Dining Out',
+      category: 'Expenses',
+    },
+  ];
+
+  it('replaces UUIDs with short numbers the model can copy', () => {
+    const { aliased, realIdFor } = aliasSubcategories(subs);
+    expect(aliased.map((s) => s.id)).toEqual(['1', '2']);
+    // Names and categories are untouched; only the id is swapped.
+    expect(aliased[0].name).toBe("Kira's food");
+    expect(realIdFor.get('2')).toBe(subs[1].id);
+  });
+
+  // The real failure this fixes: asked to copy a 36-character UUID from a list
+  // of sixty, qwen2.5:7b answered every row with the same one, so a whole
+  // import landed in one arbitrary category at high confidence.
+  it('maps an aliased answer back to the real id', () => {
+    const { aliased, realIdFor } = aliasSubcategories(subs);
+    const chunk = [
+      {
+        rowId: '1',
+        description: 'Cafe Zart',
+        normalizedDescription: 'cafe zart',
+        amount: -2650,
+        date: '2026-07-31',
+        type: 'EXPENSE' as const,
+      },
+    ];
+    const out = coercePredictions(
+      [{ rowId: '1', subcategoryId: '2', confidence: 0.9 }],
+      chunk,
+      new Set(subs.map((s) => s.id)),
+      realIdFor,
+    );
+    expect(out[0].subcategoryId).toBe(subs[1].id);
+    expect(aliased).toHaveLength(2);
+  });
+
+  it('rejects an alias the model invented', () => {
+    const { realIdFor } = aliasSubcategories(subs);
+    const chunk = [
+      {
+        rowId: '1',
+        description: 'x',
+        normalizedDescription: 'x',
+        amount: -1,
+        date: '2026-07-31',
+        type: 'EXPENSE' as const,
+      },
+    ];
+    const out = coercePredictions(
+      [{ rowId: '1', subcategoryId: '99', confidence: 0.9 }],
+      chunk,
+      new Set(subs.map((s) => s.id)),
+      realIdFor,
+    );
+    expect(out[0].subcategoryId).toBeNull();
   });
 });

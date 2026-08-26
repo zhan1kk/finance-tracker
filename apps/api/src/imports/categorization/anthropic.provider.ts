@@ -7,6 +7,7 @@ import type {
   SubcategoryLite,
 } from '../types/import.types';
 import {
+  aliasSubcategories,
   buildCategorizationPrompt,
   CATEGORIZATION_RESPONSE_SCHEMA,
   CATEGORIZATION_SYSTEM_PROMPT,
@@ -72,6 +73,10 @@ export class AnthropicCategorizationProvider implements CategorizationProvider {
     // chunk past the token budget and silently truncate the JSON — losing every
     // prediction in the chunk at once.
     const aliased = chunk.map((c, i) => ({ ...c, rowId: String(i + 1) }));
+    // Category ids are aliased too, so both providers are held to the same
+    // prompt and the local-vs-hosted comparison stays honest.
+    const { aliased: aliasedSubs, realIdFor } =
+      aliasSubcategories(subcategories);
 
     try {
       const message = await this.client.messages.create({
@@ -89,7 +94,7 @@ export class AnthropicCategorizationProvider implements CategorizationProvider {
         messages: [
           {
             role: 'user',
-            content: buildCategorizationPrompt(aliased, subcategories),
+            content: buildCategorizationPrompt(aliased, aliasedSubs),
           },
         ],
       });
@@ -107,10 +112,12 @@ export class AnthropicCategorizationProvider implements CategorizationProvider {
 
       const items = (block.input as { items?: unknown }).items;
       // Predictions come back in aliased-chunk order; restore the real row ids.
-      return coercePredictions(items, aliased, allowedIds).map((p, i) => ({
-        ...p,
-        rowId: chunk[i].rowId,
-      }));
+      return coercePredictions(items, aliased, allowedIds, realIdFor).map(
+        (p, i) => ({
+          ...p,
+          rowId: chunk[i].rowId,
+        }),
+      );
     } catch (err) {
       this.logger.error(
         `Anthropic categorization failed: ${err instanceof Error ? err.message : String(err)}`,
