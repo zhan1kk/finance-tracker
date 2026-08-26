@@ -14,7 +14,7 @@ export class CreateRuleDTO {
   public readonly pattern!: string;
 
   /** Match only on word boundaries. For short keywords like "cos", which
-   *  otherwise also matches "tesco stores". */
+   *  otherwise also matches "costa" and "cosmetics". */
   @IsOptional()
   @IsBoolean()
   public readonly wholeWord?: boolean;

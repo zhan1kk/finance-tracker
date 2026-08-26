@@ -72,7 +72,7 @@ export class RulesService {
    * transaction history.
    *
    * Rules match a substring of the normalized merchant, so a short pattern is
-   * risky: "cos" also sits inside "tesco stores". Rather than guess at a safe
+   * risky: "cos" also sits inside "costa" and "cosmetics". Rather than guess
    * minimum length, show the evidence and let the user judge. The same
    * normalizer runs here as at match time, so the preview cannot disagree with
    * what the rule will actually do.
@@ -97,7 +97,7 @@ export class RulesService {
       const hits = rows.filter((r) => patternMatches(r.normalized, pattern));
       // Whole-word hits are the subset that would survive if the pattern were
       // anchored to word boundaries. The gap between the two counts is exactly
-      // the "tesco stores" risk, so it is worth surfacing.
+      // the "costa"/"cosmetics" risk, so it is worth surfacing.
       const wholeWord = hits.filter((r) =>
         patternMatches(r.normalized, pattern, true),
       ).length;

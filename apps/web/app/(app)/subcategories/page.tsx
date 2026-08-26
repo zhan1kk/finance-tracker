@@ -131,7 +131,10 @@ export default function SubcategoriesPage() {
                     });
                   }}
                 >
-                  ★
+                  {/* The glyph changes, not just its colour: pinned and
+                      unpinned used to differ only by a muted amber against a
+                      light grey, with no shape to fall back on. */}
+                  {subcategory.pinned ? "★" : "☆"}
                 </button>
                 {subcategory.name}
                 <button

@@ -8,7 +8,7 @@ import {
   MonthlyTrendChart,
   NetWorthChart,
 } from "@/components/charts";
-import { Button, Card } from "@/components/ui";
+import { Button, Card, Select } from "@/components/ui";
 import { TYPE_ACCENT, TYPE_BADGE } from "@/lib/account-style";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -243,17 +243,17 @@ export default function OverviewPage() {
             title="The day your financial month begins — e.g. 28 runs the 28th to the 27th. 1 = plain calendar months. Short months just end on their last day."
           >
             Month starts
-            <select
+            <Select
               value={monthStartDay}
               onChange={(e) => void changeMonthStart(Number(e.target.value))}
-              className="rounded border border-zinc-200 bg-transparent px-1 py-0.5 text-xs dark:border-zinc-800"
+              className="px-1 py-0.5 text-xs"
             >
               {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
                 <option key={d} value={d}>
                   {d === 1 ? "1st (calendar)" : `${d}`}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

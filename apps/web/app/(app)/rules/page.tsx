@@ -204,6 +204,16 @@ export default function RulesPage() {
                         {rule.type === "INCOME" ? "income" : "expense"}
                       </span>
                     )}
+                    {/* Two rules can read identically here and behave very
+                        differently, so the matching mode has to be visible. */}
+                    {rule.wholeWord && (
+                      <span
+                        className="ml-1.5 rounded bg-zinc-100 px-1.5 py-0.5 font-sans text-xs text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+                        title="Matches only as a whole word, not inside a longer one"
+                      >
+                        whole word
+                      </span>
+                    )}
                   </td>
                   <td className="py-2 pr-3">{targetLabel(rule)}</td>
                   <td className="py-2 pr-3 text-right tabular-nums text-zinc-500">

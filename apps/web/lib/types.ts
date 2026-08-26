@@ -302,6 +302,8 @@ export type CategorizationRule = {
   pattern: string;
   /** Which rows the rule applies to; TRANSFER rules match either direction. */
   type: TransactionType;
+  /** Match the pattern only on word boundaries, not inside a longer word. */
+  wholeWord: boolean;
   source: CategorizationSource;
   hitCount: number;
   /** Exactly one target is set: a subcategory, a counter account, or excludeFromStats. */

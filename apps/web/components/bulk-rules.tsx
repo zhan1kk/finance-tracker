@@ -20,7 +20,7 @@ type Preview = {
  * Add several keyword rules at once, after seeing what each one would catch.
  *
  * Rules match a substring of the merchant text, so a short keyword is a trap:
- * "cos" also sits inside "tesco stores". Rather than block short patterns with
+ * "cos" also sits inside "costa" and "cosmetics". Rather than block short
  * an arbitrary minimum length, this shows the actual transactions each keyword
  * would have matched. A bad keyword is then obvious instead of theoretical.
  */
@@ -193,7 +193,7 @@ export function BulkRules({
                             <>
                               {r.matchCount}
                               {/* The gap between a substring match and a
-                                  whole-word one is the "tesco stores" risk,
+                                  whole-word one is the "costa" risk,
                                   so it is named rather than hidden. */}
                               {r.wholeWordCount !== undefined &&
                                 r.wholeWordCount < r.matchCount && (
