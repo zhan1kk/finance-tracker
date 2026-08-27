@@ -90,9 +90,9 @@ export default function RulesPage() {
         r.pattern.toLowerCase().includes(query) ||
         targetLabel(r).toLowerCase().includes(query),
     )
-    // The server sorts by pattern. The other view sorts by hitCount, which
-    // counts the corrections that created or reinforced a rule, NOT how often
-    // it has matched. Nothing increments it when a rule fires during an import.
+    // The server sorts by pattern; "most used" answers "which of these am I
+    // actually relying on, and which are dead weight?". hitCount now counts
+    // committed transactions the rule categorized and the user kept.
     .sort((a, b) => (sort === "hits" ? b.hitCount - a.hitCount : 0));
 
   return (
@@ -167,7 +167,7 @@ export default function RulesPage() {
               className="w-auto"
             >
               <option value="pattern">A–Z</option>
-              <option value="hits">Most corrected</option>
+              <option value="hits">Most used</option>
             </Select>
             <span className="text-sm text-zinc-500">
               {query ? `${shown.length} of ${all.length}` : `${all.length} rules`}
@@ -190,9 +190,9 @@ export default function RulesPage() {
                 <th className="py-2 pr-3 font-medium">Category</th>
                 <th
                   className="py-2 pr-3 text-right font-medium"
-                  title="How many corrections created or reinforced this rule. Not how often it has matched."
+                  title="Committed transactions this rule categorized and you kept"
                 >
-                  Corrections
+                  Times used
                 </th>
                 <th className="py-2" />
               </tr>

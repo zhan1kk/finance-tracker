@@ -290,8 +290,33 @@ export class RulesService {
   }
 
   /**
+   * Records that these rules categorized a committed transaction.
+   *
+   * This is what "times used" means on the Rules page. Only rows the user left
+   * alone count: a rule that fired and was then corrected did its job badly,
+   * and counting it would make a bad rule look well-used.
+   */
+  countUsage(tx: Prisma.TransactionClient, userId: string, ruleIds: string[]) {
+    if (ruleIds.length === 0) return Promise.resolve({ count: 0 });
+    // Grouped by id so a merchant appearing five times in one statement counts
+    // five, not one.
+    return Promise.all(
+      [...new Set(ruleIds)].map((id) =>
+        tx.categorizationRule.updateMany({
+          where: { id, userId },
+          data: {
+            hitCount: { increment: ruleIds.filter((r) => r === id).length },
+          },
+        }),
+      ),
+    ).then(() => ({ count: ruleIds.length }));
+  }
+
+  /**
    * Learns a rule from a human correction (upsert by normalized pattern +
-   * direction), run inside the commit transaction. Pattern is the row's
+   * direction), run inside the commit transaction. Deliberately leaves
+   * hitCount alone: that counts how often the rule has categorized a committed
+   * transaction, and creating a rule is not using it. Pattern is the row's
    * normalized merchant; keying on the row's direction lets the same merchant
    * carry different meanings by sign (Amazon charge → shopping, Amazon credit
    * → refund) without the corrections overwriting each other.
@@ -322,13 +347,11 @@ export class RulesService {
         counterAccountId,
         excludeFromStats,
         source: 'MANUAL',
-        hitCount: 1,
       },
       update: {
         subcategoryId,
         counterAccountId,
         excludeFromStats,
-        hitCount: { increment: 1 },
       },
     });
   }

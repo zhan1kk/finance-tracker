@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { Button, Card, ErrorText, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { formatCents } from "@/lib/format";
@@ -12,6 +13,14 @@ import type {
   ImportRowStatus,
   Subcategory,
 } from "@/lib/types";
+
+type LearnedRule = {
+  id: string;
+  pattern: string;
+  subcategory: { name: string } | null;
+  counterAccount: { name: string } | null;
+  excludeFromStats: boolean;
+};
 
 /**
  * The picker offers both kinds of target, so option values carry which one they
@@ -142,9 +151,25 @@ export function ImportReview({
     },
     onSuccess: invalidate,
   });
+  // What the commit taught itself, shown afterwards so a rule you did not want
+  // can be undone here instead of hunting for it on the Rules page.
+  const [learned, setLearned] = useState<LearnedRule[]>([]);
   const commit = useMutation({
-    mutationFn: () => api(`/imports/${batchId}/commit`, { method: "POST" }),
-    onSuccess: invalidate,
+    mutationFn: () =>
+      api<{ learnedRules: LearnedRule[] }>(`/imports/${batchId}/commit`, {
+        method: "POST",
+      }),
+    onSuccess: (res) => {
+      setLearned(res.learnedRules ?? []);
+      invalidate();
+    },
+  });
+  const forgetRule = useMutation({
+    mutationFn: (id: string) => api(`/rules/${id}`, { method: "DELETE" }),
+    onSuccess: (_res, id) => {
+      setLearned((prev) => prev.filter((r) => r.id !== id));
+      void queryClient.invalidateQueries({ queryKey: ["rules"] });
+    },
   });
   const undo = useMutation({
     mutationFn: () => api(`/imports/${batchId}/undo`, { method: "POST" }),
@@ -286,6 +311,43 @@ export function ImportReview({
             </>
           )}
         </p>
+      )}
+
+      {learned.length > 0 && (
+        <div className="mb-3 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+          <p className="mb-2 text-sm">
+            Learned {learned.length} new rule
+            {learned.length === 1 ? "" : "s"} from your corrections. Next time
+            these merchants are categorized without asking.
+          </p>
+          <ul className="flex flex-wrap gap-1.5">
+            {learned.map((r) => (
+              <li
+                key={r.id}
+                className="flex items-center gap-1.5 rounded-full bg-zinc-100 px-2.5 py-1 text-xs dark:bg-zinc-800"
+              >
+                <span className="font-mono">{r.pattern}</span>
+                <span className="text-zinc-500">
+                  →{" "}
+                  {r.excludeFromStats
+                    ? "Internal"
+                    : (r.counterAccount?.name ??
+                      r.subcategory?.name ??
+                      "—")}
+                </span>
+                <button
+                  aria-label={`Forget the rule for ${r.pattern}`}
+                  title="Remove this rule. The transactions you just imported keep their categories."
+                  className="text-zinc-400 hover:text-red-600"
+                  disabled={forgetRule.isPending}
+                  onClick={() => forgetRule.mutate(r.id)}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {pending && duplicateCount > 0 && (

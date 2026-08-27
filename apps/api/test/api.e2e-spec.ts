@@ -1347,6 +1347,46 @@ describe('API (e2e)', () => {
       expect(ikea[0].subcategory?.name).toBe('Shopping');
     });
 
+    it('counts a rule as used only for rows the user kept', async () => {
+      const shopping = await subId('Shopping');
+      const groceries = await subId('Groceries');
+      await request(http)
+        .post('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ pattern: 'ikea', subcategoryId: shopping })
+        .expect(201);
+
+      const batch = await doImport(
+        [
+          'Date,Amount,Description',
+          '2026-07-04,-10.00,Ikea',
+          '2026-07-05,-20.00,Ikea',
+          '2026-07-06,-30.00,Ikea',
+        ].join('\n'),
+      );
+      // One of the three is corrected away from the rule.
+      await request(http)
+        .patch(`/imports/${batch.id}/rows/${batch.rows[2].id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId: groceries })
+        .expect(200);
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      const rules = await request(http)
+        .get('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const ikea = (rules.body as { pattern: string; hitCount: number }[]).find(
+        (r) => r.pattern === 'ikea',
+      );
+      // Two kept, one corrected. A rule that fired and was overruled did its
+      // job badly, so counting it would make a bad rule look well used.
+      expect(ikea?.hitCount).toBe(2);
+    });
+
     const doImport = async (csv = CSV, withMapping = true): Promise<Batch> => {
       const res = await request(http)
         .post('/imports')

@@ -40,6 +40,8 @@ type StagedRow = {
   source: CategorizationSource;
   /** Who made the prediction — frozen; `source` is overwritten on review. */
   predictionSource: CategorizationSource | null;
+  /** The rule that matched, when one did, so commit can count its usage. */
+  ruleId?: string | null;
   subcategoryId: string | null;
   /** Set instead of subcategoryId when the row is a transfer between own accounts. */
   counterAccountId: string | null;
@@ -203,6 +205,7 @@ export class ImportService {
             confidence: row.confidence,
             source: row.source,
             predictionSource: row.predictionSource,
+            ruleId: row.ruleId ?? null,
             subcategoryId: row.subcategoryId,
             counterAccountId: row.counterAccountId,
             excludeFromStats: row.excludeFromStats,
@@ -518,6 +521,11 @@ export class ImportService {
 
   async commit(userId: string, batchId: string) {
     const batch = await this.getPendingBatch(userId, batchId);
+    // Rules that fired and were kept, so their usage can be counted, and rules
+    // learned from this batch, so the review screen can show what it just
+    // taught itself and offer to undo any of it.
+    const usedRuleIds: string[] = [];
+    const learnedRuleIds: string[] = [];
     const committable = batch.rows.filter(
       (r) =>
         r.status === 'READY' &&
@@ -611,6 +619,11 @@ export class ImportService {
           // the meatballs must not turn every future IKEA row into Groceries.
           // Redefining a rule is done deliberately on the Rules page instead.
           const disagreesWithRule = row.predictionSource === 'RULE';
+          // A rule that fired and was left alone has been used. One that fired
+          // and was corrected has not, so it is not counted.
+          if (disagreesWithRule && !row.corrected && row.ruleId) {
+            usedRuleIds.push(row.ruleId);
+          }
           if (row.corrected && !disagreesWithRule) {
             const target = row.counterAccountId
               ? { counterAccountId: row.counterAccountId }
@@ -620,16 +633,19 @@ export class ImportService {
                   ? { excludeFromStats: true as const }
                   : null;
             if (target) {
-              await this.rules.learnFromCorrection(
+              const rule = await this.rules.learnFromCorrection(
                 tx,
                 userId,
                 row.normalizedDescription,
                 target,
                 row.type,
               );
+              if (rule) learnedRuleIds.push(rule.id);
             }
           }
         }
+
+        await this.rules.countUsage(tx, userId, usedRuleIds);
 
         for (const [accountId, delta] of deltas) {
           if (delta === 0) continue;
@@ -646,7 +662,21 @@ export class ImportService {
       { timeout: 30_000 },
     );
 
-    return this.getBatch(userId, batchId);
+    const learnedRules =
+      learnedRuleIds.length === 0
+        ? []
+        : await this.prisma.categorizationRule.findMany({
+            where: { id: { in: [...new Set(learnedRuleIds)] }, userId },
+            select: {
+              id: true,
+              pattern: true,
+              subcategory: { select: { name: true } },
+              counterAccount: { select: { name: true } },
+              excludeFromStats: true,
+            },
+          });
+
+    return { ...(await this.getBatch(userId, batchId)), learnedRules };
   }
 
   /**
@@ -1115,6 +1145,7 @@ export class ImportService {
       row.confidence = 1;
       row.source = 'RULE';
       row.predictionSource = 'RULE';
+      row.ruleId = hit.ruleId;
       row.status = 'READY';
     }
 

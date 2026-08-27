@@ -388,6 +388,11 @@ model ImportRow {
   /// decided the *final* value and is overwritten on review — without this,
   /// reviewed rows silently drop out of the accuracy metric.
   predictionSource       CategorizationSource?
+  /// Which rule categorized this row, when one did. Kept so committing the
+  /// batch can count a rule's real usage. Plain id rather than a relation: it
+  /// is read once at commit, and a rule deleted in between simply matches
+  /// nothing rather than needing cascade behaviour.
+  ruleId                 String?
 
   /// The effective choice (defaults to the prediction; changes when a human corrects it)
   subcategoryId String?
