@@ -209,7 +209,7 @@ export function ImportReview({
   const error =
     commit.error ?? undo.error ?? reopen.error ?? discard.error ??
     correct.error ?? acceptAll.error ?? skip.error ?? include.error ??
-    flip.error ?? annotate.error;
+    flip.error ?? annotate.error ?? forgetRule.error;
 
   return (
     <Card>

@@ -526,6 +526,37 @@ export class ImportService {
     // taught itself and offer to undo any of it.
     const usedRuleIds: string[] = [];
     const learnedRuleIds: string[] = [];
+    // Patterns of the rules that categorized these rows, so a correction can
+    // tell "you are overruling this exact rule" from "you are teaching a more
+    // specific one".
+    const matchedRulePattern = new Map<string, string>(
+      (
+        await this.prisma.categorizationRule.findMany({
+          where: {
+            userId,
+            id: {
+              in: batch.rows
+                .map((r) => r.ruleId)
+                .filter((id): id is string => id !== null),
+            },
+          },
+          select: { id: true, pattern: true },
+        })
+      ).map((r) => [r.id, r.pattern]),
+    );
+    // A merchant corrected to two different categories inside one batch cannot
+    // teach a single rule; the upsert would just let the last row win.
+    const correctedTargets = new Map<string, Set<string>>();
+    for (const r of batch.rows) {
+      if (!r.corrected) continue;
+      const key = r.normalizedDescription;
+      const target =
+        r.counterAccountId ??
+        r.subcategoryId ??
+        (r.excludeFromStats ? '~' : '');
+      if (!correctedTargets.has(key)) correctedTargets.set(key, new Set());
+      correctedTargets.get(key)?.add(target);
+    }
     const committable = batch.rows.filter(
       (r) =>
         r.status === 'READY' &&
@@ -586,6 +617,10 @@ export class ImportService {
             if (posted) {
               bump(posted.from, -row.amount);
               bump(posted.to, row.amount);
+            } else {
+              // Mirrored by the other account's statement: the row was marked
+              // SKIPPED and no transaction exists, so nothing below applies.
+              continue;
             }
           } else {
             const transaction = await tx.transaction.create({
@@ -611,20 +646,31 @@ export class ImportService {
             );
           }
 
-          // A correction teaches a rule, with one exception: if a *rule* had
-          // already categorized this row, the user is disagreeing with that
-          // rule on one transaction, and upserting would silently repoint it
-          // for every future import. Two IKEA charges on one day, curtains and
-          // meatballs, are one merchant with two honest answers; recategorizing
-          // the meatballs must not turn every future IKEA row into Groceries.
-          // Redefining a rule is done deliberately on the Rules page instead.
-          const disagreesWithRule = row.predictionSource === 'RULE';
           // A rule that fired and was left alone has been used. One that fired
           // and was corrected has not, so it is not counted.
-          if (disagreesWithRule && !row.corrected && row.ruleId) {
+          if (row.predictionSource === 'RULE' && !row.corrected && row.ruleId) {
             usedRuleIds.push(row.ruleId);
           }
-          if (row.corrected && !disagreesWithRule) {
+
+          // A correction teaches a rule, with two exceptions.
+          //
+          // First: overruling the *same* rule that fired. Two IKEA charges on
+          // one day, curtains and meatballs, are one merchant with two honest
+          // answers, and upserting would repoint "ikea" for every future
+          // import. Compared by pattern, not just by "a rule fired": correcting
+          // AMAZON PRIME VIDEO where the rule "amazon" matched teaches the
+          // longer "amazon prime video", which wins longest-match and leaves
+          // the broad rule alone. That refinement is the useful case.
+          const overrulesSameRule =
+            row.ruleId !== null &&
+            matchedRulePattern.get(row.ruleId) === row.normalizedDescription;
+          // Second: the same merchant corrected to different categories inside
+          // this batch. Nothing here can say which one is the rule, and the
+          // upsert would silently keep whichever row came last.
+          const conflicting =
+            (correctedTargets.get(row.normalizedDescription)?.size ?? 0) > 1;
+
+          if (row.corrected && !overrulesSameRule && !conflicting) {
             const target = row.counterAccountId
               ? { counterAccountId: row.counterAccountId }
               : row.subcategoryId
@@ -840,11 +886,28 @@ export class ImportService {
       }
     }
 
+    // Undoing removes the transactions those rules categorized, so the usage
+    // counted at commit has to come back off. Without this, commit -> undo ->
+    // commit counts the same rows twice.
+    const undoneRuleIds = batch.rows
+      .filter((r) => !r.corrected && r.ruleId !== null)
+      .map((r) => r.ruleId as string);
+
     await this.prisma.$transaction([
       this.prisma.importRow.updateMany({
         where: { batchId, transactionId: { not: null } },
         data: { status: 'READY', transactionId: null },
       }),
+      ...[...new Set(undoneRuleIds)].map((id) =>
+        this.prisma.categorizationRule.updateMany({
+          where: { id, userId },
+          data: {
+            hitCount: {
+              decrement: undoneRuleIds.filter((r) => r === id).length,
+            },
+          },
+        }),
+      ),
       this.prisma.transaction.deleteMany({
         where: { id: { in: transactionIds } },
       }),

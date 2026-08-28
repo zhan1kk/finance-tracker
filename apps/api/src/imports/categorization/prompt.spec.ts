@@ -169,10 +169,10 @@ describe('aliasSubcategories', () => {
 
   it('replaces UUIDs with short numbers the model can copy', () => {
     const { aliased, realIdFor } = aliasSubcategories(subs);
-    expect(aliased.map((s) => s.id)).toEqual(['1', '2']);
+    expect(aliased.map((s) => s.id)).toEqual(['c1', 'c2']);
     // Names and categories are untouched; only the id is swapped.
     expect(aliased[0].name).toBe("Kira's food");
-    expect(realIdFor.get('2')).toBe(subs[1].id);
+    expect(realIdFor.get('c2')).toBe(subs[1].id);
   });
 
   // The real failure this fixes: asked to copy a 36-character UUID from a list
@@ -191,13 +191,37 @@ describe('aliasSubcategories', () => {
       },
     ];
     const out = coercePredictions(
-      [{ rowId: '1', subcategoryId: '2', confidence: 0.9 }],
+      [{ rowId: '1', subcategoryId: 'c2', confidence: 0.9 }],
       chunk,
       new Set(subs.map((s) => s.id)),
       realIdFor,
     );
     expect(out[0].subcategoryId).toBe(subs[1].id);
     expect(aliased).toHaveLength(2);
+  });
+
+  // Row ids in the same prompt are "1".."N". If category aliases shared that
+  // namespace, a model echoing the row number would resolve to a real but
+  // arbitrary category and pass validation.
+  it('does not collide with the row-id namespace', () => {
+    const { realIdFor } = aliasSubcategories(subs);
+    const chunk = [
+      {
+        rowId: '1',
+        description: 'x',
+        normalizedDescription: 'x',
+        amount: -1,
+        date: '2026-07-31',
+        type: 'EXPENSE' as const,
+      },
+    ];
+    const out = coercePredictions(
+      [{ rowId: '1', subcategoryId: '1', confidence: 0.9 }],
+      chunk,
+      new Set(subs.map((s) => s.id)),
+      realIdFor,
+    );
+    expect(out[0].subcategoryId).toBeNull();
   });
 
   it('rejects an alias the model invented', () => {
@@ -213,7 +237,7 @@ describe('aliasSubcategories', () => {
       },
     ];
     const out = coercePredictions(
-      [{ rowId: '1', subcategoryId: '99', confidence: 0.9 }],
+      [{ rowId: '1', subcategoryId: 'c99', confidence: 0.9 }],
       chunk,
       new Set(subs.map((s) => s.id)),
       realIdFor,

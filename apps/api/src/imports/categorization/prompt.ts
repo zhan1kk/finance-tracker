@@ -65,8 +65,12 @@ export function aliasSubcategories(subcategories: SubcategoryLite[]): {
   realIdFor: Map<string, string>;
 } {
   const realIdFor = new Map<string, string>();
+  // Prefixed, because row ids in the same prompt are already "1".."N". Sharing
+  // that namespace means a model echoing a row number into subcategoryId lands
+  // on a real but arbitrary category and passes validation, instead of failing
+  // to resolve and falling to review where it belongs.
   const aliased = subcategories.map((s, i) => {
-    const alias = String(i + 1);
+    const alias = `c${i + 1}`;
     realIdFor.set(alias, s.id);
     return { ...s, id: alias };
   });

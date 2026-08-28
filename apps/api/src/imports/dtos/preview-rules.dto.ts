@@ -18,6 +18,12 @@ export class PreviewRulesDTO {
   @ArrayMaxSize(100)
   @IsString({ each: true })
   public readonly patterns!: string[];
+
+  /** The category these rules would point at, so the preview looks at the same
+   *  side of the ledger the resulting rules will match on. */
+  @IsOptional()
+  @IsUUID()
+  public readonly subcategoryId?: string;
 }
 
 class BulkRuleDTO {

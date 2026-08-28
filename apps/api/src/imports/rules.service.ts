@@ -77,9 +77,25 @@ export class RulesService {
    * normalizer runs here as at match time, so the preview cannot disagree with
    * what the rule will actually do.
    */
-  async preview(userId: string, patterns: string[]) {
+  async preview(userId: string, patterns: string[], subcategoryId?: string) {
+    // A rule's direction is derived from its target: an Expenses subcategory
+    // yields an EXPENSE rule, which match() will never apply to income. So the
+    // preview has to look at the same side of the ledger, or it counts rows the
+    // rule can never match and contradicts itself.
+    const target = subcategoryId
+      ? await this.prisma.subcategory.findFirst({
+          where: { id: subcategoryId, userId },
+          select: { category: true },
+        })
+      : null;
+    const type = target
+      ? target.category === 'Income'
+        ? ('INCOME' as const)
+        : ('EXPENSE' as const)
+      : undefined;
+
     const transactions = await this.prisma.transaction.findMany({
-      where: { account: { userId }, description: { not: null } },
+      where: { account: { userId }, description: { not: null }, type },
       select: { description: true, subcategory: { select: { name: true } } },
       take: 5000,
     });

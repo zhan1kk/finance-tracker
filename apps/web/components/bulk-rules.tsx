@@ -47,13 +47,28 @@ export function BulkRules({
     mutationFn: (patterns: string[]) =>
       api<Preview[]>("/rules/preview", {
         method: "POST",
-        body: JSON.stringify({ patterns }),
+        body: JSON.stringify({
+          patterns,
+          subcategoryId: subcategoryId || undefined,
+        }),
       }),
     onSuccess: (data) => {
-      setRows(data);
+      // Two inputs can normalize to the same pattern ("Cafe Nero" and "cafe
+      // nero gmbh"). Keeping both duplicates React keys, ties their checkboxes
+      // together, and then reports adding fewer rules than were ticked.
+      const seen = new Set<string>();
+      const unique = data.filter((r) => {
+        if (r.empty) return true;
+        if (seen.has(r.pattern)) return false;
+        seen.add(r.pattern);
+        return true;
+      });
+      setRows(unique);
       // Pre-tick everything that matched something. A keyword matching nothing
       // is not wrong, it just cannot be judged yet, so it stays unticked.
-      setPicked(new Set(data.filter((r) => r.matchCount > 0).map((r) => r.pattern)));
+      setPicked(
+        new Set(unique.filter((r) => r.matchCount > 0).map((r) => r.pattern)),
+      );
     },
     onError: setError,
   });

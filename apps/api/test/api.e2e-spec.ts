@@ -1347,6 +1347,90 @@ describe('API (e2e)', () => {
       expect(ikea[0].subcategory?.name).toBe('Shopping');
     });
 
+    // The refinement case, which a blanket "a rule fired, so learn nothing"
+    // guard used to kill: the correction teaches a longer pattern, which wins
+    // longest-match, and the broad rule survives untouched.
+    it('learns a more specific rule when the correction is not the same pattern', async () => {
+      const shopping = await subId('Shopping');
+      // A Subscriptions entry the seed already provides; looked up like the rest.
+      const subs = { id: await subId('Streaming') };
+      await request(http)
+        .post('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ pattern: 'amazon', subcategoryId: shopping })
+        .expect(201);
+
+      const batch = await doImport(
+        ['Date,Amount,Description', '2026-07-04,-9.99,AMAZON PRIME VIDEO'].join(
+          '\n',
+        ),
+      );
+      await request(http)
+        .patch(`/imports/${batch.id}/rows/${batch.rows[0].id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId: subs.id })
+        .expect(200);
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      const rules = await request(http)
+        .get('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const all = rules.body as {
+        pattern: string;
+        subcategory: { name: string } | null;
+      }[];
+      // The broad rule is untouched...
+      expect(all.find((r) => r.pattern === 'amazon')?.subcategory?.name).toBe(
+        'Shopping',
+      );
+      // ...and the specific one was learned.
+      expect(
+        all.find((r) => r.pattern === 'amazon prime video')?.subcategory?.name,
+      ).toBe('Streaming');
+    });
+
+    // Same merchant, two categories, one batch. Nothing can say which is the
+    // rule, so the upsert must not silently keep whichever row came last.
+    it('learns nothing when one merchant is corrected two different ways', async () => {
+      const groceries = await subId('Groceries');
+      const shopping = await subId('Shopping');
+      const batch = await doImport(
+        [
+          'Date,Amount,Description',
+          '2026-07-04,-167.85,Ikea',
+          '2026-07-04,-13.45,Ikea',
+        ].join('\n'),
+      );
+      await request(http)
+        .patch(`/imports/${batch.id}/rows/${batch.rows[0].id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId: shopping })
+        .expect(200);
+      await request(http)
+        .patch(`/imports/${batch.id}/rows/${batch.rows[1].id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId: groceries })
+        .expect(200);
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      const rules = await request(http)
+        .get('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(
+        (rules.body as { pattern: string }[]).filter(
+          (r) => r.pattern === 'ikea',
+        ),
+      ).toHaveLength(0);
+    });
+
     it('counts a rule as used only for rows the user kept', async () => {
       const shopping = await subId('Shopping');
       const groceries = await subId('Groceries');

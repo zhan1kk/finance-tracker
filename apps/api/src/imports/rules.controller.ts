@@ -31,7 +31,11 @@ export class RulesController {
   /** Dry run: what each candidate pattern would match. Creates nothing. */
   @Post('preview')
   preview(@CurrentUser() user: AuthUser, @Body() body: PreviewRulesDTO) {
-    return this.rulesService.preview(user.userId, body.patterns);
+    return this.rulesService.preview(
+      user.userId,
+      body.patterns,
+      body.subcategoryId,
+    );
   }
 
   @Post('bulk')
