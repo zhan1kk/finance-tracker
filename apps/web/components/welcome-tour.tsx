@@ -63,7 +63,7 @@ const STEPS: Step[] = [
   {
     icon: "👋",
     title: "Welcome to your finance tracker",
-    body: "It's private: your data stays on this server and the categorization runs locally, so nothing is sent to an outside AI service. Here's a quick tour — each step has a “More details” link if you want the full story.",
+    body: "Your data lives on this server. One thing leaves it: when you import a statement, each row's description and amount go to Claude to suggest a category — never your balances, card numbers or logins. Reading PDFs, reminders and insights all run here. Here's a quick tour — each step has a “More details” link if you want the full story.",
   },
   {
     icon: "🏦",
