@@ -31,28 +31,68 @@ describe('OllamaCategorizationProvider', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
-  it('maps a valid structured response back to the real row ids', async () => {
-    // The prompt aliases row ids to chunk indexes ("1", "2", …), so the model
-    // answers in aliases; the provider must translate back to the real ids.
-    mockFetchResolve({
+  /** Categorization is two calls: parent category, then subcategory. */
+  const mockTwoStage = (
+    parentAlias: string | null,
+    subAlias: string | null,
+  ) => {
+    const reply = (id: string | null, confidence: number) => ({
       ok: true,
       json: () =>
         Promise.resolve({
           message: {
             content: JSON.stringify({
-              items: [{ rowId: '1', subcategoryId: 'a', confidence: 0.9 }],
+              items: [{ rowId: '1', subcategoryId: id, confidence }],
             }),
           },
         }),
     });
+    return jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(reply(parentAlias, 0.9) as unknown as Response)
+      .mockResolvedValueOnce(reply(subAlias, 0.9) as unknown as Response);
+  };
+
+  it("asks for a parent category first, then only that parent's subcategories", async () => {
+    mockTwoStage('p1', 'c1');
     expect(await provider.categorize([input('r1')], subs)).toEqual([
       { rowId: 'r1', subcategoryId: 'a', confidence: 0.9 },
     ]);
-    const body = JSON.parse(
+
+    const calls = (global.fetch as jest.Mock).mock.calls;
+    expect(calls).toHaveLength(2);
+    // Stage one offers broad categories, not the subcategory list.
+    const first = JSON.parse(calls[0][1].body as string);
+    expect(first.messages[1].content).toContain('Expenses');
+    expect(first.messages[1].content).not.toContain('Groceries');
+    // Stage two offers the subcategories, with row ids still aliased.
+    const second = JSON.parse(calls[1][1].body as string);
+    expect(second.messages[1].content).toContain('Groceries');
+    expect(second.messages[1].content).toContain('rowId 1');
+    expect(second.messages[1].content).not.toContain('r1');
+  });
+
+  // Guessing against the full list is what produced confident nonsense, so a
+  // row whose parent could not be determined is left for the user instead.
+  it('returns null when the parent stage gives nothing usable', async () => {
+    mockTwoStage(null, 'c1');
+    expect(await provider.categorize([input('r1')], subs)).toEqual([
+      { rowId: 'r1', subcategoryId: null, confidence: 0 },
+    ]);
+    // No second call: there was no parent to narrow to.
+    expect((global.fetch as jest.Mock).mock.calls).toHaveLength(1);
+  });
+
+  it('never offers Income categories to an expense row', async () => {
+    mockTwoStage('p1', 'c1');
+    await provider.categorize(
+      [input('r1')],
+      [...subs, { id: 'b', name: 'Salary', category: 'Income' }],
+    );
+    const first = JSON.parse(
       (global.fetch as jest.Mock).mock.calls[0][1].body as string,
     );
-    expect(body.messages[1].content).toContain('rowId 1');
-    expect(body.messages[1].content).not.toContain('r1');
+    expect(first.messages[1].content).not.toContain('Income');
   });
 
   it('falls back to null predictions on a non-OK response', async () => {

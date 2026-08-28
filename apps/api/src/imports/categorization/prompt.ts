@@ -77,6 +77,38 @@ export function aliasSubcategories(subcategories: SubcategoryLite[]): {
   return { aliased, realIdFor };
 }
 
+/**
+ * Prompt for the first of two stages: which parent category does each row
+ * belong to?
+ *
+ * Measured on the server with qwen2.5:7b and a real 61-subcategory list, the
+ * flat question is hopeless: 0-1 correct out of 6, and every row in a batch
+ * comes back with the same answer. Cut to one parent's 19 subcategories and the
+ * same model on the same rows scores 5/6. The list length is the variable, not
+ * the batch size and not the wording.
+ *
+ * So: pick among six parents first, then among that parent's subcategories.
+ * Both questions are short enough for the model to actually answer.
+ */
+export function buildParentPrompt(
+  chunk: CategorizationInput[],
+  parents: string[],
+): string {
+  const cats = parents.map((c, i) => `- p${i + 1} — ${c}`).join('\n');
+  const rows = chunk
+    .map(
+      (c) =>
+        `- rowId ${c.rowId}: ${c.type} ${(c.amount / 100).toFixed(2)} — "${c.description}"`,
+    )
+    .join('\n');
+  return `Categories:\n${cats}\n\nTransactions:\n${rows}`;
+}
+
+export const PARENT_SYSTEM_PROMPT =
+  'You sort bank/card transactions into broad categories. For each transaction ' +
+  'choose the single best category id from the list, or null if none fits. ' +
+  'Also return a confidence between 0 and 1. Use only ids from the list.';
+
 /** Renders the subcategory list + a chunk of transactions as the user prompt. */
 export function buildCategorizationPrompt(
   chunk: CategorizationInput[],

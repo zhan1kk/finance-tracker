@@ -9,6 +9,8 @@ import type {
 import {
   aliasSubcategories,
   buildCategorizationPrompt,
+  buildParentPrompt,
+  PARENT_SYSTEM_PROMPT,
   CATEGORIZATION_RESPONSE_SCHEMA,
   CATEGORIZATION_SYSTEM_PROMPT,
   coercePredictions,
@@ -66,10 +68,127 @@ export class OllamaCategorizationProvider implements CategorizationProvider {
     for (let i = 0; i < inputs.length; i += CHUNK_SIZE) {
       const chunk = inputs.slice(i, i + CHUNK_SIZE);
       results.push(
-        ...(await this.categorizeChunk(chunk, subcategories, allowedIds)),
+        ...(await this.categorizeChunkTwoStage(
+          chunk,
+          subcategories,
+          allowedIds,
+        )),
       );
     }
     return results;
+  }
+
+  /**
+   * Narrows the candidate list before asking for a subcategory.
+   *
+   * A local model cannot pick one of sixty; measured, it answers the same id for
+   * every row in the batch. Asking which of six parent categories a row belongs
+   * to is easy, and the follow-up question then offers only that parent's
+   * subcategories, which is a list short enough to answer well.
+   *
+   * A row whose parent cannot be determined falls through to null rather than
+   * being guessed against the full list, since that is what produced confident
+   * nonsense before.
+   */
+  private async categorizeChunkTwoStage(
+    chunk: CategorizationInput[],
+    subcategories: SubcategoryLite[],
+    allowedIds: Set<string>,
+  ): Promise<CategorizationPrediction[]> {
+    const nullFor = (rows: CategorizationInput[]) =>
+      rows.map((c) => ({ rowId: c.rowId, subcategoryId: null, confidence: 0 }));
+
+    // Only parents that can apply: an expense row is never Income, and offering
+    // it anyway is how "ALDI SUED" became "K's salary".
+    const parentsFor = (row: CategorizationInput) =>
+      [...new Set(subcategories.map((s) => s.category))].filter((c) =>
+        row.type === 'INCOME' ? c === 'Income' : c !== 'Income',
+      );
+
+    const parents = parentsFor(chunk[0]);
+    if (parents.length === 0) return nullFor(chunk);
+
+    const parentOf = await this.pickParents(chunk, parents);
+
+    // Ask once per parent, with only that parent's subcategories on the table.
+    const byRow = new Map<string, CategorizationPrediction>();
+    for (const parent of parents) {
+      const rows = chunk.filter((c) => parentOf.get(c.rowId) === parent);
+      if (rows.length === 0) continue;
+      const subs = subcategories.filter((s) => s.category === parent);
+      if (subs.length === 0) continue;
+      for (const p of await this.categorizeChunk(rows, subs, allowedIds)) {
+        byRow.set(p.rowId, p);
+      }
+    }
+
+    return chunk.map(
+      (c) =>
+        byRow.get(c.rowId) ?? {
+          rowId: c.rowId,
+          subcategoryId: null,
+          confidence: 0,
+        },
+    );
+  }
+
+  /** Stage one: which broad category is each row? Returns rowId -> parent. */
+  private async pickParents(
+    chunk: CategorizationInput[],
+    parents: string[],
+  ): Promise<Map<string, string>> {
+    const aliased = chunk.map((c, i) => ({ ...c, rowId: String(i + 1) }));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const chosen = new Map<string, string>();
+    try {
+      const res = await fetch(`${this.baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: this.model,
+          stream: false,
+          think: false,
+          keep_alive: OLLAMA_KEEP_ALIVE,
+          format: CATEGORIZATION_RESPONSE_SCHEMA,
+          options: { temperature: 0, num_ctx: NUM_CTX },
+          messages: [
+            { role: 'system', content: PARENT_SYSTEM_PROMPT },
+            {
+              role: 'user',
+              content: buildParentPrompt(aliased, parents),
+            },
+          ],
+        }),
+      });
+      if (!res.ok) return chosen;
+      const data = (await res.json()) as { message?: { content?: unknown } };
+      const content = data.message?.content;
+      if (typeof content !== 'string') return chosen;
+      const items = (JSON.parse(content) as { items?: unknown }).items;
+      if (!Array.isArray(items)) return chosen;
+      items.forEach((raw, i) => {
+        const item = raw as Record<string, unknown>;
+        const alias =
+          typeof item?.subcategoryId === 'string' ? item.subcategoryId : null;
+        const index = alias ? Number(alias.replace(/^p/, '')) : NaN;
+        const parent = parents[index - 1];
+        // Same positional fallback as the subcategory stage: the model is
+        // unreliable at echoing an id, so when nothing matches but the counts
+        // line up, order is the only thing left to trust.
+        const row = chunk[i];
+        if (parent && row) chosen.set(row.rowId, parent);
+      });
+      return chosen;
+    } catch (err) {
+      this.logger.error(
+        `Ollama parent stage failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return chosen;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private async categorizeChunk(
