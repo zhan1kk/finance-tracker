@@ -1,5 +1,6 @@
 import { Logger, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { optionalSetting } from '../common/env';
 import { JobsModule } from '../jobs/jobs.module';
 import { AnthropicCategorizationProvider } from './categorization/anthropic.provider';
 import { CategorizationService } from './categorization/categorization.service';
@@ -60,8 +61,12 @@ import {
               'CATEGORIZER=anthropic requires ANTHROPIC_API_KEY to be set',
             );
           }
+          // optionalSetting, not `??`: compose passes this as
+          // ${ANTHROPIC_MODEL:-}, so unset arrives as "" and would
+          // sail past a nullish check straight into the API as an
+          // empty model name.
           const model =
-            config.get<string>('ANTHROPIC_MODEL') ?? 'claude-sonnet-5';
+            optionalSetting(config, 'ANTHROPIC_MODEL') ?? 'claude-sonnet-5';
           logger.log(
             `Categorizing imports with Anthropic ${model} — row descriptions and amounts leave this machine`,
           );

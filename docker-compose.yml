@@ -38,6 +38,7 @@ services:
       INVITE_CODE: ${INVITE_CODE:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
       # Must be passed explicitly: without it the provider factory falls back to
       # Anthropic whenever ANTHROPIC_API_KEY happens to be set.
       CATEGORIZER: ${CATEGORIZER:-}
