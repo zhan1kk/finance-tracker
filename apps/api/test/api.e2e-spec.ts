@@ -1431,6 +1431,36 @@ describe('API (e2e)', () => {
       ).toHaveLength(0);
     });
 
+    it('records what ran the import and how long it took', async () => {
+      const batch = await doImport();
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      const res = await request(http)
+        .get('/imports/stats/accuracy')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const stats = res.body as {
+        byBatch: {
+          provider: string;
+          model: string | null;
+          categorizeMs: number | null;
+          extractMs: number | null;
+          rows: number;
+        }[];
+      };
+      const mine = stats.byBatch[stats.byBatch.length - 1];
+      expect(mine.provider).toBe('heuristic');
+      // Timed, not merely present: a zero would mean the clock never ran.
+      expect(mine.categorizeMs).toBeGreaterThanOrEqual(0);
+      expect(mine.categorizeMs).not.toBeNull();
+      // CSV needs no extraction, so that stays null and the two are separable.
+      expect(mine.extractMs).toBeNull();
+      expect(mine.rows).toBeGreaterThan(0);
+    });
+
     it('counts a rule as used only for rows the user kept', async () => {
       const shopping = await subId('Shopping');
       const groceries = await subId('Groceries');

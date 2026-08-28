@@ -28,6 +28,9 @@ export type CategorizationPrediction = {
  */
 export interface CategorizationProvider {
   readonly name: string;
+  /** The model behind this provider, when there is one. Recorded per import so
+   *  runs can be compared across models after the fact. */
+  readonly modelName?: string;
   categorize(
     inputs: CategorizationInput[],
     subcategories: SubcategoryLite[],

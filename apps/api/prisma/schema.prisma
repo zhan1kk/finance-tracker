@@ -348,6 +348,15 @@ model ImportBatch {
   threshold   Float             @default(0.7)
   /// Name of the categorization provider used (e.g. "heuristic", "anthropic")
   provider    String
+  /// Which model the provider used, when it used one. Recorded so imports can
+  /// be compared across models: the same statement through a 4B and an 8B model
+  /// differ in both accuracy and wall time, and neither is inferable later.
+  model       String?
+  /// Milliseconds spent turning a PDF into rows. Null for CSV, which needs no
+  /// extraction, so the two import kinds can be timed separately.
+  extractMs   Int?
+  /// Milliseconds spent categorizing, excluding parsing and extraction.
+  categorizeMs Int?
   createdAt   DateTime          @default(now())
   committedAt DateTime?
 

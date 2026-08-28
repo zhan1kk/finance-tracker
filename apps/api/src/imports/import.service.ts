@@ -181,7 +181,11 @@ export class ImportService {
     const threshold =
       dto.threshold ??
       numericSetting(this.config, 'DEFAULT_CATEGORIZATION_THRESHOLD', 0.7);
+    // Timed on its own, excluding parsing and PDF extraction, so a model
+    // comparison is not muddied by how long a file took to read.
+    const categorizeStart = Date.now();
     await this.categorize(userId, staged, threshold);
+    const categorizeMs = Date.now() - categorizeStart;
 
     const batch = await this.prisma.importBatch.create({
       data: {
@@ -190,6 +194,9 @@ export class ImportService {
         filename: dto.filename,
         threshold,
         provider: this.categorization.providerName,
+        model: this.categorization.modelName,
+        categorizeMs,
+        extractMs: dto.extractMs ?? null,
         rows: {
           create: staged.map((row) => ({
             rowIndex: row.rowIndex,
@@ -995,7 +1002,17 @@ export class ImportService {
         subcategoryId: true,
         corrected: true,
         predictionSource: true,
-        batch: { select: { id: true, filename: true, committedAt: true } },
+        batch: {
+          select: {
+            id: true,
+            filename: true,
+            committedAt: true,
+            provider: true,
+            model: true,
+            extractMs: true,
+            categorizeMs: true,
+          },
+        },
       },
     });
 
@@ -1010,6 +1027,17 @@ export class ImportService {
         accuracy: predicted === 0 ? null : correct / predicted,
       };
     };
+
+    // Total rows per batch, including ones the model never predicted, so a
+    // timing can be divided by the work actually done.
+    const rowCounts = await this.prisma.importRow.groupBy({
+      by: ['batchId'],
+      where: { batch: { userId, status: 'COMMITTED' } },
+      _count: { _all: true },
+    });
+    const rowsPerBatch = new Map(
+      rowCounts.map((r) => [r.batchId, r._count._all]),
+    );
 
     const byBatch = new Map<string, typeof rows>();
     for (const row of rows) {
@@ -1029,6 +1057,13 @@ export class ImportService {
           batchId: list[0].batch.id,
           filename: list[0].batch.filename,
           committedAt: list[0].batch.committedAt,
+          provider: list[0].batch.provider,
+          model: list[0].batch.model,
+          extractMs: list[0].batch.extractMs,
+          categorizeMs: list[0].batch.categorizeMs,
+          // Every row in the batch, not only the predicted ones tallied above,
+          // so seconds-per-row is computed against the real workload.
+          rows: rowsPerBatch.get(list[0].batch.id) ?? list.length,
           ...tally(list),
         }))
         .sort(

@@ -44,6 +44,10 @@ export class PdfImportService {
     userId: string,
     input: { accountId: string; filename: string; pdfBase64: string },
   ) {
+    // Extraction is timed separately from categorization: a PDF pays for
+    // reading the file *and* for the model, and only one of those changes when
+    // the model does.
+    const extractStart = Date.now();
     const text = await this.extractText(input.pdfBase64);
     if (text.trim().length === 0) {
       throw new BadRequestException(
@@ -56,6 +60,7 @@ export class PdfImportService {
       select: { currency: true },
     });
     const rows = await this.extractTransactions(text, account?.currency);
+    const extractMs = Date.now() - extractStart;
     if (rows.length === 0) {
       throw new BadRequestException(
         'No transactions could be extracted from the PDF. You can still import a CSV instead.',
@@ -68,6 +73,7 @@ export class PdfImportService {
       accountId: input.accountId,
       filename: input.filename,
       csv: this.toCsv(rows),
+      extractMs,
       mapping: {
         dateColumn: 'Date',
         amountColumn: 'Amount',

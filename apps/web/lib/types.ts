@@ -356,6 +356,14 @@ export type AccuracyStats = {
     batchId: string;
     filename: string;
     committedAt: string | null;
+    /** Which categorizer ran, and the model behind it when there was one. */
+    provider: string;
+    model: string | null;
+    /** PDF text extraction; null for CSV, which needs none. */
+    extractMs: number | null;
+    categorizeMs: number | null;
+    /** Every row in the batch, not only the ones that got a prediction. */
+    rows: number;
   })[];
 };
 

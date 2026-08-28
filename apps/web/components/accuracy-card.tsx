@@ -91,6 +91,27 @@ function RecentBatches({ rows }: { rows: AccuracyStats["byBatch"] }) {
                 <span className="w-16 shrink-0 text-right text-xs tabular-nums text-zinc-400">
                   {batch.correct}/{batch.predicted}
                 </span>
+                {/* What this run cost and what ran it, so two imports of
+                    comparable statements can be compared directly. */}
+                <span className="w-44 shrink-0 text-right text-xs text-zinc-400">
+                  {batch.model ?? batch.provider}
+                  {batch.categorizeMs != null && (
+                    <>
+                      {" · "}
+                      {Math.round(batch.categorizeMs / 1000)}s
+                      {batch.rows > 0 && (
+                        <>
+                          {" ("}
+                          {(batch.categorizeMs / 1000 / batch.rows).toFixed(1)}
+                          s/row)
+                        </>
+                      )}
+                    </>
+                  )}
+                  {batch.extractMs != null && (
+                    <> {`· +${Math.round(batch.extractMs / 1000)}s read`}</>
+                  )}
+                </span>
         </li>
       ))}
     </ul>

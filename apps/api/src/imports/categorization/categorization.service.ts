@@ -22,6 +22,10 @@ export class CategorizationService {
     return this.provider.name;
   }
 
+  get modelName(): string | null {
+    return this.provider.modelName ?? null;
+  }
+
   categorize(
     inputs: CategorizationInput[],
     subcategories: SubcategoryLite[],

@@ -49,6 +49,10 @@ const NUM_CTX = 8192;
  */
 export class OllamaCategorizationProvider implements CategorizationProvider {
   readonly name = 'ollama';
+
+  get modelName(): string {
+    return this.model;
+  }
   private readonly logger = new Logger(OllamaCategorizationProvider.name);
 
   constructor(

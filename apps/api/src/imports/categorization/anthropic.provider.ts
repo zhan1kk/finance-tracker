@@ -26,6 +26,10 @@ const MAX_TOKENS = 8192;
  */
 export class AnthropicCategorizationProvider implements CategorizationProvider {
   readonly name = 'anthropic';
+
+  get modelName(): string {
+    return this.model;
+  }
   private readonly logger = new Logger(AnthropicCategorizationProvider.name);
   private readonly client: Anthropic;
 
