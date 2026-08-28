@@ -1,7 +1,15 @@
 # Finance Tracker
 
-Personal finance tracker: accounts, categorized transactions, and (eventually) smart
-statement imports, budgets, and reports. See [PLAN.md](PLAN.md) for the roadmap.
+Self-hosted personal finance tracker: accounts, categorized transactions,
+statement imports with LLM categorization, budgets, reminders and reports.
+
+> ### 👉 New here? Read **[SETUP.md](SETUP.md)** instead.
+>
+> It walks through the whole thing from nothing — installing Docker, getting a
+> Claude API key, downloading a local model — assuming no terminal experience.
+> This README is the reference for people who already know their way around.
+
+See [PLAN.md](PLAN.md) for the roadmap.
 
 ## Stack
 
@@ -20,16 +28,17 @@ Requirements: Node 22+, pnpm 10, Docker.
 ```bash
 pnpm install
 
-# create the local env file
+# create the local env file, then set JWT_SECRET in it
 cp apps/api/.env.example apps/api/.env
 
 # start PostgreSQL (exposed on host port 5433)
 docker compose up -d db
 
 # apply migrations + generate the Prisma client
-pnpm --filter api exec prisma migrate dev
+pnpm --filter api exec prisma migrate deploy
+pnpm --filter api exec prisma generate
 
-# seed default subcategories
+# seed default subcategories + a demo login
 pnpm --filter api exec prisma db seed
 
 # run API (http://localhost:3000) and web app (http://localhost:3001)
@@ -40,6 +49,11 @@ Interactive API docs (Swagger) are served at <http://localhost:3000/docs>.
 
 The API reads `DATABASE_URL` and `JWT_SECRET` from `apps/api/.env`
 (see `apps/api/.env.example`; the compose database listens on host port **5433**).
+
+Categorization is optional and off by default — set `ANTHROPIC_API_KEY` for
+Claude, or run Ollama for a local model. See
+[CSV import & categorization](#csv-import--categorization-optional-llm) below,
+or [SETUP.md](SETUP.md) for the step-by-step version.
 
 ## Authentication
 
@@ -56,7 +70,7 @@ The seed script creates a demo login: `demo@local.test` / `changeme123`.
 
 ## Telegram quick-capture (optional)
 
-Log spending by messaging a Telegram bot. Fields are separated by ` - `:
+Log spending by messaging a Telegram bot. Fields are separated by `-`:
 
 ```
 40 - dining out - lunch with friends        expense, dated today
@@ -137,7 +151,7 @@ Rent, salary, subscriptions and installments post themselves on a schedule.
   cadence DAILY/WEEKLY/MONTHLY/YEARLY × an interval, start date, optional end
   date, optional installment count). Rules can be paused/resumed.
 - A daily cron (`@nestjs/schedule`) posts every due occurrence; `POST
-  /recurring/run` triggers it on demand. Catch-up after downtime is handled, the
+/recurring/run` triggers it on demand. Catch-up after downtime is handled, the
   schedule is month-end-anchored (no drift), and rules deactivate automatically
   at their end date or installment count. Generated transactions link back to
   their rule and each run updates the account balance atomically.
@@ -148,10 +162,15 @@ Import a bank/card statement and have transactions categorized automatically.
 
 - `POST /imports/inspect` — `{ csv }`; returns detected headers + a sample so a
   column mapping can be built.
-- `POST /imports` — `{ accountId, filename, csv, mapping?, threshold? }`; stages
-  and categorizes the rows into a review batch. The mapping (which columns are
-  date/amount/description, date format, decimal separator) is remembered per
+- `POST /imports` — `{ accountId, filename, csv, mapping?, threshold?, categorizer? }`;
+  stages and categorizes the rows into a review batch. The mapping (which columns
+  are date/amount/description, date format, decimal separator) is remembered per
   account, so later imports can omit it.
+- `POST /imports/pdf` — `{ accountId, filename, pdfBase64, categorizer? }`; a local
+  Ollama model reads the statement into rows, which then flow through the same
+  pipeline. Extraction is always local, whichever categorizer is chosen.
+- `GET /imports/categorizers` — which providers this server can run, which is the
+  default, and which sends data off the machine.
 - `PATCH /imports/:id/rows/:rowId` — correct a row's category (the correction is
   learned as a rule on commit).
 - `POST /imports/:id/commit` — atomically create transactions for the resolved
@@ -159,14 +178,29 @@ Import a bank/card statement and have transactions categorized automatically.
 - `GET /imports/stats/accuracy` — categorization accuracy over time.
 - `/rules` — CRUD for merchant → subcategory rules.
 
-**How categorization works:** a rules pre-pass (your own + auto-learned merchant
-rules) runs first, then the remaining rows go to the configured provider. Without
-`ANTHROPIC_API_KEY` the provider only matches a transaction to a subcategory whose
-name literally appears in the description; everything else is left for you to
-categorize in the review queue (and your choice becomes a rule). Set
-`ANTHROPIC_API_KEY` to enable the LLM for the rows rules don't cover — predictions
-at/above the confidence threshold are auto-applied, the rest land in review.
-Re-uploading the same statement is de-duplicated, not double-counted.
+**How categorization works:** two layers, not three. A rules pre-pass (your own
+plus rules auto-learned from your corrections) runs first and never involves a
+model. Whatever it does not match goes to one categorization provider:
+
+| `CATEGORIZER` | Provider      | Notes                                                                                                                     |
+| ------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `anthropic`   | hosted Claude | Best accuracy. Sends each row's description, amount and direction to Anthropic — nothing else. Needs `ANTHROPIC_API_KEY`. |
+| `ollama`      | local model   | Nothing leaves the machine. Noticeably less accurate; use the largest model your RAM allows. Needs Ollama running.        |
+| `heuristic`   | name matching | Zero config. Only matches a subcategory whose name literally appears in the description; the rest go to review.           |
+
+`CATEGORIZER` sets the **default**. An import may name a different one
+(`categorizer` in the request body, a dropdown on the import screen), which is
+how two models are compared on the same statement: import, undo, import again
+with the other. Each batch records the provider and model that actually ran it,
+surfaced on the accuracy card — trust that over what `.env` says.
+
+Left unset, `CATEGORIZER` is inferred: Claude if an API key is present, otherwise
+the heuristic. The inference is logged at boot, loudly, because a silent one once
+sent a month of imports to the wrong provider.
+
+Predictions at/above `DEFAULT_CATEGORIZATION_THRESHOLD` (0.7) are auto-applied;
+the rest land in review, and your choice there becomes a rule. Re-uploading the
+same statement is de-duplicated, not double-counted.
 
 ## Testing
 
