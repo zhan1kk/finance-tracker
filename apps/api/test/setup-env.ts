@@ -11,6 +11,12 @@ process.env.JWT_SECRET ??= 'e2e-test-secret';
 // call an external model — non-deterministic, slow (timeouts), and billable.
 // Force the zero-config heuristic and strip provider creds so nothing reaches
 // out, regardless of what .env carries.
+//
+// Blanked, not deleted. ConfigModule parses .env itself and fills in every key
+// process.env is *missing*, so deleting one hands it straight back. That was
+// not theoretical: with a key in .env the suite reached the real Anthropic API
+// and was answered by it. An empty value survives, and optionalSetting reads
+// blank as unset everywhere it matters.
 process.env.CATEGORIZER = 'heuristic';
-delete process.env.ANTHROPIC_API_KEY;
-delete process.env.OLLAMA_BASE_URL;
+process.env.ANTHROPIC_API_KEY = '';
+process.env.OLLAMA_BASE_URL = '';

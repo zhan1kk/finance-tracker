@@ -1504,7 +1504,7 @@ describe('API (e2e)', () => {
     });
 
     it('records the categorizer an import asked for, not the default', async () => {
-      await request(http)
+      const created = await request(http)
         .post('/imports')
         .set('Authorization', `Bearer ${token}`)
         .send({
@@ -1515,12 +1515,24 @@ describe('API (e2e)', () => {
           categorizer: 'heuristic',
         })
         .expect(201);
+      const batchId = (created.body as { batch: { id: string } }).batch.id;
+      // Accuracy is only measured over committed rows, so the batch has to
+      // land before it shows up in the stats at all.
+      await request(http)
+        .post(`/imports/${batchId}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
       const res = await request(http)
         .get('/imports/stats/accuracy')
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
-      const stats = res.body as { byBatch: { provider: string }[] };
-      expect(stats.byBatch[stats.byBatch.length - 1].provider).toBe(
+      // Looked up by id: byBatch is built from a map of rows, so its order is
+      // not batch order and "the last one" is not this one.
+      const stats = res.body as {
+        byBatch: { batchId: string; provider: string }[];
+      };
+      expect(stats.byBatch.find((b) => b.batchId === batchId)?.provider).toBe(
         'heuristic',
       );
     });
@@ -1707,6 +1719,11 @@ describe('API (e2e)', () => {
         .expect(201);
       expect(await hitCountFor('ikea')).toBe(0);
 
+      // Undo parks the batch in UNDONE, which no longer opens for commit.
+      await request(http)
+        .post(`/imports/${batch.id}/reopen`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
       await request(http)
         .post(`/imports/${batch.id}/commit`)
         .set('Authorization', `Bearer ${token}`)
