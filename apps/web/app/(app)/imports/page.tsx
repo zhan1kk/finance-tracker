@@ -16,6 +16,7 @@ import {
   DATE_FORMATS,
   type ImportBatchSummary,
   type ImportResult,
+  type SkippedRow,
 } from "@/lib/types";
 
 /** First header matching any of the patterns (case-insensitive), else "". */
@@ -32,14 +33,35 @@ export default function ImportsPage() {
   // Owned here, not in NewImport: opening a batch unmounts NewImport in the same
   // tick it sets this, so a banner rendered there would never reach the screen —
   // and unparseable rows would go missing silently.
-  const [skipped, setSkipped] = useState(0);
+  const [skipped, setSkipped] = useState<SkippedRow[]>([]);
 
-  const skippedNotice = skipped > 0 && (
-    <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
-      {skipped} row{skipped === 1 ? "" : "s"} could not be read (unparseable date
-      or amount) and {skipped === 1 ? "was" : "were"} left out of this import.
-      Check the statement if a transaction seems to be missing.
-    </p>
+  // Named rather than counted. The old banner said "unparseable date or amount"
+  // for every skip, which is wrong for most of them — a reverted or declined
+  // authorization is dropped on purpose — and left the only way to find out
+  // which row it was as diffing the CSV by hand. The reason and the row both
+  // come back from the server already.
+  const skippedNotice = skipped.length > 0 && (
+    <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+      <p>
+        {skipped.length} row{skipped.length === 1 ? " was" : "s were"} left out
+        of this import:
+      </p>
+      <ul className="mt-1 space-y-0.5">
+        {skipped.map((row) => (
+          <li key={row.rowIndex} className="flex flex-wrap gap-x-2">
+            <span className="font-medium">Row {row.rowIndex}</span>
+            <span>— {row.reason}</span>
+            <span className="truncate text-amber-700/80 dark:text-amber-400/80">
+              {Object.values(row.raw)
+                .map((v) => v.trim())
+                .filter(Boolean)
+                .slice(0, 4)
+                .join(" · ")}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 
   if (activeBatchId) {
@@ -50,7 +72,7 @@ export default function ImportsPage() {
           batchId={activeBatchId}
           onDone={() => {
             setActiveBatchId(null);
-            setSkipped(0);
+            setSkipped([]);
           }}
         />
       </main>
@@ -75,7 +97,7 @@ export default function ImportsPage() {
 function NewImport({
   onImported,
 }: {
-  onImported: (batchId: string, skippedRows: number) => void;
+  onImported: (batchId: string, skippedRows: SkippedRow[]) => void;
 }) {
   const queryClient = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -165,7 +187,7 @@ function NewImport({
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: ["import-batches"] });
       reset();
-      onImported(result.batch.id, result.skipped.length);
+      onImported(result.batch.id, result.skipped);
     },
     onError: setError,
   });
@@ -193,7 +215,7 @@ function NewImport({
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: ["import-batches"] });
       reset();
-      onImported(result.batch.id, result.skipped.length);
+      onImported(result.batch.id, result.skipped);
     },
     onError: setError,
   });

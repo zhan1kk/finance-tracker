@@ -277,7 +277,13 @@ export type ImportBatch = {
   rows: ImportRow[];
 };
 
-export type SkippedRow = { rowIndex: number; reason: string; raw: unknown };
+export type SkippedRow = {
+  /** 1-based position among the file's data rows, header excluded. */
+  rowIndex: number;
+  reason: string;
+  /** The row as parsed, column name to value. */
+  raw: Record<string, string>;
+};
 
 export type ImportResult = { batch: ImportBatch; skipped: SkippedRow[] };
 
