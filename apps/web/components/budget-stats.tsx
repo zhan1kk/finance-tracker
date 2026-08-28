@@ -66,9 +66,13 @@ function Stat({
 export function BudgetSummary({
   budgets,
   currency,
+  className = "mb-4",
 }: {
   budgets: Budget[];
   currency: string;
+  /** Outer spacing. The Budgets page needs a gap before the list under it; a
+   *  card that holds nothing else does not. */
+  className?: string;
 }) {
   if (budgets.length === 0) return null;
   const totalLimit = budgets.reduce((a, b) => a + b.limit, 0);
@@ -80,7 +84,7 @@ export function BudgetSummary({
   const over = totalSpent > totalLimit;
 
   return (
-    <div className="mb-4">
+    <div className={className}>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Stat label="Total budget" value={formatCents(totalLimit, currency)} />
         <Stat label="Spent" value={formatCents(totalSpent, currency)} />

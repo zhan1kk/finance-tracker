@@ -3,6 +3,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";
+import { BudgetSummary } from "@/components/budget-stats";
 import {
   CategoryDonut,
   MonthlyTrendChart,
@@ -86,12 +87,14 @@ export default function OverviewPage() {
     enabled: (accounts.data?.length ?? 0) > 0,
   });
 
-  // Last checklist item. Only asked while the checklist is still on screen, so
-  // an established user never pays for this request.
-  const anyBudget = useQuery({
+  // Drives the last checklist item and the budget card. Asked whenever there is
+  // anything to budget against, not only while the checklist is up: the page
+  // that should answer "am I inside my limits this month" was the one page not
+  // mentioning budgets at all.
+  const budgets = useQuery({
     queryKey: ["budgets", shown],
     queryFn: () => api<Budget[]>(`/budgets?period=${shown}`),
-    enabled: !setupDismissed && (anyTx.data?.total ?? 0) > 0,
+    enabled: (anyTx.data?.total ?? 0) > 0,
   });
 
   // Ask for exactly the selected period, and a window ending with it for the trend.
@@ -178,7 +181,7 @@ export default function OverviewPage() {
 
   const hasAccounts = (accounts.data?.length ?? 0) > 0;
   const hasTransactions = (anyTx.data?.total ?? 0) > 0;
-  const hasBudgets = (anyBudget.data?.length ?? 0) > 0;
+  const hasBudgets = (budgets.data?.length ?? 0) > 0;
   const dismissSetup = () => {
     localStorage.setItem(SETUP_DONE_KEY, "1");
     setSetupDismissed(true);
@@ -274,6 +277,27 @@ export default function OverviewPage() {
           />
         </div>
       </section>
+
+      {hasBudgets && (
+        <Card>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="font-medium">
+              Budgets
+              <span className="ml-2 text-sm font-normal text-zinc-500">
+                {formatPeriod(shown, monthStartDay)}
+              </span>
+            </h2>
+            <Link href="/budgets" className="text-sm text-zinc-500 underline">
+              Manage
+            </Link>
+          </div>
+          <BudgetSummary
+            budgets={budgets.data ?? []}
+            currency={currency}
+            className=""
+          />
+        </Card>
+      )}
 
       {monthStats.data && baselineStats.data && (
         <SpendingInsights
