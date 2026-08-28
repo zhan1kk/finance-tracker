@@ -10,6 +10,7 @@ import { formatTimestamp } from "@/lib/format";
 import { runJob } from "@/lib/poll-job";
 import {
   type Account,
+  type CategorizerOption,
   type ColumnMapping,
   type CsvInspection,
   DATE_FORMATS,
@@ -86,10 +87,25 @@ function NewImport({
   const [mapping, setMapping] = useState<ColumnMapping | null>(null);
   const [error, setError] = useState<unknown>(null);
 
+  const [categorizer, setCategorizer] = useState("");
+
   const accounts = useQuery({
     queryKey: ["accounts"],
     queryFn: () => api<Account[]>("/accounts"),
   });
+  // Which categorizers this server can actually run. Offering the choice per
+  // import is the only way to compare two models on the same statement, and it
+  // stops the decision living invisibly in an environment variable.
+  const categorizers = useQuery({
+    queryKey: ["categorizers"],
+    queryFn: () => api<CategorizerOption[]>("/imports/categorizers"),
+  });
+  const offered = categorizers.data?.filter((c) => c.available) ?? [];
+  // Derived rather than synced into state: the server's default stands until
+  // the user picks something, without an effect to keep the two in step.
+  const chosen =
+    offered.find((c) => c.id === categorizer) ??
+    offered.find((c) => c.isDefault);
 
   const reset = () => {
     setCsv("");
@@ -138,7 +154,13 @@ function NewImport({
     mutationFn: () =>
       api<ImportResult>("/imports", {
         method: "POST",
-        body: JSON.stringify({ accountId, filename, csv, mapping }),
+        body: JSON.stringify({
+          accountId,
+          filename,
+          csv,
+          mapping,
+          categorizer: chosen?.id,
+        }),
       }),
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: ["import-batches"] });
@@ -165,7 +187,7 @@ function NewImport({
       runJob<ImportResult>(() =>
         api<{ jobId: string }>("/imports/pdf", {
           method: "POST",
-          body: JSON.stringify({ accountId, ...vars }),
+          body: JSON.stringify({ accountId, ...vars, categorizer: chosen?.id }),
         }),
       ),
     onSuccess: (result) => {
@@ -214,6 +236,21 @@ function NewImport({
             ))}
           </Select>
         </Field>
+        {offered.length > 1 && (
+          <Field label="Categorize with">
+            <Select
+              value={chosen?.id ?? ""}
+              onChange={(e) => setCategorizer(e.target.value)}
+            >
+              {offered.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                  {c.model ? ` · ${c.model}` : ""}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
         <Field label="CSV file">
           <input
             ref={fileInput}
@@ -241,6 +278,15 @@ function NewImport({
           />
         </Field>
       </div>
+
+      {chosen && (
+        <p className="mt-2 text-sm text-zinc-500">
+          {chosen.sendsDataOffServer
+            ? `Each row's description and amount are sent to ${chosen.label} to suggest a category. Balances and account numbers are not.`
+            : "Nothing leaves this server. Less accurate on merchants it has not seen."}
+          {" Reading a PDF is always done locally, whichever you pick."}
+        </p>
+      )}
 
       {!accountId && (
         <p className="mt-2 text-sm text-zinc-400">

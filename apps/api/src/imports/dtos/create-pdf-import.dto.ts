@@ -1,4 +1,15 @@
-import { IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import {
+  IsIn,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
+import {
+  CATEGORIZER_IDS,
+  type CategorizerId,
+} from '../categorization/categorizer.factory';
 
 export class CreatePdfImportDTO {
   @IsUUID()
@@ -13,4 +24,10 @@ export class CreatePdfImportDTO {
   @IsString()
   @MinLength(1)
   public readonly pdfBase64!: string;
+
+  /** Applies to the categorization that follows extraction, not to reading the
+   *  PDF: that is always local. Omitted means the server default. */
+  @IsOptional()
+  @IsIn(CATEGORIZER_IDS)
+  public readonly categorizer?: CategorizerId;
 }

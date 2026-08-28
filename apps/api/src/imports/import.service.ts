@@ -14,6 +14,7 @@ import {
 import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
 import { CategorizationService } from './categorization/categorization.service';
+import type { CategorizationProvider } from './types/import.types';
 import { CsvParserService } from './csv-parser.service';
 import type { ColumnMappingDTO } from './dtos/column-mapping.dto';
 import type { CreateImportDTO } from './dtos/create-import.dto';
@@ -181,10 +182,14 @@ export class ImportService {
     const threshold =
       dto.threshold ??
       numericSetting(this.config, 'DEFAULT_CATEGORIZATION_THRESHOLD', 0.7);
+    // Resolved once and then carried, so the batch records the provider that
+    // actually ran this import rather than whatever is configured by the time
+    // the row is written.
+    const provider = this.categorization.resolve(dto.categorizer);
     // Timed on its own, excluding parsing and PDF extraction, so a model
     // comparison is not muddied by how long a file took to read.
     const categorizeStart = Date.now();
-    await this.categorize(userId, staged, threshold);
+    await this.categorize(userId, staged, threshold, provider);
     const categorizeMs = Date.now() - categorizeStart;
 
     const batch = await this.prisma.importBatch.create({
@@ -193,8 +198,8 @@ export class ImportService {
         accountId: dto.accountId,
         filename: dto.filename,
         threshold,
-        provider: this.categorization.providerName,
-        model: this.categorization.modelName,
+        provider: provider.name,
+        model: provider.modelName ?? null,
         categorizeMs,
         extractMs: dto.extractMs ?? null,
         rows: {
@@ -403,6 +408,13 @@ export class ImportService {
         excludeFromStats: false,
         predictedSubcategoryId: null,
         predictionSource: null,
+        // The rule that matched matched the *other* direction, so its id is no
+        // longer true of this row. Left behind it did two kinds of damage:
+        // undo decremented a hitCount this row never incremented (the count
+        // could go negative), and the "am I overruling the rule that fired?"
+        // check at commit saw a rule that had not fired, so categorizing a
+        // flipped row silently taught nothing.
+        ruleId: null,
         confidence: null,
         source: 'NONE',
         corrected: false,
@@ -896,8 +908,13 @@ export class ImportService {
     // Undoing removes the transactions those rules categorized, so the usage
     // counted at commit has to come back off. Without this, commit -> undo ->
     // commit counts the same rows twice.
+    // Same three conditions commit counts on, in the same order. Anything less
+    // takes usage off a rule that was never credited with it.
     const undoneRuleIds = batch.rows
-      .filter((r) => !r.corrected && r.ruleId !== null)
+      .filter(
+        (r) =>
+          r.predictionSource === 'RULE' && !r.corrected && r.ruleId !== null,
+      )
       .map((r) => r.ruleId as string);
 
     await this.prisma.$transaction([
@@ -1194,6 +1211,7 @@ export class ImportService {
     userId: string,
     staged: StagedRow[],
     threshold: number,
+    provider: CategorizationProvider,
   ) {
     // Only duplicates (rows already in the ledger) skip categorization; an
     // in-file repeat is a real charge and gets auto-categorized like any other.
@@ -1257,6 +1275,7 @@ export class ImportService {
         type: r.type,
       })),
       subcategories,
+      provider,
     );
     const byRow = new Map(predictions.map((p) => [p.rowId, p]));
     for (const row of forProvider) {

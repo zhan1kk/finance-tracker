@@ -1461,6 +1461,70 @@ describe('API (e2e)', () => {
       expect(mine.rows).toBeGreaterThan(0);
     });
 
+    it('offers the categorizers this server can actually run', async () => {
+      const res = await request(http)
+        .get('/imports/categorizers')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const options = res.body as {
+        id: string;
+        available: boolean;
+        isDefault: boolean;
+        sendsDataOffServer: boolean;
+      }[];
+      expect(options.map((o) => o.id).sort()).toEqual([
+        'anthropic',
+        'heuristic',
+        'ollama',
+      ]);
+      // Tests run with no API key, so Claude is listed but not offerable, and
+      // the only provider that would send data off the server is the one that
+      // cannot run.
+      const claude = options.find((o) => o.id === 'anthropic');
+      expect(claude).toMatchObject({
+        available: false,
+        isDefault: false,
+        sendsDataOffServer: true,
+      });
+      expect(options.filter((o) => o.isDefault)).toHaveLength(1);
+    });
+
+    it('rejects an import asking for a provider this server cannot run', async () => {
+      await request(http)
+        .post('/imports')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          accountId,
+          filename: 'statement.csv',
+          csv: CSV,
+          mapping: MAPPING,
+          categorizer: 'anthropic',
+        })
+        .expect(400);
+    });
+
+    it('records the categorizer an import asked for, not the default', async () => {
+      await request(http)
+        .post('/imports')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          accountId,
+          filename: 'statement.csv',
+          csv: CSV,
+          mapping: MAPPING,
+          categorizer: 'heuristic',
+        })
+        .expect(201);
+      const res = await request(http)
+        .get('/imports/stats/accuracy')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const stats = res.body as { byBatch: { provider: string }[] };
+      expect(stats.byBatch[stats.byBatch.length - 1].provider).toBe(
+        'heuristic',
+      );
+    });
+
     it('counts a rule as used only for rows the user kept', async () => {
       const shopping = await subId('Shopping');
       const groceries = await subId('Groceries');
@@ -1499,6 +1563,155 @@ describe('API (e2e)', () => {
       // Two kept, one corrected. A rule that fired and was overruled did its
       // job badly, so counting it would make a bad rule look well used.
       expect(ikea?.hitCount).toBe(2);
+    });
+
+    const hitCountFor = async (pattern: string): Promise<number> => {
+      const res = await request(http)
+        .get('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const found = (res.body as { pattern: string; hitCount: number }[]).find(
+        (r) => r.pattern === pattern,
+      );
+      if (!found) throw new Error(`rule ${pattern} not found`);
+      return found.hitCount;
+    };
+
+    it('counts a transfer rule the same as a subcategory one', async () => {
+      const other = await createAccount(0);
+      await request(http)
+        .post('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ pattern: 'to savings', counterAccountId: other.id })
+        .expect(201);
+
+      const batch = await doImport(
+        [
+          'Date,Amount,Description',
+          '2026-07-04,-10.00,To savings',
+          '2026-07-05,-20.00,To savings',
+        ].join('\n'),
+      );
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      expect(await hitCountFor('to savings')).toBe(2);
+    });
+
+    it('counts a row the user re-confirmed at the rule s own suggestion', async () => {
+      const shopping = await subId('Shopping');
+      await request(http)
+        .post('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ pattern: 'ikea', subcategoryId: shopping })
+        .expect(201);
+
+      const batch = await doImport(
+        ['Date,Amount,Description', '2026-07-04,-10.00,Ikea'].join('\n'),
+      );
+      // Clicking "confirm" on a row that already carries the rule's answer is
+      // agreement, not a correction, so the rule still did the work.
+      await request(http)
+        .patch(`/imports/${batch.id}/rows/${batch.rows[0].id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId: shopping })
+        .expect(200);
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      expect(await hitCountFor('ikea')).toBe(1);
+    });
+
+    // Flipping a row's direction invalidates the rule that matched it: that rule
+    // was for the other sign. Leaving its id on the row let undo take usage off
+    // a rule the row never credited, and made commit treat the row as
+    // "overruling the rule that fired", which silently skipped learning.
+    it('drops the matched rule when a row is flipped', async () => {
+      const shopping = await subId('Shopping');
+      const refunds = await subId('Groceries');
+      await request(http)
+        .post('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ pattern: 'ikea', subcategoryId: shopping })
+        .expect(201);
+
+      const batch = await doImport(
+        [
+          'Date,Amount,Description',
+          '2026-07-04,-10.00,Ikea',
+          '2026-07-05,-20.00,Ikea',
+        ].join('\n'),
+      );
+      await request(http)
+        .post(`/imports/${batch.id}/rows/${batch.rows[1].id}/flip`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      await request(http)
+        .patch(`/imports/${batch.id}/rows/${batch.rows[1].id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId: refunds })
+        .expect(200);
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      // Only the unflipped row was the rule's work.
+      expect(await hitCountFor('ikea')).toBe(1);
+      // The flipped row's correction taught its own rule, on the other sign.
+      const rules = await request(http)
+        .get('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const learned = (
+        rules.body as { pattern: string; type: string; hitCount: number }[]
+      ).filter((r) => r.pattern === 'ikea');
+      expect(learned.map((r) => r.type).sort()).toEqual(['EXPENSE', 'INCOME']);
+
+      // And undo takes back exactly what commit credited, never more.
+      await request(http)
+        .post(`/imports/${batch.id}/undo`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      expect(await hitCountFor('ikea')).toBe(0);
+    });
+
+    it('gives usage back on undo, and does not double count on re-commit', async () => {
+      const shopping = await subId('Shopping');
+      await request(http)
+        .post('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ pattern: 'ikea', subcategoryId: shopping })
+        .expect(201);
+
+      const batch = await doImport(
+        [
+          'Date,Amount,Description',
+          '2026-07-04,-10.00,Ikea',
+          '2026-07-05,-20.00,Ikea',
+        ].join('\n'),
+      );
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      expect(await hitCountFor('ikea')).toBe(2);
+
+      await request(http)
+        .post(`/imports/${batch.id}/undo`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      expect(await hitCountFor('ikea')).toBe(0);
+
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      expect(await hitCountFor('ikea')).toBe(2);
     });
 
     const doImport = async (csv = CSV, withMapping = true): Promise<Batch> => {

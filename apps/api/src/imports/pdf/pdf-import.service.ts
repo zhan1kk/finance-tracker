@@ -2,6 +2,7 @@ import { OLLAMA_KEEP_ALIVE } from '../../common/ollama';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { optionalSetting } from '../../common/env';
+import type { CategorizerId } from '../categorization/categorizer.factory';
 import { PrismaService } from '../../prisma.service';
 import { ImportService } from '../import.service';
 import {
@@ -42,7 +43,12 @@ export class PdfImportService {
 
   async importPdf(
     userId: string,
-    input: { accountId: string; filename: string; pdfBase64: string },
+    input: {
+      accountId: string;
+      filename: string;
+      pdfBase64: string;
+      categorizer?: CategorizerId;
+    },
   ) {
     // Extraction is timed separately from categorization: a PDF pays for
     // reading the file *and* for the model, and only one of those changes when
@@ -73,6 +79,9 @@ export class PdfImportService {
       accountId: input.accountId,
       filename: input.filename,
       csv: this.toCsv(rows),
+      // Reading the PDF is always local; this only picks who categorizes the
+      // rows it produced.
+      categorizer: input.categorizer,
       extractMs,
       mapping: {
         dateColumn: 'Date',

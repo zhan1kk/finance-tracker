@@ -427,3 +427,14 @@ export type RecurringRule = {
   annualizedCents: number;
   progress: number | null;
 };
+
+/** A categorizer this server can run, offered as a per-import choice. */
+export type CategorizerOption = {
+  id: "anthropic" | "ollama" | "heuristic";
+  label: string;
+  model: string | null;
+  /** Whether row descriptions and amounts leave the server when this one runs. */
+  sendsDataOffServer: boolean;
+  available: boolean;
+  isDefault: boolean;
+};

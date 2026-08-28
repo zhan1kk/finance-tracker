@@ -6,31 +6,44 @@ import {
   type CategorizationProvider,
   type SubcategoryLite,
 } from '../types/import.types';
+import {
+  CategorizerFactory,
+  type CategorizerOption,
+} from './categorizer.factory';
 
 /**
- * Thin seam over the active categorization provider so the rest of the app is
- * decoupled from whether the heuristic or the LLM is running.
+ * Thin seam over the categorization providers so the rest of the app is
+ * decoupled from whether the heuristic or an LLM is running, and from how one
+ * gets built.
  */
 @Injectable()
 export class CategorizationService {
   constructor(
     @Inject(CATEGORIZATION_PROVIDER)
     private readonly provider: CategorizationProvider,
+    private readonly factory: CategorizerFactory,
   ) {}
 
-  get providerName(): string {
-    return this.provider.name;
+  /**
+   * The provider an import should run on: the one it asked for, or the server
+   * default. Resolved once per import and then carried, so the batch records
+   * the provider that actually ran rather than whatever is configured now.
+   */
+  resolve(id?: string | null): CategorizationProvider {
+    return id ? this.factory.create(id) : this.provider;
   }
 
-  get modelName(): string | null {
-    return this.provider.modelName ?? null;
+  /** What this server can offer, for a UI to render as a choice. */
+  options(): CategorizerOption[] {
+    return this.factory.options();
   }
 
   categorize(
     inputs: CategorizationInput[],
     subcategories: SubcategoryLite[],
+    provider: CategorizationProvider = this.provider,
   ): Promise<CategorizationPrediction[]> {
     if (inputs.length === 0) return Promise.resolve([]);
-    return this.provider.categorize(inputs, subcategories);
+    return provider.categorize(inputs, subcategories);
   }
 }

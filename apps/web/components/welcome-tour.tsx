@@ -63,7 +63,7 @@ const STEPS: Step[] = [
   {
     icon: "👋",
     title: "Welcome to your finance tracker",
-    body: "Your data lives on this server. One thing leaves it: when you import a statement, each row's description and amount go to Claude to suggest a category — never your balances, card numbers or logins. Reading PDFs, reminders and insights all run here. Here's a quick tour — each step has a “More details” link if you want the full story.",
+    body: "Your data lives on this server. The one thing that can leave it is categorization: on the import screen you choose whether Claude or a local model suggests the categories, and Claude only ever sees a row's description and amount — never your balances, card numbers or logins. Reading PDFs, reminders and insights always run here. Here's a quick tour — each step has a “More details” link if you want the full story.",
   },
   {
     icon: "🏦",

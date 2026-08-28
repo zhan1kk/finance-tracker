@@ -17,6 +17,7 @@ import { CreatePdfImportDTO } from './dtos/create-pdf-import.dto';
 import { InspectCsvDTO } from './dtos/inspect-csv.dto';
 import { ReviewRowDTO } from './dtos/review-row.dto';
 import { SkipRowDTO } from './dtos/skip-row.dto';
+import { CategorizationService } from './categorization/categorization.service';
 import { ImportService } from './import.service';
 import { MappingService } from './mapping.service';
 import { PdfImportService } from './pdf/pdf-import.service';
@@ -28,6 +29,7 @@ export class ImportController {
     private readonly mappingService: MappingService,
     private readonly pdfImportService: PdfImportService,
     private readonly jobs: JobsService,
+    private readonly categorization: CategorizationService,
   ) {}
 
   /** Detect headers + sample rows for building a column mapping. */
@@ -56,6 +58,13 @@ export class ImportController {
   @Get()
   listBatches(@CurrentUser() user: AuthUser) {
     return this.importService.listBatches(user.userId);
+  }
+
+  /** Which categorizers this server can run, so the import screen can offer a
+   *  choice instead of hiding the decision in an environment variable. */
+  @Get('categorizers')
+  categorizers() {
+    return this.categorization.options();
   }
 
   @Get('stats/accuracy')

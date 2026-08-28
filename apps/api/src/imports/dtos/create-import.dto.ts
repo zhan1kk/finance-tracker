@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -10,6 +11,10 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import {
+  CATEGORIZER_IDS,
+  type CategorizerId,
+} from '../categorization/categorizer.factory';
 import { ColumnMappingDTO } from './column-mapping.dto';
 
 export class CreateImportDTO {
@@ -37,6 +42,13 @@ export class CreateImportDTO {
   @Min(0)
   @Max(1)
   public readonly threshold?: number;
+
+  /** Which categorizer to run, when this import wants a specific one. Omitted
+   *  means the server default. Naming it per import is what makes two models
+   *  comparable on the same statement. */
+  @IsOptional()
+  @IsIn(CATEGORIZER_IDS)
+  public readonly categorizer?: CategorizerId;
 
   /** Milliseconds already spent extracting rows from a PDF, passed through by
    *  the PDF importer so the batch records extraction and categorization
