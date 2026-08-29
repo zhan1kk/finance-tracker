@@ -858,7 +858,12 @@ describe('API (e2e)', () => {
     let rentId: string;
 
     type Stats = {
-      monthly: { month: string; income: number; expense: number }[];
+      monthly: {
+        month: string;
+        income: number;
+        expense: number;
+        count: number;
+      }[];
       byCategory: { subcategoryId: string; name: string; amount: number }[];
       incomeByCategory: {
         subcategoryId: string;
@@ -916,8 +921,16 @@ describe('API (e2e)', () => {
 
       const stats = await getStats();
       expect(stats.monthly).toEqual([
-        { month: '2026-05', income: 300_000, expense: 80_000 },
-        { month: '2026-06', income: 0, expense: 12_000 },
+        expect.objectContaining({
+          month: '2026-05',
+          income: 300_000,
+          expense: 80_000,
+        }),
+        expect.objectContaining({
+          month: '2026-06',
+          income: 0,
+          expense: 12_000,
+        }),
       ]);
       expect(stats.byCategory).toEqual([
         expect.objectContaining({ subcategoryId: rentId, amount: 80_000 }),
@@ -962,7 +975,11 @@ describe('API (e2e)', () => {
       // so in that expense's month even though the money arrived in July — so
       // the monthly totals agree with the category breakdown below.
       expect(stats.monthly).toEqual([
-        { month: '2026-06', income: 0, expense: 6_000 },
+        expect.objectContaining({
+          month: '2026-06',
+          income: 0,
+          expense: 6_000,
+        }),
       ]);
       expect(stats.byCategory).toEqual([
         expect.objectContaining({ subcategoryId: groceriesId, amount: 6_000 }),
@@ -997,7 +1014,7 @@ describe('API (e2e)', () => {
       // The monthly total tells the same story as the categories — the two
       // views of one month must not disagree.
       expect(june.monthly).toEqual([
-        { month: '2026-06', income: 0, expense: 0 },
+        expect.objectContaining({ month: '2026-06', income: 0, expense: 0 }),
       ]);
 
       // July only received the money; it never had spending in that category.
@@ -1026,7 +1043,7 @@ describe('API (e2e)', () => {
       // The internal expense is excluded; its payback must not subtract either,
       // or spending would carry a phantom -3000 credit.
       expect(stats.monthly).toEqual([
-        { month: '2026-06', income: 0, expense: 0 },
+        expect.objectContaining({ month: '2026-06', income: 0, expense: 0 }),
       ]);
       expect(stats.byCategory).toEqual([]);
       expect(stats.incomeByCategory).toEqual([]);
@@ -1051,13 +1068,52 @@ describe('API (e2e)', () => {
       const stats = await getStats();
       // Only the real €1000 counts as income; the internal €5000 does not.
       expect(stats.monthly).toEqual([
-        { month: '2026-06', income: 100_000, expense: 0 },
+        expect.objectContaining({
+          month: '2026-06',
+          income: 100_000,
+          expense: 0,
+        }),
       ]);
       expect(stats.incomeByCategory).toEqual([
         expect.objectContaining({ subcategoryId: salaryId, amount: 100_000 }),
       ]);
       // But both moved the balance: 500k start + 100k + 500k.
       expect(await getBalance(accountId)).toBe(1_100_000);
+    });
+
+    // The reason MonthlyStat carries a count at all: a month with no spending
+    // and a month whose statement was never imported are otherwise identical,
+    // and the dashboard averages recent months into a baseline. Counting one
+    // transaction as a full month drags "typical" down and reports overspending
+    // that did not happen.
+    it('counts transactions per month, so an empty month can be told apart', async () => {
+      await addTransaction({
+        type: 'EXPENSE',
+        date: '2026-06-02',
+        amount: 1_000,
+        subcategoryId: groceriesId,
+      });
+      await addTransaction({
+        type: 'EXPENSE',
+        date: '2026-06-03',
+        amount: 2_000,
+        subcategoryId: groceriesId,
+      });
+      await addTransaction({
+        type: 'INCOME',
+        date: '2026-07-01',
+        amount: 5_000,
+        subcategoryId: salaryId,
+      });
+
+      const stats = await getStats('?from=2026-06-01&to=2026-07-31');
+      const june = stats.monthly.find((m) => m.month === '2026-06');
+      const july = stats.monthly.find((m) => m.month === '2026-07');
+      expect(june?.count).toBe(2);
+      // Income counts too: the question is whether anything was recorded, not
+      // whether anything was spent.
+      expect(july?.count).toBe(1);
+      expect(july?.expense).toBe(0);
     });
 
     it('respects the from/to range', async () => {
@@ -1076,7 +1132,11 @@ describe('API (e2e)', () => {
 
       const stats = await getStats('?from=2026-06-01&to=2026-06-30');
       expect(stats.monthly).toEqual([
-        { month: '2026-06', income: 0, expense: 2_000 },
+        expect.objectContaining({
+          month: '2026-06',
+          income: 0,
+          expense: 2_000,
+        }),
       ]);
       expect(stats.byCategory).toEqual([
         expect.objectContaining({ amount: 2_000 }),
