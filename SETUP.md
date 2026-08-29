@@ -437,7 +437,8 @@ The database container is not up. Run `docker compose up -d db`, then
 
 ### `The column ... does not exist in the current database`
 
-You updated the code but not the database. Run:
+You updated the code but not the database. Restarting `pnpm dev` fixes it — it
+migrates before it starts. To do it without restarting:
 
 ```bash
 pnpm --filter api exec prisma migrate deploy
@@ -504,7 +505,9 @@ Then close and reopen your terminal.
 ## Keeping it running
 
 **Day to day:** open a terminal, `cd ~/finance-tracker`, `pnpm dev`. The database
-starts itself with Docker.
+starts itself with Docker, and `pnpm dev` applies any database changes a `git
+pull` brought in before it starts the app — the same thing the production
+container does on boot.
 
 **Updating to a newer version:**
 
@@ -512,9 +515,13 @@ starts itself with Docker.
 cd ~/finance-tracker
 git pull
 pnpm install
-pnpm --filter api exec prisma migrate deploy
 pnpm dev
 ```
+
+`pnpm dev` migrates the database first, so a pull that adds a column cannot
+leave the app running against a schema it no longer matches. Skipping that step
+does not fail loudly — it surfaces as a plain "Internal server error" the first
+time you touch whatever the new column belongs to.
 
 Your `.env` and your data are untouched by updates.
 
