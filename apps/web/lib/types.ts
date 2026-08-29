@@ -175,6 +175,9 @@ export type MonthlyStat = {
   month: string;
   income: number;
   expense: number;
+  /** Transactions recorded in the month; 0 means the statement was never
+   *  imported, which is not the same as a month with no spending. */
+  count: number;
 };
 
 /** Spending per subcategory in cents, net of linked reimbursements. */

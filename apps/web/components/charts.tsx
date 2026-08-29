@@ -567,11 +567,18 @@ export function SpendingPaceChart({
   data,
   currency,
   todayIndex,
+  baselineMonths,
+  skippedMonths,
 }: {
   data: PacePoint[];
   currency: string;
   /** Index of today within `data`, or null when the period is already over. */
   todayIndex: number | null;
+  /** How many months the typical line averages. Named in the legend rather than
+   *  assumed, because it is not always the whole window. */
+  baselineMonths: number;
+  /** Months left out for holding too little to be a fair sample. */
+  skippedMonths: number;
 }) {
   const [hover, setHover] = useState<number | null>(null);
 
@@ -752,7 +759,16 @@ export function SpendingPaceChart({
             }}
           />
           Typical
+          {baselineMonths > 0 && ` · ${baselineMonths}mo avg`}
         </span>
+        {skippedMonths > 0 && (
+          <span
+            className="text-zinc-400"
+            title="A month with far fewer transactions than the others is a month whose statement was never imported, not a frugal one. Averaging it in would report overspending that did not happen."
+          >
+            {skippedMonths} month{skippedMonths === 1 ? "" : "s"} skipped
+          </span>
+        )}
       </div>
 
       {hovered && hover !== null && (

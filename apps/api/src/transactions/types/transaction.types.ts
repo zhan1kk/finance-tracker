@@ -62,6 +62,10 @@ export type MonthlyStat = {
   month: string;
   income: number;
   expense: number;
+  /** Transactions recorded in the month. Distinguishes a month with no spending
+   *  from one whose statement was never imported — which matters when months are
+   *  averaged into a baseline. */
+  count: number;
 };
 
 /** Spending on one calendar day in cents, netted like MonthlyStat.expense. */

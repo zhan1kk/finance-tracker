@@ -146,13 +146,35 @@ export default function OverviewPage() {
   const expenses =
     monthStats.data?.monthly.reduce((sum, m) => sum + m.expense, 0) ?? 0;
   // Baseline = the 3-month window's totals divided by 3 (typical monthly spend).
+  // Which of the three prior periods are usable as a baseline at all.
+  //
+  // A period with one transaction in it is not a frugal month, it is a month
+  // whose statement was never imported — and averaging it in drags "typical"
+  // down by a third and reports overspending that did not happen. The test is
+  // relative rather than a fixed count, so it adapts to how much a person
+  // actually records: a month counts if it has at least a quarter of the median
+  // month's transactions. The median month always passes its own test, so this
+  // can never discard everything.
+  const baselineMonths = baselineStats.data?.monthly ?? [];
+  const counts = baselineMonths.map((m) => m.count).sort((a, b) => a - b);
+  const median = counts.length === 0 ? 0 : counts[Math.floor(counts.length / 2)];
+  const minCount = Math.max(1, Math.round(median * 0.25));
+  const usableMonths = baselineMonths.filter((m) => m.count >= minCount);
+  const usablePeriods = new Set(usableMonths.map((m) => m.month));
+  // Never divide by zero, and never by more months than actually contributed.
+  const baselineDivisor = Math.max(1, usableMonths.length);
+  const skippedMonths = baselineMonths.length - usableMonths.length;
+
   const baselineExpenses =
-    (baselineStats.data?.monthly.reduce((sum, m) => sum + m.expense, 0) ?? 0) /
-    BASELINE_MONTHS;
+    usableMonths.reduce((sum, m) => sum + m.expense, 0) / baselineDivisor;
+  // byCategory is summed across the whole window and cannot be split by month,
+  // so a skipped month's spending stays in the numerator while its month leaves
+  // the divisor. By definition that is a handful of euros against a full month,
+  // and correcting it would cost a query per month for no visible difference.
   const baselineByCategory =
     baselineStats.data?.byCategory.map((r) => ({
       ...r,
-      amount: r.amount / BASELINE_MONTHS,
+      amount: r.amount / baselineDivisor,
     })) ?? [];
   // All cross-account aggregates are converted to the base currency server-side,
   // so they are always formatted in it (not any single account's currency).
@@ -182,8 +204,14 @@ export default function OverviewPage() {
   const periodDays = dayCount(selected);
   const thisPeriod = cumulative(selected, monthStats.data?.daily ?? []);
   const baselineCurves = [1, 2, 3]
-    .map((n) => periodRange(shiftPeriod(shown, -n), monthStartDay))
-    .map((r) => cumulative(r, baselineStats.data?.daily ?? []))
+    .map((n) => shiftPeriod(shown, -n))
+    .filter((label) => usablePeriods.has(label))
+    .map((label) =>
+      cumulative(
+        periodRange(label, monthStartDay),
+        baselineStats.data?.daily ?? [],
+      ),
+    )
     .filter((curve) => curve.at(-1));
 
   // Where to stop the "this period" line: today if the period is running, its
@@ -334,6 +362,7 @@ export default function OverviewPage() {
           baseline={baselineByCategory}
           curTotal={expenses}
           baselineTotal={baselineExpenses}
+          baselineMonths={baselineDivisor}
           currency={currency}
           month={formatPeriod(shown, monthStartDay)}
         />
@@ -366,6 +395,8 @@ export default function OverviewPage() {
               data={pace}
               currency={currency}
               todayIndex={endIdx >= 0 ? endIdx : null}
+              baselineMonths={baselineCurves.length}
+              skippedMonths={skippedMonths}
             />
           )}
         </Card>
@@ -511,6 +542,7 @@ function SpendingInsights({
   baseline,
   curTotal,
   baselineTotal,
+  baselineMonths,
   currency,
   month,
 }: {
@@ -519,6 +551,9 @@ function SpendingInsights({
   baseline: TransactionStats["byCategory"];
   curTotal: number;
   baselineTotal: number;
+  /** How many months that average is actually over — fewer than the window when
+   *  a month had too little in it to be a fair sample. */
+  baselineMonths: number;
   currency: string;
   month: string;
 }) {
@@ -553,7 +588,7 @@ function SpendingInsights({
           Math.round(((curTotal - baselineTotal) / baselineTotal) * 100),
         )}% ${
           curTotal > baselineTotal ? "more" : "less"
-        } than your 3-month average (${formatCents(
+        } than your ${baselineMonths}-month average (${formatCents(
           Math.round(baselineTotal),
           currency,
         )} → ${formatCents(curTotal, currency)}).`
@@ -562,7 +597,7 @@ function SpendingInsights({
     (m) =>
       `${m.name} is ${m.delta > 0 ? "up" : "down"} ${Math.abs(m.pct)}% (${
         m.delta > 0 ? "+" : "−"
-      }${formatCents(Math.abs(m.delta), currency)}) vs its 3-month average.`,
+      }${formatCents(Math.abs(m.delta), currency)}) vs its ${baselineMonths}-month average.`,
   );
   const facts = [...(overallText ? [overallText] : []), ...moverTexts];
 

@@ -65,7 +65,8 @@ export class TransactionStatsService {
                -- counted, so netting its payback would leave a phantom credit.
                WHERE t."type" = 'INCOME' AND t."parentTransactionId" IS NOT NULL
                  AND p."excludeFromStats" = false
-             ), 0))::int AS expense
+             ), 0))::int AS expense,
+          COUNT(*)::int AS count
         FROM "Transaction" t
         JOIN "Account" a ON a."id" = t."accountId"
         LEFT JOIN "Transaction" p ON p."id" = t."parentTransactionId"

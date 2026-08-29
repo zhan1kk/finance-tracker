@@ -54,10 +54,16 @@ const at = (iso: string, over: Partial<Row> = {}): Row => ({
 
 describe('TelegramService.listDueReminders', () => {
   const today = new Date();
+  // Formatted from local components, not toISOString(): the service counts days
+  // against the server's own calendar day, so serializing through UTC made every
+  // fixture land a day early whenever local and UTC dates differ — which is
+  // every night between midnight and the UTC offset. The suite passed by day and
+  // failed after midnight.
   const plus = (n: number) => {
     const d = new Date(today);
     d.setDate(d.getDate() + n);
-    return d.toISOString().slice(0, 10);
+    const pad = (v: number) => String(v).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   };
 
   it('lists what is due, soonest first', async () => {
