@@ -254,6 +254,25 @@ describe('API (e2e)', () => {
     });
   });
 
+  // The register form asks this before anyone can authenticate, to decide
+  // whether to show an invite field at all. Tests run without INVITE_CODE.
+  describe('registration policy', () => {
+    it('is readable without a token, and reports the gate', async () => {
+      const res = await request(http).get('/auth/registration').expect(200);
+      expect(res.body).toEqual({ inviteRequired: false });
+    });
+
+    it('lets registration through while no code is configured', async () => {
+      await request(http)
+        .post('/auth/register')
+        .send({
+          email: `policy-${Date.now()}@test.local`,
+          password: 'password123',
+        })
+        .expect(201);
+    });
+  });
+
   describe('cross-user isolation', () => {
     it("hides another user's account, subcategories and transactions", async () => {
       const account = await createAccount(50_000);

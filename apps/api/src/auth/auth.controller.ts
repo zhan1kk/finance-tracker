@@ -30,6 +30,12 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Public()
+  @Get('registration')
+  registrationPolicy() {
+    return this.authService.registrationPolicy();
+  }
+
+  @Public()
   @Post('register')
   async register(
     @Body() body: RegisterDTO,

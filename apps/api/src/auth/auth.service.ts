@@ -30,6 +30,22 @@ export class AuthService {
     private readonly config: ConfigService,
   ) {}
 
+  /**
+   * Whether this deployment gates registration behind an invite code.
+   *
+   * The form used to hedge — "Invite code (if you were given one)" — which is
+   * wrong in both directions: on an invite-only deployment the field is
+   * mandatory and reads as optional, and on a self-hosted one with no code set
+   * it is dead weight the user has nothing to type into. Public because it is
+   * read before anyone can authenticate, and it discloses nothing beyond what
+   * attempting to register already tells you.
+   */
+  registrationPolicy(): { inviteRequired: boolean } {
+    return {
+      inviteRequired: Boolean(optionalSetting(this.config, 'INVITE_CODE')),
+    };
+  }
+
   async register(input: {
     email: string;
     password: string;

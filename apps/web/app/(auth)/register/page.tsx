@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input } from "@/components/ui";
+import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
 export default function RegisterPage() {
@@ -11,6 +13,14 @@ export default function RegisterPage() {
   const router = useRouter();
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  // Whether this deployment gates registration. Asked rather than assumed: the
+  // field is mandatory on an invite-only server and pointless on a self-hosted
+  // one with no code set, and the label used to hedge between the two.
+  const policy = useQuery({
+    queryKey: ["registration-policy"],
+    queryFn: () => api<{ inviteRequired: boolean }>("/auth/registration"),
+  });
+  const inviteRequired = policy.data?.inviteRequired ?? false;
 
   const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -43,9 +53,18 @@ export default function RegisterPage() {
           <Field label="Password (min. 8 characters)">
             <Input name="password" type="password" minLength={8} required />
           </Field>
-          <Field label="Invite code (if you were given one)">
-            <Input name="inviteCode" autoComplete="off" />
-          </Field>
+          {/* Hidden entirely where nothing gates registration — a field with
+              nothing to put in it is worse than no field. */}
+          {(inviteRequired || policy.isLoading) && (
+            <Field label="Invite code">
+              <Input
+                name="inviteCode"
+                autoComplete="off"
+                required={inviteRequired}
+                disabled={policy.isLoading}
+              />
+            </Field>
+          )}
           <ErrorText error={error} />
           <Button type="submit" disabled={busy}>
             {busy ? "Creating…" : "Register"}
