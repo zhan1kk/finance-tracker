@@ -53,84 +53,8 @@ function TableToggle({
   );
 }
 
+/** How many categories the donut names before folding the rest into Other. */
 const MAX_CATEGORY_ROWS = 7;
-
-export function CategoryBars({
-  data,
-  currency,
-}: {
-  /** Sorted by amount descending (as the stats endpoint returns them). */
-  data: CategoryStat[];
-  currency: string;
-}) {
-  const [hover, setHover] = useState<number | null>(null);
-
-  const spending = data.filter((d) => d.amount > 0);
-  if (spending.length === 0) {
-    return (
-      <p className="py-8 text-center text-sm text-zinc-500">
-        No spending in this period yet.
-      </p>
-    );
-  }
-
-  const rows: { label: string; amount: number }[] = spending
-    .slice(0, MAX_CATEGORY_ROWS)
-    .map((d) => ({ label: d.name, amount: d.amount }));
-  const tail = spending.slice(MAX_CATEGORY_ROWS);
-  if (tail.length > 0) {
-    rows.push({
-      label: "Other",
-      amount: tail.reduce((sum, d) => sum + d.amount, 0),
-    });
-  }
-
-  const total = spending.reduce((sum, d) => sum + d.amount, 0);
-  const max = Math.max(...rows.map((r) => r.amount));
-
-  return (
-    <ul className="flex flex-col gap-2">
-      {rows.map((row, i) => {
-        const share = Math.round((row.amount / total) * 100);
-        return (
-          <li
-            key={row.label}
-            tabIndex={0}
-            aria-label={`${row.label}: ${formatCents(row.amount, currency)}, ${share}% of spending`}
-            className="flex items-center gap-3 rounded outline-offset-2"
-            onMouseEnter={() => setHover(i)}
-            onMouseLeave={() => setHover(null)}
-            onFocus={() => setHover(i)}
-            onBlur={() => setHover(null)}
-          >
-            <span className="w-28 shrink-0 truncate text-sm" title={row.label}>
-              {row.label}
-            </span>
-            <span aria-hidden className="relative h-4 flex-1">
-              <span
-                className="absolute inset-y-0 left-0 rounded-r-[4px]"
-                style={{
-                  width: `${((row.amount / max) * 100).toFixed(1)}%`,
-                  backgroundColor: SERIES_1,
-                  opacity: hover === null || hover === i ? 1 : 0.45,
-                }}
-              />
-            </span>
-            <span className="w-20 shrink-0 text-right text-sm tabular-nums">
-              {formatCents(row.amount, currency)}
-            </span>
-            <span
-              aria-hidden
-              className="w-9 shrink-0 text-xs tabular-nums text-zinc-400"
-            >
-              {hover === i ? `${share}%` : ""}
-            </span>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
 
 // Colour-vision-deficiency-safe categorical palette (Okabe-Ito), used in a fixed
 // order so a category keeps its colour. "Other" always takes the grey.
