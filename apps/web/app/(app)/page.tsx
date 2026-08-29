@@ -6,14 +6,15 @@ import { useState } from "react";
 import { BudgetSummary } from "@/components/budget-stats";
 import {
   CategoryDonut,
-  MonthlyTrendChart,
   NetWorthChart,
+  type PacePoint,
+  SpendingPaceChart,
 } from "@/components/charts";
 import { Button, Card, Select } from "@/components/ui";
 import { TYPE_ACCENT, TYPE_BADGE } from "@/lib/account-style";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { formatCents, formatDate } from "@/lib/format";
+import { formatCents, formatDate, todayISO } from "@/lib/format";
 import {
   formatPeriod,
   periodOf,
@@ -24,14 +25,13 @@ import { revivePeriod, useStickyState } from "@/lib/sticky-state";
 import type {
   Account,
   Budget,
-  MonthlyStat,
+  DailyStat,
   NetWorthPoint,
   Reminder,
   TransactionList,
   TransactionStats,
 } from "@/lib/types";
 
-const TREND_MONTHS = 6;
 const BASELINE_MONTHS = 3;
 
 /** Set once the setup checklist is finished or dismissed, so it stays gone. */
@@ -97,12 +97,7 @@ export default function OverviewPage() {
     enabled: (anyTx.data?.total ?? 0) > 0,
   });
 
-  // Ask for exactly the selected period, and a window ending with it for the trend.
   const selected = periodRange(shown, monthStartDay);
-  const trendFrom = periodRange(
-    shiftPeriod(shown, 1 - TREND_MONTHS),
-    monthStartDay,
-  ).from;
 
   const monthStats = useQuery({
     queryKey: ["stats", selected],
@@ -123,13 +118,6 @@ export default function OverviewPage() {
     queryFn: () =>
       api<TransactionStats>(
         `/transactions/stats?from=${baselineRange.from}&to=${baselineRange.to}`,
-      ),
-  });
-  const trendStats = useQuery({
-    queryKey: ["stats", { from: trendFrom, to: selected.to }],
-    queryFn: () =>
-      api<TransactionStats>(
-        `/transactions/stats?from=${trendFrom}&to=${selected.to}`,
       ),
   });
   const netWorth = useQuery({
@@ -170,12 +158,53 @@ export default function OverviewPage() {
   // so they are always formatted in it (not any single account's currency).
   const currency = user?.baseCurrency ?? "EUR";
 
-  // Fill periods with no transactions so the trend always shows 6 columns.
-  const trend: MonthlyStat[] = Array.from({ length: TREND_MONTHS }, (_, i) => {
-    const month = shiftPeriod(shown, i + 1 - TREND_MONTHS);
-    const stat = trendStats.data?.monthly.find((m) => m.month === month);
-    return { month, income: stat?.income ?? 0, expense: stat?.expense ?? 0 };
-  });
+  // Spending so far this period against a typical one, both as running totals
+  // by day of the period. Periods are 28-31 days, so a shorter baseline month
+  // carries its final total forward rather than dragging the average down at
+  // the days it does not have.
+  const dayCount = (r: { from: string; to: string }) =>
+    Math.round((Date.parse(r.to) - Date.parse(r.from)) / 86_400_000) + 1;
+  const indexIn = (from: string, day: string) =>
+    Math.round((Date.parse(day) - Date.parse(from)) / 86_400_000);
+  const cumulative = (
+    range: { from: string; to: string },
+    days: DailyStat[],
+  ) => {
+    const perDay = new Array<number>(dayCount(range)).fill(0);
+    for (const d of days) {
+      const i = indexIn(range.from, d.day);
+      if (i >= 0 && i < perDay.length) perDay[i] += d.expense;
+    }
+    let run = 0;
+    return perDay.map((v) => (run += v));
+  };
+
+  const periodDays = dayCount(selected);
+  const thisPeriod = cumulative(selected, monthStats.data?.daily ?? []);
+  const baselineCurves = [1, 2, 3]
+    .map((n) => periodRange(shiftPeriod(shown, -n), monthStartDay))
+    .map((r) => cumulative(r, baselineStats.data?.daily ?? []))
+    .filter((curve) => curve.at(-1));
+
+  // Where to stop the "this period" line: today if the period is running, its
+  // last day if it has ended, nowhere if it has not started.
+  const todayIdx = indexIn(selected.from, todayISO());
+  const endIdx =
+    todayIdx < 0 ? -1 : todayIdx >= periodDays ? periodDays - 1 : todayIdx;
+
+  const pace: PacePoint[] = Array.from({ length: periodDays }, (_, i) => ({
+    day: i + 1,
+    spent: endIdx >= 0 && i <= endIdx ? thisPeriod[i] : null,
+    typical:
+      baselineCurves.length === 0
+        ? null
+        : Math.round(
+            baselineCurves.reduce(
+              (a, c) => a + c[Math.min(i, c.length - 1)],
+              0,
+            ) / baselineCurves.length,
+          ),
+  }));
 
   const noAccounts = accounts.data?.length === 0;
 
@@ -327,13 +356,17 @@ export default function OverviewPage() {
         </Card>
         <Card>
           <h2 className="mb-3 font-medium">
-            Income vs spending
+            Spending pace
             <span className="ml-2 text-sm font-normal text-zinc-500">
-              last 6 months
+              vs a typical month
             </span>
           </h2>
-          {trendStats.data && (
-            <MonthlyTrendChart data={trend} currency={currency} />
+          {monthStats.data && baselineStats.data && (
+            <SpendingPaceChart
+              data={pace}
+              currency={currency}
+              todayIndex={endIdx >= 0 ? endIdx : null}
+            />
           )}
         </Card>
         <Card className="lg:col-span-2">

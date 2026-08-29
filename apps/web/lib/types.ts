@@ -185,8 +185,13 @@ export type CategoryStat = {
   amount: number;
 };
 
+/** Spending on one calendar day in cents, netted like MonthlyStat.expense. */
+export type DailyStat = { day: string; expense: number };
+
 export type TransactionStats = {
   monthly: MonthlyStat[];
+  /** Only days with activity; gaps are zero. */
+  daily: DailyStat[];
   byCategory: CategoryStat[];
   /** Income per subcategory in cents (excludes reimbursements). */
   incomeByCategory: CategoryStat[];

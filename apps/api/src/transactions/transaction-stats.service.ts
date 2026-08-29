@@ -4,6 +4,7 @@ import { periodLabelShiftMonths, periodOffsetDays } from '../common/period';
 import { PrismaService } from '../prisma.service';
 import type {
   CategoryStat,
+  DailyStat,
   MonthlyStat,
   StatsQuery,
   TransactionStats,
@@ -50,7 +51,7 @@ export class TransactionStatsService {
       );
     const scope = (extra: Prisma.Sql) => scopeIn(extra, range);
 
-    const [monthly, byCategory, incomeByCategory] =
+    const [monthly, daily, byCategory, incomeByCategory] =
       await this.prisma.$transaction([
         this.prisma.$queryRaw<MonthlyStat[]>`
         SELECT
@@ -62,6 +63,28 @@ export class TransactionStatsService {
            - COALESCE(SUM(t."amountBase") FILTER (
                -- Skip reimbursements of an internal parent: that expense isn't
                -- counted, so netting its payback would leave a phantom credit.
+               WHERE t."type" = 'INCOME' AND t."parentTransactionId" IS NOT NULL
+                 AND p."excludeFromStats" = false
+             ), 0))::int AS expense
+        FROM "Transaction" t
+        JOIN "Account" a ON a."id" = t."accountId"
+        LEFT JOIN "Transaction" p ON p."id" = t."parentTransactionId"
+        WHERE ${scopeIn(
+          Prisma.sql`t."type" <> 'TRANSFER'`,
+          rangeOn(effectiveDate),
+        )}
+        GROUP BY 1
+        ORDER BY 1
+      `,
+        // Spending per calendar day, netted exactly like the monthly figure so
+        // a month's days sum to its total. Rendered as a running total against
+        // a typical month, which is the only view on the dashboard that says
+        // anything while the month is still running.
+        this.prisma.$queryRaw<DailyStat[]>`
+        SELECT
+          TO_CHAR(${effectiveDate}, 'YYYY-MM-DD') AS day,
+          (COALESCE(SUM(t."amountBase") FILTER (WHERE t."type" = 'EXPENSE'), 0)
+           - COALESCE(SUM(t."amountBase") FILTER (
                WHERE t."type" = 'INCOME' AND t."parentTransactionId" IS NOT NULL
                  AND p."excludeFromStats" = false
              ), 0))::int AS expense
@@ -126,7 +149,7 @@ export class TransactionStatsService {
       `,
       ]);
 
-    return { monthly, byCategory, incomeByCategory };
+    return { monthly, daily, byCategory, incomeByCategory };
   }
 
   /**

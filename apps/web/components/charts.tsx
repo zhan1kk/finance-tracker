@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { formatCents, formatCentsCompact } from "@/lib/format";
-import type { CategoryStat, MonthlyStat } from "@/lib/types";
+import type { CategoryStat } from "@/lib/types";
 
 const SERIES_1 = "var(--chart-series-1)";
 const SERIES_2 = "var(--chart-series-2)";
@@ -25,21 +25,6 @@ function niceCeil(v: number): number {
   const unit = v / pow;
   const nice = [1, 2, 2.5, 5, 10].find((c) => unit <= c) ?? 10;
   return nice * pow;
-}
-
-/** Column with a 4px-rounded cap and a square baseline. */
-function columnPath(x: number, yTop: number, w: number, h: number): string {
-  const r = Math.min(4, h, w / 2);
-  const yBase = yTop + h;
-  return [
-    `M ${x} ${yBase}`,
-    `L ${x} ${yTop + r}`,
-    `Q ${x} ${yTop} ${x + r} ${yTop}`,
-    `L ${x + w - r} ${yTop}`,
-    `Q ${x + w} ${yTop} ${x + w} ${yTop + r}`,
-    `L ${x + w} ${yBase}`,
-    "Z",
-  ].join(" ");
 }
 
 function monthLabel(month: string): string {
@@ -65,197 +50,6 @@ function TableToggle({
     >
       {asTable ? "View as chart" : "View as table"}
     </button>
-  );
-}
-
-export function MonthlyTrendChart({
-  data,
-  currency,
-}: {
-  /** One point per month, oldest first; gaps already filled with zeros. */
-  data: MonthlyStat[];
-  currency: string;
-}) {
-  const [hover, setHover] = useState<number | null>(null);
-  const [asTable, setAsTable] = useState(false);
-
-  const rawMax = Math.max(...data.map((d) => Math.max(d.income, d.expense)));
-  if (rawMax <= 0) {
-    return (
-      <p className="py-8 text-center text-sm text-zinc-500">
-        No income or spending in this period yet.
-      </p>
-    );
-  }
-
-  const step = niceCeil(rawMax / TICK_COUNT);
-  const yMax = step * TICK_COUNT;
-  const y = (cents: number) => PAD_TOP + PLOT_H * (1 - cents / yMax);
-
-  const band = PLOT_W / data.length;
-  const colWidth = Math.min(24, (band - 24) / 2);
-
-  const legend = (
-    <div className="mb-2 flex items-center gap-4 text-xs text-zinc-500">
-      {[
-        ["Income", SERIES_1],
-        ["Spending", SERIES_2],
-      ].map(([label, color]) => (
-        <span key={label} className="flex items-center gap-1.5">
-          <span
-            aria-hidden
-            className="h-2 w-2 rounded-full"
-            style={{ backgroundColor: color }}
-          />
-          {label}
-        </span>
-      ))}
-      <TableToggle asTable={asTable} onToggle={() => setAsTable(!asTable)} />
-    </div>
-  );
-
-  if (asTable) {
-    return (
-      <div>
-        {legend}
-        <div className="overflow-x-auto">
-        <table className="w-full min-w-[20rem] text-sm">
-          <thead>
-            <tr className="border-b border-zinc-200 text-left text-zinc-500 dark:border-zinc-800">
-              <th className="py-1.5 font-medium">Month</th>
-              <th className="py-1.5 text-right font-medium">Income</th>
-              <th className="py-1.5 text-right font-medium">Spending</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((d) => (
-              <tr
-                key={d.month}
-                className="border-b border-zinc-100 dark:border-zinc-900"
-              >
-                <td className="py-1.5">{monthLabel(d.month)}</td>
-                <td className="py-1.5 text-right tabular-nums">
-                  {formatCents(d.income, currency)}
-                </td>
-                <td className="py-1.5 text-right tabular-nums">
-                  {formatCents(d.expense, currency)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        </div>
-      </div>
-    );
-  }
-
-  const hovered = hover !== null ? data[hover] : null;
-
-  return (
-    <div>
-      {legend}
-      <div className="relative">
-        <svg
-          viewBox={`0 0 ${W} ${H}`}
-          className="w-full"
-          role="img"
-          aria-label="Monthly income and spending columns; table view available"
-        >
-          {/* gridlines + ticks */}
-          {Array.from({ length: TICK_COUNT + 1 }, (_, i) => {
-            const value = step * i;
-            const gy = y(value);
-            return (
-              <g key={i}>
-                <line
-                  x1={GUTTER}
-                  x2={W - PAD_RIGHT}
-                  y1={gy}
-                  y2={gy}
-                  stroke={i === 0 ? "var(--chart-axis)" : "var(--chart-grid)"}
-                  strokeWidth={1}
-                />
-                {i > 0 && (
-                  <text
-                    x={GUTTER - 6}
-                    y={gy + 3}
-                    textAnchor="end"
-                    fontSize={10}
-                    fill="var(--chart-muted)"
-                    style={{ fontVariantNumeric: "tabular-nums" }}
-                  >
-                    {formatCentsCompact(value, currency)}
-                  </text>
-                )}
-              </g>
-            );
-          })}
-
-          {data.map((d, i) => {
-            const x0 = GUTTER + band * i;
-            const cx = x0 + band / 2;
-            const values: [number, string][] = [
-              [d.income, SERIES_1],
-              [d.expense, SERIES_2],
-            ];
-            return (
-              <g key={d.month}>
-                {values.map(([value, color], s) => {
-                  if (value <= 0) return null;
-                  const h = (value / yMax) * PLOT_H;
-                  // 2px surface gap between the pair
-                  const x = cx + (s === 0 ? -colWidth - 1 : 1);
-                  return (
-                    <path
-                      key={s}
-                      d={columnPath(x, y(value), colWidth, h)}
-                      fill={color}
-                      opacity={hover === null || hover === i ? 1 : 0.45}
-                    />
-                  );
-                })}
-                <text
-                  x={cx}
-                  y={PAD_TOP + PLOT_H + 15}
-                  textAnchor="middle"
-                  fontSize={10}
-                  fill="var(--chart-muted)"
-                >
-                  {monthLabel(d.month)}
-                </text>
-                {/* full-band hover/focus target */}
-                <rect
-                  x={x0}
-                  y={PAD_TOP}
-                  width={band}
-                  height={PLOT_H}
-                  fill="transparent"
-                  tabIndex={0}
-                  aria-label={`${d.month}: income ${formatCents(d.income, currency)}, spending ${formatCents(d.expense, currency)}`}
-                  onMouseEnter={() => setHover(i)}
-                  onMouseLeave={() => setHover(null)}
-                  onFocus={() => setHover(i)}
-                  onBlur={() => setHover(null)}
-                />
-              </g>
-            );
-          })}
-        </svg>
-
-        {hovered && hover !== null && (
-          <div
-            className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 rounded-md bg-zinc-900 px-2.5 py-1.5 text-xs text-white shadow dark:bg-zinc-700"
-            style={{
-              left: `${(((GUTTER + band * (hover + 0.5)) / W) * 100).toFixed(2)}%`,
-            }}
-          >
-            <p className="mb-0.5 font-medium">{hovered.month}</p>
-            <p>Income {formatCents(hovered.income, currency)}</p>
-            <p>Spending {formatCents(hovered.expense, currency)}</p>
-          </div>
-        )}
-      </div>
-    </div>
   );
 }
 
@@ -817,6 +611,240 @@ export function NetWorthChart({
         >
           <p className="mb-0.5 font-medium">{hovered.month}</p>
           <p>{formatCents(hovered.netWorthCents, currency)}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One point per day of the period: what had been spent by the end of it. */
+export type PacePoint = {
+  /** 1-based day within the financial period. */
+  day: number;
+  /** Cumulative spend this period, or null once the period runs past today. */
+  spent: number | null;
+  /** Cumulative spend by this day in a typical recent period. */
+  typical: number | null;
+};
+
+/**
+ * Spending so far this period against a typical one.
+ *
+ * Replaces a grouped income-vs-spending chart, which asked you to read the gap
+ * between two bar heights while most of its ink — a near-constant salary —
+ * carried no information, and which sat between a Net figure that stated the
+ * same difference exactly and a net-worth line that showed its consequences.
+ *
+ * This is the only chart on the dashboard that says something while the month
+ * is still running: the vertical distance at today is how far ahead or behind
+ * a normal month you are, when there is still time to do something about it.
+ */
+export function SpendingPaceChart({
+  data,
+  currency,
+  todayIndex,
+}: {
+  data: PacePoint[];
+  currency: string;
+  /** Index of today within `data`, or null when the period is already over. */
+  todayIndex: number | null;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+
+  const values = data.flatMap((d) =>
+    [d.spent, d.typical].filter((v): v is number => v !== null),
+  );
+  const rawMax = Math.max(0, ...values);
+  if (data.length === 0 || rawMax <= 0) {
+    return (
+      <p className="py-8 text-center text-sm text-zinc-500">
+        No spending in this period yet.
+      </p>
+    );
+  }
+
+  const step = niceCeil(rawMax / TICK_COUNT);
+  const yMax = step * TICK_COUNT;
+  const y = (cents: number) => PAD_TOP + PLOT_H * (1 - cents / yMax);
+  const band = PLOT_W / data.length;
+  const x = (i: number) => GUTTER + band * (i + 0.5);
+
+  const ticks: number[] = [];
+  for (let v = step; v <= yMax; v += step) ticks.push(v);
+
+  const path = (pick: (d: PacePoint) => number | null) => {
+    const parts: string[] = [];
+    let open = false;
+    data.forEach((d, i) => {
+      const v = pick(d);
+      if (v === null) {
+        open = false;
+        return;
+      }
+      parts.push(`${open ? "L" : "M"} ${x(i)} ${y(v)}`);
+      open = true;
+    });
+    return parts.join(" ");
+  };
+  const spentPath = path((d) => d.spent);
+  const typicalPath = path((d) => d.typical);
+
+  const at = todayIndex !== null ? data[todayIndex] : null;
+  // The headline the chart exists to give: one number, in words.
+  const gap =
+    at && at.spent !== null && at.typical !== null
+      ? at.spent - at.typical
+      : null;
+
+  const hovered = hover !== null ? data[hover] : null;
+
+  return (
+    <div className="relative">
+      {gap !== null && (
+        <p className="mb-2 text-sm">
+          <span
+            className={
+              gap > 0
+                ? "font-medium text-rose-600 dark:text-rose-400"
+                : "font-medium text-emerald-600 dark:text-emerald-400"
+            }
+          >
+            {formatCents(Math.abs(gap), currency)}
+          </span>{" "}
+          <span className="text-zinc-500">
+            {gap > 0 ? "above" : "below"} a typical month by day{" "}
+            {(todayIndex ?? 0) + 1}
+          </span>
+        </p>
+      )}
+
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="w-full"
+        role="img"
+        aria-label="Spending so far this period against a typical one"
+      >
+        {ticks.map((value) => (
+          <g key={value}>
+            <line
+              x1={GUTTER}
+              x2={W - PAD_RIGHT}
+              y1={y(value)}
+              y2={y(value)}
+              stroke="var(--chart-grid)"
+              strokeWidth={1}
+            />
+            <text
+              x={GUTTER - 6}
+              y={y(value) + 3}
+              textAnchor="end"
+              fontSize={10}
+              fill="var(--chart-muted)"
+              style={{ fontVariantNumeric: "tabular-nums" }}
+            >
+              {formatCentsCompact(value, currency)}
+            </text>
+          </g>
+        ))}
+
+        {/* Typical first, so this period is drawn over it. */}
+        <path
+          d={typicalPath}
+          fill="none"
+          stroke={SERIES_2}
+          strokeWidth={2}
+          strokeDasharray="4 4"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+        <path
+          d={spentPath}
+          fill="none"
+          stroke={SERIES_1}
+          strokeWidth={2}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+        {at && at.spent !== null && (
+          <circle
+            cx={x(todayIndex as number)}
+            cy={y(at.spent)}
+            r={4}
+            fill={SERIES_1}
+            stroke="var(--chart-surface)"
+            strokeWidth={2}
+          />
+        )}
+
+        {data.map((d, i) => (
+          <g key={d.day}>
+            {(i === 0 || (i + 1) % 5 === 0) && (
+              <text
+                x={x(i)}
+                y={PAD_TOP + PLOT_H + 15}
+                textAnchor="middle"
+                fontSize={10}
+                fill="var(--chart-muted)"
+              >
+                {d.day}
+              </text>
+            )}
+            <rect
+              x={GUTTER + band * i}
+              y={PAD_TOP}
+              width={band}
+              height={PLOT_H}
+              fill="transparent"
+              tabIndex={0}
+              aria-label={`Day ${d.day}: ${
+                d.spent === null ? "no data yet" : formatCents(d.spent, currency)
+              } spent, typically ${
+                d.typical === null ? "unknown" : formatCents(d.typical, currency)
+              }`}
+              onMouseEnter={() => setHover(i)}
+              onMouseLeave={() => setHover(null)}
+              onFocus={() => setHover(i)}
+              onBlur={() => setHover(null)}
+            />
+          </g>
+        ))}
+      </svg>
+
+      <div className="mt-2 flex items-center gap-4 text-xs text-zinc-500">
+        <span className="flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className="h-0.5 w-4"
+            style={{ backgroundColor: SERIES_1 }}
+          />
+          This month
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className="h-0.5 w-4"
+            style={{
+              backgroundImage: `repeating-linear-gradient(to right, ${SERIES_2} 0 4px, transparent 4px 8px)`,
+            }}
+          />
+          Typical
+        </span>
+      </div>
+
+      {hovered && hover !== null && (
+        <div
+          className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 rounded-md bg-zinc-900 px-2.5 py-1.5 text-xs text-white shadow dark:bg-zinc-700"
+          style={{ left: `${((x(hover) / W) * 100).toFixed(2)}%` }}
+        >
+          <p className="mb-0.5 font-medium">Day {hovered.day}</p>
+          {hovered.spent !== null && (
+            <p>{formatCents(hovered.spent, currency)}</p>
+          )}
+          {hovered.typical !== null && (
+            <p className="text-zinc-300">
+              typically {formatCents(hovered.typical, currency)}
+            </p>
+          )}
         </div>
       )}
     </div>

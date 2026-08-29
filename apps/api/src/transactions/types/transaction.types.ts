@@ -64,6 +64,13 @@ export type MonthlyStat = {
   expense: number;
 };
 
+/** Spending on one calendar day in cents, netted like MonthlyStat.expense. */
+export type DailyStat = {
+  /** YYYY-MM-DD. Formatted in SQL so no timezone can shift it in transit. */
+  day: string;
+  expense: number;
+};
+
 /** Spending per subcategory in cents, net of reimbursements linked to its expenses. */
 export type CategoryStat = {
   subcategoryId: string;
@@ -74,6 +81,8 @@ export type CategoryStat = {
 
 export type TransactionStats = {
   monthly: MonthlyStat[];
+  /** Only days with activity; gaps are zero. */
+  daily: DailyStat[];
   byCategory: CategoryStat[];
   /** Income per subcategory in cents (excludes reimbursements). */
   incomeByCategory: CategoryStat[];
