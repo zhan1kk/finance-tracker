@@ -444,3 +444,35 @@ export type CategorizerOption = {
   available: boolean;
   isDefault: boolean;
 };
+
+/** Everything measurable about one import run, readable before it is committed. */
+export type ImportBenchmark = {
+  batchId: string;
+  filename: string;
+  status: ImportBatchStatus;
+  provider: string;
+  model: string | null;
+  threshold: number;
+  extractMs: number | null;
+  categorizeMs: number | null;
+  /** Categorization time per row the model was actually asked about. */
+  msPerModelRow: number | null;
+  rows: {
+    total: number;
+    duplicates: number;
+    offered: number;
+    matchedByRule: number;
+    sentToModel: number;
+  };
+  coverage: {
+    answered: number;
+    abstained: number;
+    rate: number | null;
+    autoApplied: number;
+    sentToReview: number;
+  };
+  accuracy: { kept: number; changed: number; rate: number | null };
+  /** Mean confidence on the answers that survived review, and on those that did not. */
+  confidence: { whenKept: number | null; whenChanged: number | null };
+  rules: { matched: number; kept: number; rate: number | null };
+};

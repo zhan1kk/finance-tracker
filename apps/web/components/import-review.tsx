@@ -9,6 +9,7 @@ import { SubcategoryOptions } from "@/components/subcategory-options";
 import type {
   Account,
   ImportBatch,
+  ImportBenchmark,
   ImportRow,
   ImportRowStatus,
   Subcategory,
@@ -75,6 +76,12 @@ export function ImportReview({
   const accounts = useQuery({
     queryKey: ["accounts"],
     queryFn: () => api<Account[]>("/accounts"),
+  });
+  // Shares the batch's query key so it refetches as rows are corrected — the
+  // ground truth for this panel is written at review time, not at commit.
+  const benchmark = useQuery({
+    queryKey: ["import-batch", batchId, "benchmark"],
+    queryFn: () => api<ImportBenchmark>(`/imports/${batchId}/benchmark`),
   });
 
   const invalidate = () => {
@@ -295,6 +302,8 @@ export function ImportReview({
           )}
         </div>
       </div>
+
+      {benchmark.data && <RunStats data={benchmark.data} />}
 
       {pending && reviewCount > 0 && (
         <p className="mb-3 text-sm text-amber-600">
@@ -584,5 +593,97 @@ function Row({
           ))}
       </td>
     </tr>
+  );
+}
+
+const pct = (v: number | null) =>
+  v === null ? "—" : `${Math.round(v * 100)}%`;
+const ms = (v: number | null) =>
+  v === null ? "—" : v >= 1000 ? `${(v / 1000).toFixed(1)}s` : `${Math.round(v)}ms`;
+
+function StatRow({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 py-1">
+      <span className="text-zinc-500">
+        {label}
+        {hint && (
+          <span className="ml-1 text-[11px] text-zinc-400">{hint}</span>
+        )}
+      </span>
+      <span className="tabular-nums font-medium">{value}</span>
+    </div>
+  );
+}
+
+/**
+ * Per-run measurements, for comparing one model against another on the same
+ * statement. Folded away because it is a benchmarking tool, not part of
+ * reviewing an import.
+ *
+ * The protocol it is built for: import, correct every row, read this, then
+ * *discard* — committing would make the next run of the same file all
+ * duplicates and would teach rules from the corrections, so the second model
+ * would be scored on a statement the first one had already taught.
+ */
+export function RunStats({ data }: { data: ImportBenchmark }) {
+  const { rows, coverage, accuracy, confidence, rules } = data;
+  return (
+    <details className="mt-3 rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-800">
+      <summary className="cursor-pointer text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">
+        Run stats — {data.provider}
+        {data.model ? ` · ${data.model}` : ""} · {ms(data.categorizeMs)}
+      </summary>
+      <div className="mt-2 grid gap-x-8 gap-y-1 sm:grid-cols-2">
+        <div>
+          <p className="mb-1 font-medium text-zinc-400">Work</p>
+          <StatRow label="Rows in file" value={String(rows.total)} />
+          <StatRow label="Duplicates" value={String(rows.duplicates)} hint="never asked" />
+          <StatRow label="Matched by a rule" value={String(rows.matchedByRule)} hint="never asked" />
+          <StatRow label="Sent to the model" value={String(rows.sentToModel)} />
+        </div>
+        <div>
+          <p className="mb-1 font-medium text-zinc-400">Time</p>
+          <StatRow label="Categorizing" value={ms(data.categorizeMs)} />
+          <StatRow label="Reading the PDF" value={ms(data.extractMs)} />
+          <StatRow label="Per row asked" value={ms(data.msPerModelRow)} />
+        </div>
+        <div>
+          <p className="mb-1 font-medium text-zinc-400">Coverage</p>
+          <StatRow label="Answered" value={`${coverage.answered} · ${pct(coverage.rate)}`} />
+          <StatRow label="Abstained" value={String(coverage.abstained)} />
+          <StatRow
+            label="Applied on its own"
+            value={String(coverage.autoApplied)}
+            hint={`≥ ${data.threshold}`}
+          />
+          <StatRow label="Left for review" value={String(coverage.sentToReview)} />
+        </div>
+        <div>
+          <p className="mb-1 font-medium text-zinc-400">Quality</p>
+          <StatRow
+            label="Kept"
+            value={`${accuracy.kept}/${accuracy.kept + accuracy.changed} · ${pct(accuracy.rate)}`}
+          />
+          <StatRow label="Confidence when kept" value={pct(confidence.whenKept)} />
+          <StatRow
+            label="Confidence when wrong"
+            value={pct(confidence.whenChanged)}
+            hint="close to the row above = uncalibrated"
+          />
+          <StatRow
+            label="Rules kept"
+            value={`${rules.kept}/${rules.matched} · ${pct(rules.rate)}`}
+          />
+        </div>
+      </div>
+    </details>
   );
 }

@@ -29,8 +29,13 @@ export class CategorizationService {
    * default. Resolved once per import and then carried, so the batch records
    * the provider that actually ran rather than whatever is configured now.
    */
-  resolve(id?: string | null): CategorizationProvider {
-    return id ? this.factory.create(id) : this.provider;
+  resolve(id?: string | null, model?: string | null): CategorizationProvider {
+    return id || model ? this.factory.create(id, model) : this.provider;
+  }
+
+  /** Models the local Ollama has pulled, for a per-run model picker. */
+  installedOllamaModels(): Promise<string[]> {
+    return this.factory.installedOllamaModels();
   }
 
   /** What this server can offer, for a UI to render as a choice. */

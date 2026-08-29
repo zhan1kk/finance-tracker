@@ -69,8 +69,15 @@ export class CategorizerFactory {
     );
   }
 
-  /** The provider for an import: the one it named, or the server default. */
-  create(id?: string | null): CategorizationProvider {
+  /**
+   * The provider for an import: the one it named, or the server default.
+   *
+   * `model` overrides the configured model for this run only. Comparing two
+   * local models otherwise means editing .env and restarting between every
+   * run — the manual step that already sent a month of imports to a provider
+   * nobody intended.
+   */
+  create(id?: string | null, model?: string | null): CategorizationProvider {
     const wanted = id?.trim().toLowerCase();
     const chosen = isCategorizerId(wanted ?? '')
       ? (wanted as CategorizerId)
@@ -86,13 +93,15 @@ export class CategorizerFactory {
           'Claude is not available: this server has no ANTHROPIC_API_KEY',
         );
       }
-      return new AnthropicCategorizationProvider(key, this.anthropicModel);
+      return new AnthropicCategorizationProvider(
+        key,
+        model?.trim() || this.anthropicModel,
+      );
     }
     if (chosen === 'ollama') {
       return new OllamaCategorizationProvider(
-        optionalSetting(this.config, 'OLLAMA_BASE_URL') ??
-          'http://localhost:11434',
-        this.ollamaModel,
+        this.ollamaBaseUrl,
+        model?.trim() || this.ollamaModel,
       );
     }
     return new HeuristicCategorizationProvider();
@@ -126,6 +135,33 @@ export class CategorizerFactory {
         isDefault: this.defaultId === 'heuristic',
       },
     ];
+  }
+
+  /**
+   * Models Ollama actually has pulled, so a UI can offer a real list instead of
+   * a free-text box. Its own call, not part of options(): it reaches over the
+   * network, and an unreachable Ollama must not slow down or break the list of
+   * providers. Unreachable simply means no models to choose from.
+   */
+  async installedOllamaModels(): Promise<string[]> {
+    try {
+      const res = await fetch(`${this.ollamaBaseUrl}/api/tags`);
+      if (!res.ok) return [];
+      const body = (await res.json()) as { models?: { name?: string }[] };
+      return (body.models ?? [])
+        .map((m) => m.name)
+        .filter((n): n is string => typeof n === 'string' && n.length > 0)
+        .sort();
+    } catch {
+      return [];
+    }
+  }
+
+  private get ollamaBaseUrl(): string {
+    return (
+      optionalSetting(this.config, 'OLLAMA_BASE_URL') ??
+      'http://localhost:11434'
+    );
   }
 
   private get apiKey(): string | undefined {

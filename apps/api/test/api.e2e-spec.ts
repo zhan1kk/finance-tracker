@@ -1461,6 +1461,57 @@ describe('API (e2e)', () => {
       expect(mine.rows).toBeGreaterThan(0);
     });
 
+    // The measurement this exists for happens before committing: committing a
+    // run makes the next run of the same file all duplicates and teaches rules
+    // from the corrections, so a second model would be scored on a statement
+    // the first had already taught.
+    it('measures a run that has not been committed', async () => {
+      const groceries = await subId('Groceries');
+      const batch = await doImport();
+      // Correcting a row is what writes the ground truth, and it happens here,
+      // not at commit.
+      await request(http)
+        .patch(`/imports/${batch.id}/rows/${batch.rows[0].id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId: groceries })
+        .expect(200);
+
+      const res = await request(http)
+        .get(`/imports/${batch.id}/benchmark`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const b = res.body as {
+        status: string;
+        provider: string;
+        categorizeMs: number | null;
+        msPerModelRow: number | null;
+        rows: {
+          total: number;
+          duplicates: number;
+          offered: number;
+          matchedByRule: number;
+          sentToModel: number;
+        };
+        coverage: { answered: number; abstained: number; rate: number | null };
+        accuracy: { kept: number; changed: number; rate: number | null };
+      };
+
+      expect(b.status).toBe('PENDING_REVIEW');
+      expect(b.provider).toBe('heuristic');
+      // Timed, not merely present.
+      expect(b.categorizeMs).not.toBeNull();
+      expect(b.msPerModelRow).not.toBeNull();
+      // The parts of the file account for the whole of it.
+      expect(b.rows.offered).toBe(b.rows.total - b.rows.duplicates);
+      expect(b.rows.sentToModel).toBe(b.rows.offered - b.rows.matchedByRule);
+      // Coverage splits what was asked, exactly.
+      expect(b.coverage.answered + b.coverage.abstained).toBe(
+        b.rows.sentToModel,
+      );
+      // The corrected row is counted against the prediction, not ignored.
+      expect(b.accuracy.kept + b.accuracy.changed).toBe(b.coverage.answered);
+    });
+
     it('offers the categorizers this server can actually run', async () => {
       const res = await request(http)
         .get('/imports/categorizers')

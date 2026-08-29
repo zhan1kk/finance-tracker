@@ -10,6 +10,7 @@ import {
   Min,
   MinLength,
   ValidateNested,
+  MaxLength,
 } from 'class-validator';
 import {
   CATEGORIZER_IDS,
@@ -49,6 +50,14 @@ export class CreateImportDTO {
   @IsOptional()
   @IsIn(CATEGORIZER_IDS)
   public readonly categorizer?: CategorizerId;
+
+  /** Model to run this import on, overriding the server's configured one. What
+   *  makes two local models comparable without an .env edit and a restart
+   *  between runs. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  public readonly categorizerModel?: string;
 
   /** Milliseconds already spent extracting rows from a PDF, passed through by
    *  the PDF importer so the batch records extraction and categorization

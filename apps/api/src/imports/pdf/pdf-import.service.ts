@@ -48,6 +48,7 @@ export class PdfImportService {
       filename: string;
       pdfBase64: string;
       categorizer?: CategorizerId;
+      categorizerModel?: string;
     },
   ) {
     // Extraction is timed separately from categorization: a PDF pays for
@@ -82,6 +83,7 @@ export class PdfImportService {
       // Reading the PDF is always local; this only picks who categorizes the
       // rows it produced.
       categorizer: input.categorizer,
+      categorizerModel: input.categorizerModel,
       extractMs,
       mapping: {
         dateColumn: 'Date',

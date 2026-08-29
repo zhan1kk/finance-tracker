@@ -67,6 +67,12 @@ export class ImportController {
     return this.categorization.options();
   }
 
+  /** Models the local Ollama has pulled, for the per-run model picker. */
+  @Get('ollama-models')
+  ollamaModels() {
+    return this.categorization.installedOllamaModels();
+  }
+
   @Get('stats/accuracy')
   accuracyStats(@CurrentUser() user: AuthUser) {
     return this.importService.accuracyStats(user.userId);
@@ -87,6 +93,12 @@ export class ImportController {
     @Body() body: ColumnMappingDTO,
   ) {
     return this.mappingService.upsert(user.userId, accountId, body);
+  }
+
+  /** Everything measurable about one run, before or after committing it. */
+  @Get(':id/benchmark')
+  benchmark(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.importService.batchBenchmark(user.userId, id);
   }
 
   @Get(':id')

@@ -185,7 +185,10 @@ export class ImportService {
     // Resolved once and then carried, so the batch records the provider that
     // actually ran this import rather than whatever is configured by the time
     // the row is written.
-    const provider = this.categorization.resolve(dto.categorizer);
+    const provider = this.categorization.resolve(
+      dto.categorizer,
+      dto.categorizerModel,
+    );
     // Timed on its own, excluding parsing and PDF extraction, so a model
     // comparison is not muddied by how long a file took to read.
     const categorizeStart = Date.now();
@@ -996,6 +999,105 @@ export class ImportService {
     }
     await this.prisma.importBatch.delete({ where: { id: batchId } });
     return { deleted: true };
+  }
+
+  /**
+   * Everything measurable about one import, for comparing providers and models
+   * on the same statement.
+   *
+   * Deliberately works on an *uncommitted* batch, which accuracyStats cannot:
+   * committing a run makes the next run of the same file all duplicates, and it
+   * teaches rules from the corrections, so a second model would be scored on a
+   * statement the first one already taught the rules for. The honest protocol
+   * is import -> review every row -> read this -> discard, repeated per model.
+   * `corrected` is written at review time, not at commit, so the ground truth
+   * is here before anything is committed.
+   *
+   * "Kept" means the prediction survived review untouched. That is only a
+   * correctness claim if every row was actually looked at, which is on whoever
+   * is running the comparison.
+   */
+  async batchBenchmark(userId: string, batchId: string) {
+    const batch = await this.getBatch(userId, batchId);
+    const rows = batch.rows;
+
+    // Duplicates never reach a categorizer, so counting them in the denominator
+    // would make a statement re-imported against a full ledger look like the
+    // model had abstained on everything.
+    const duplicates = rows.filter((r) => r.status === 'DUPLICATE');
+    const offered = rows.filter((r) => r.status !== 'DUPLICATE');
+    const byRule = offered.filter((r) => r.predictionSource === 'RULE');
+    const toModel = offered.filter((r) => r.predictionSource !== 'RULE');
+    const predicted = toModel.filter((r) => r.predictionSource === 'LLM');
+
+    const kept = (r: (typeof rows)[number]) =>
+      !r.corrected && r.predictedSubcategoryId === r.subcategoryId;
+    const mean = (values: number[]) =>
+      values.length === 0
+        ? null
+        : values.reduce((a, b) => a + b, 0) / values.length;
+
+    const right = predicted.filter(kept);
+    const wrong = predicted.filter((r) => !kept(r));
+    const ruleRight = byRule.filter(kept);
+
+    return {
+      batchId: batch.id,
+      filename: batch.filename,
+      status: batch.status,
+      provider: batch.provider,
+      model: batch.model,
+      threshold: batch.threshold,
+      extractMs: batch.extractMs,
+      categorizeMs: batch.categorizeMs,
+      // Per row the model was actually asked about — the comparable rate. A
+      // statement that was half duplicates would otherwise look twice as fast.
+      msPerModelRow:
+        batch.categorizeMs !== null && toModel.length > 0
+          ? batch.categorizeMs / toModel.length
+          : null,
+      rows: {
+        total: rows.length,
+        duplicates: duplicates.length,
+        offered: offered.length,
+        matchedByRule: byRule.length,
+        sentToModel: toModel.length,
+      },
+      // Coverage and accuracy are separate axes: a model that answers a third
+      // of the rows very well is not the same as one that answers all of them
+      // adequately, and a single accuracy number hides which you have.
+      coverage: {
+        answered: predicted.length,
+        abstained: toModel.length - predicted.length,
+        rate: toModel.length === 0 ? null : predicted.length / toModel.length,
+        // What arrived already applied vs. what the user had to touch.
+        autoApplied: predicted.filter(
+          (r) => (r.confidence ?? 0) >= batch.threshold,
+        ).length,
+        sentToReview: predicted.filter(
+          (r) => (r.confidence ?? 0) < batch.threshold,
+        ).length,
+      },
+      accuracy: {
+        kept: right.length,
+        changed: wrong.length,
+        rate: predicted.length === 0 ? null : right.length / predicted.length,
+      },
+      // The calibration question: does a high confidence actually mean a right
+      // answer? Small models have been observed returning 1.0 on rows nothing
+      // could have known, so the two means being close is itself the finding.
+      confidence: {
+        whenKept: mean(right.map((r) => r.confidence ?? 0)),
+        whenChanged: mean(wrong.map((r) => r.confidence ?? 0)),
+      },
+      // Rules do the work the model never sees. Reported alongside so a run's
+      // headline number is not quietly carried by them.
+      rules: {
+        matched: byRule.length,
+        kept: ruleRight.length,
+        rate: byRule.length === 0 ? null : ruleRight.length / byRule.length,
+      },
+    };
   }
 
   /**

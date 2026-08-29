@@ -128,6 +128,21 @@ function NewImport({
   const chosen =
     offered.find((c) => c.id === categorizer) ??
     offered.find((c) => c.isDefault);
+  // Only asked for when it can be used: it reaches out to Ollama, and there is
+  // nothing to pick between if the local model is not the one running.
+  const ollamaModels = useQuery({
+    queryKey: ["ollama-models"],
+    queryFn: () => api<string[]>("/imports/ollama-models"),
+    enabled: chosen?.id === "ollama",
+  });
+  const [model, setModel] = useState("");
+  // Server's configured model unless a different one was picked for this run.
+  const runModel =
+    chosen?.id === "ollama" &&
+    model &&
+    (ollamaModels.data ?? []).includes(model)
+      ? model
+      : undefined;
 
   const reset = () => {
     setCsv("");
@@ -182,6 +197,7 @@ function NewImport({
           csv,
           mapping,
           categorizer: chosen?.id,
+          categorizerModel: runModel,
         }),
       }),
     onSuccess: (result) => {
@@ -209,7 +225,12 @@ function NewImport({
       runJob<ImportResult>(() =>
         api<{ jobId: string }>("/imports/pdf", {
           method: "POST",
-          body: JSON.stringify({ accountId, ...vars, categorizer: chosen?.id }),
+          body: JSON.stringify({
+            accountId,
+            ...vars,
+            categorizer: chosen?.id,
+            categorizerModel: runModel,
+          }),
         }),
       ),
     onSuccess: (result) => {
@@ -270,6 +291,20 @@ function NewImport({
                   {c.model ? ` · ${c.model}` : ""}
                 </option>
               ))}
+            </Select>
+          </Field>
+        )}
+        {chosen?.id === "ollama" && (ollamaModels.data?.length ?? 0) > 1 && (
+          <Field label="Model">
+            <Select value={model} onChange={(e) => setModel(e.target.value)}>
+              <option value="">{chosen.model} (default)</option>
+              {ollamaModels.data
+                ?.filter((m) => m !== chosen.model)
+                .map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
             </Select>
           </Field>
         )}
