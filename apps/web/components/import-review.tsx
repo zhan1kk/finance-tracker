@@ -283,7 +283,11 @@ export function ImportReview({
             <Button
               variant="ghost"
               onClick={() => {
-                if (window.confirm("Undo this import? Its transactions will be removed.")) {
+                if (
+                  window.confirm(
+                    "Undo this import? Its transactions are removed and your balances go back.\n\nRules it learned from your corrections are kept — undo cannot tell a rule it created from one it updated, so removing them is done on the Rules page.",
+                  )
+                ) {
                   undo.mutate();
                 }
               }}
