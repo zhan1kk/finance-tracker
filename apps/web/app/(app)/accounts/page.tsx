@@ -18,7 +18,14 @@ import {
 
 export default function AccountsPage() {
   const queryClient = useQueryClient();
+  // Two error states, not one. Creating an account fails at the form up top;
+  // renaming, pinning, retyping, setting a balance and deleting fail at a row
+  // far down the list. Delete in particular fails routinely — the API refuses
+  // while an account still has transactions, recurring rules or import batches
+  // — and reporting that inside the "New account" card meant scrolling back up
+  // past every account to find out why nothing happened.
   const [error, setError] = useState<unknown>(null);
+  const [rowError, setRowError] = useState<unknown>(null);
 
   const fxPrefs = useQuery({
     queryKey: ["fx-preferences"],
@@ -53,7 +60,7 @@ export default function AccountsPage() {
         body: JSON.stringify({ name }),
       }),
     onSuccess: invalidate,
-    onError: setError,
+    onError: setRowError,
   });
 
   const setStartingBalance = useMutation({
@@ -63,7 +70,7 @@ export default function AccountsPage() {
         body: JSON.stringify({ initialBalance }),
       }),
     onSuccess: invalidate,
-    onError: setError,
+    onError: setRowError,
   });
 
   const setCounted = useMutation({
@@ -73,7 +80,7 @@ export default function AccountsPage() {
         body: JSON.stringify({ countInNetWorth }),
       }),
     onSuccess: invalidate,
-    onError: setError,
+    onError: setRowError,
   });
 
   const setPinned = useMutation({
@@ -83,7 +90,7 @@ export default function AccountsPage() {
         body: JSON.stringify({ pinned }),
       }),
     onSuccess: invalidate,
-    onError: setError,
+    onError: setRowError,
   });
 
   const changeType = useMutation({
@@ -93,14 +100,14 @@ export default function AccountsPage() {
         body: JSON.stringify({ type }),
       }),
     onSuccess: invalidate,
-    onError: setError,
+    onError: setRowError,
   });
 
   const remove = useMutation({
     mutationFn: (id: string) =>
       api(`/accounts/${id}`, { method: "DELETE" }),
     onSuccess: invalidate,
-    onError: setError,
+    onError: setRowError,
   });
 
   const onCreate = (e: FormEvent<HTMLFormElement>) => {
@@ -148,7 +155,10 @@ export default function AccountsPage() {
   const renderAccount = (account: Account) => (
     <Card
       key={account.id}
-      className={`flex items-center justify-between border-l-4 ${TYPE_ACCENT[account.type]}`}
+      // Wrapping, because the controls (a type Select plus four buttons) and the
+      // name/balance block cannot share one row at phone width — without it the
+      // row overflows or squeezes the name into an unreadable column.
+      className={`flex flex-wrap items-center justify-between gap-3 border-l-4 ${TYPE_ACCENT[account.type]}`}
     >
       <div>
         <p className="font-medium">
@@ -162,7 +172,7 @@ export default function AccountsPage() {
         {/* Negative is a credit account's normal state (debt owed), so the red
             warning tint applies to the other types only. */}
         <p
-          className={`text-lg tabular-nums ${
+          className={`text-xl font-semibold tabular-nums ${
             account.balance < 0 && account.type !== "credit"
               ? "text-red-600"
               : ""
@@ -191,7 +201,7 @@ export default function AccountsPage() {
           aria-label="Account type"
           title="Change account type"
           onChange={(e) => {
-            setError(null);
+            setRowError(null);
             changeType.mutate({ id: account.id, type: e.target.value });
           }}
         >
@@ -205,7 +215,7 @@ export default function AccountsPage() {
           variant="ghost"
           disabled={rowBusy}
           onClick={() => {
-            setError(null);
+            setRowError(null);
             setPinned.mutate({ id: account.id, pinned: !account.pinned });
           }}
         >
@@ -215,7 +225,7 @@ export default function AccountsPage() {
           variant="ghost"
           disabled={rowBusy}
           onClick={() => {
-            setError(null);
+            setRowError(null);
             setEditing({ kind: "name", account });
           }}
         >
@@ -225,7 +235,7 @@ export default function AccountsPage() {
           variant="ghost"
           disabled={rowBusy}
           onClick={() => {
-            setError(null);
+            setRowError(null);
             setEditing({ kind: "balance", account });
           }}
         >
@@ -236,7 +246,7 @@ export default function AccountsPage() {
           disabled={rowBusy}
           onClick={() => {
             if (window.confirm(`Delete account "${account.name}"?`)) {
-              setError(null);
+              setRowError(null);
               remove.mutate(account.id);
             }
           }}
@@ -289,6 +299,8 @@ export default function AccountsPage() {
         </form>
         <ErrorText error={error} />
       </Card>
+
+      <ErrorText error={rowError} />
 
       {accounts.isLoading && (
         <p className="text-sm text-zinc-500">Loading accounts…</p>
