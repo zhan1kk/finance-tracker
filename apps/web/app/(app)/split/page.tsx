@@ -1,11 +1,12 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useState, type FormEvent } from "react";
+import { type ReactNode, useRef, useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatCents, parseAmountToCents, todayISO } from "@/lib/format";
+import { useStickyState } from "@/lib/sticky-state";
 import type {
   Friend,
   Settlement,
@@ -121,6 +122,37 @@ export default function SplitPage() {
   const nameOf = (id: string | null) =>
     id === null ? "You" : (friendList.find((f) => f.id === id)?.name ?? "?");
 
+  // Carried from a balance row's "Settle up" into the form below, rather than
+  // recorded on the spot: settling a debt writes to the ledger, and a partial
+  // payback is common enough that the amount wants reviewing before it lands.
+  // `n` remounts the form so its fields re-initialise from the new values.
+  const [prefill, setPrefill] = useState<{
+    from: string;
+    to: string;
+    amount: string;
+    n: number;
+  } | null>(null);
+  const settleRef = useRef<HTMLDivElement>(null);
+  const settleUp = (b: SplitBalances["balances"][number]) => {
+    setPrefill((prev) => ({
+      from: b.fromId ?? YOU,
+      to: b.toId ?? YOU,
+      amount: (b.amountCents / 100).toFixed(2),
+      n: (prev?.n ?? 0) + 1,
+    }));
+    settleRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
+  // The pairwise rows answer "who owes whom"; this answers "am I up or down",
+  // which is the question you have before you want the detail.
+  const rows = balances.data?.balances ?? [];
+  const owedToYou = rows
+    .filter((b) => b.toId === null)
+    .reduce((a, b) => a + b.amountCents, 0);
+  const youOwe = rows
+    .filter((b) => b.fromId === null)
+    .reduce((a, b) => a + b.amountCents, 0);
+
   return (
     <main className="flex flex-col gap-6">
       <Card>
@@ -135,6 +167,26 @@ export default function SplitPage() {
         )}
         {balances.data && balances.data.balances.length === 0 && (
           <p className="text-sm text-zinc-500">All settled up. ✨</p>
+        )}
+        {(owedToYou > 0 || youOwe > 0) && (
+          <p className="mb-3 flex flex-wrap gap-x-4 text-sm">
+            {owedToYou > 0 && (
+              <span>
+                You are owed{" "}
+                <span className="font-medium tabular-nums text-emerald-600 dark:text-emerald-400">
+                  {formatCents(owedToYou, balances.data!.currency)}
+                </span>
+              </span>
+            )}
+            {youOwe > 0 && (
+              <span>
+                You owe{" "}
+                <span className="font-medium tabular-nums text-rose-600 dark:text-rose-400">
+                  {formatCents(youOwe, balances.data!.currency)}
+                </span>
+              </span>
+            )}
+          </p>
         )}
         <ul className="flex flex-col gap-1.5 text-sm">
           {balances.data?.balances.map((b, i) => {
@@ -152,6 +204,13 @@ export default function SplitPage() {
                 <span className="ml-auto tabular-nums font-medium">
                   {formatCents(b.amountCents, balances.data!.currency)}
                 </span>
+                <button
+                  type="button"
+                  className="text-xs text-zinc-500 underline hover:text-zinc-800 dark:hover:text-zinc-200"
+                  onClick={() => settleUp(b)}
+                >
+                  Settle up
+                </button>
               </li>
             );
           })}
@@ -170,14 +229,18 @@ export default function SplitPage() {
         }}
       />
 
-      <SettleForm
-        friends={friendList}
-        pending={addSettlement.isPending}
-        onSubmit={(body) => {
-          setError(null);
-          return addSettlement.mutateAsync(body);
-        }}
-      />
+      <div ref={settleRef}>
+        <SettleForm
+          key={prefill?.n ?? 0}
+          friends={friendList}
+          prefill={prefill}
+          pending={addSettlement.isPending}
+          onSubmit={(body) => {
+            setError(null);
+            return addSettlement.mutateAsync(body);
+          }}
+        />
+      </div>
 
       <Card>
         <h2 className="mb-3 font-medium">Friends</h2>
@@ -335,7 +398,22 @@ function ExpenseForm({
 }) {
   const [paidBy, setPaidBy] = useState(YOU);
   const [amount, setAmount] = useState("");
-  const [among, setAmong] = useState<Set<string>>(new Set([YOU]));
+  // Sticky. Adding several expenses in a row almost always means the same
+  // people, and re-ticking them every time was the most repeated action on the
+  // page. Stored as an array — a Set does not survive JSON.
+  const [amongKeys, setAmongKeys] = useStickyState<string[]>(
+    "ft:split.among",
+    [YOU],
+    (saved) =>
+      Array.isArray(saved) && saved.every((v) => typeof v === "string")
+        ? (saved as string[])
+        : null,
+  );
+  const among = new Set(amongKeys);
+  const setAmong = (next: Set<string> | ((prev: Set<string>) => Set<string>)) =>
+    setAmongKeys((prev) => [
+      ...(typeof next === "function" ? next(new Set(prev)) : next),
+    ]);
   const [method, setMethod] = useState<"equal" | "exact">("equal");
   const [exact, setExact] = useState<Record<string, string>>({});
   const [localError, setLocalError] = useState<string | null>(null);
@@ -411,7 +489,8 @@ function ExpenseForm({
         // amount, date, payer and every per-person share at once.
         form_.reset();
         setAmount("");
-        setAmong(new Set([YOU]));
+        // `among` deliberately survives: it is the thing you would have to
+        // re-tick identically on the next expense.
         setExact({});
         setMethod("equal");
         setPaidBy(YOU);
@@ -536,15 +615,25 @@ function ExpenseForm({
 function SettleForm({
   friends,
   pending,
+  prefill,
   onSubmit,
 }: {
   friends: Friend[];
   pending: boolean;
+  /** Direction and amount carried in from a balance row's "Settle up". */
+  prefill?: { from: string; to: string; amount: string } | null;
   onSubmit: (body: Record<string, unknown>) => Promise<unknown>;
 }) {
   const all = parties(friends);
-  const [from, setFrom] = useState(YOU);
-  const [to, setTo] = useState(friends[0]?.id ?? YOU);
+  const [from, setFrom] = useState(prefill?.from ?? YOU);
+  // Not seeded from friends[0]: on the first render the query has not resolved,
+  // so friends is [] and the initial value stuck at "You" for the life of the
+  // component. The form opened as "You paid You" — invalid until a dropdown was
+  // touched. null means "not chosen yet", resolved against what has loaded.
+  const [to, setTo] = useState<string | null>(prefill?.to ?? null);
+  const toKey = to ?? friends[0]?.id ?? YOU;
+  const [amount, setAmount] = useState(prefill?.amount ?? "");
+  const [showDetails, setShowDetails] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
   if (friends.length === 0) return null;
@@ -552,50 +641,93 @@ function SettleForm({
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLocalError(null);
-    const amount = parseAmountToCents(
-      String(new FormData(e.currentTarget).get("amount")),
-    );
-    if (amount === null) return setLocalError("Invalid amount");
-    if (from === to) return setLocalError("Pick two different people");
+    const data = new FormData(e.currentTarget);
+    const cents = parseAmountToCents(amount);
+    if (cents === null) return setLocalError("Invalid amount");
+    if (from === toKey) return setLocalError("Pick two different people");
+    const date = String(data.get("date") ?? "").trim();
+    const note = String(data.get("note") ?? "").trim();
     const form_ = e.currentTarget;
     void onSubmit({
       fromFriendId: from === YOU ? undefined : from,
-      toFriendId: to === YOU ? undefined : to,
-      amountCents: amount,
+      toFriendId: toKey === YOU ? undefined : toKey,
+      amountCents: cents,
+      // Both omitted unless filled in: the server dates an undated settlement
+      // now, which is right for the overwhelmingly common "they just paid me".
+      ...(date ? { date } : {}),
+      ...(note ? { note } : {}),
     })
-      .then(() => form_.reset())
+      .then(() => {
+        form_.reset();
+        setAmount("");
+        setShowDetails(false);
+      })
       .catch(() => {});
   };
 
   return (
     <Card>
       <h2 className="mb-3 font-medium">Settle up</h2>
-      <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
-        <Field label="From">
-          <Select value={from} onChange={(e) => setFrom(e.target.value)}>
-            {all.map((p) => (
-              <option key={p.key} value={p.key}>
-                {p.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <span className="pb-2 text-sm text-zinc-400">paid</span>
-        <Field label="To">
-          <Select value={to} onChange={(e) => setTo(e.target.value)}>
-            {all.map((p) => (
-              <option key={p.key} value={p.key}>
-                {p.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Amount">
-          <Input name="amount" placeholder="10.00" className="w-24" />
-        </Field>
-        <Button type="submit" disabled={pending}>
-          Record
-        </Button>
+      <form onSubmit={submit} className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-end gap-2">
+          <Field label="From">
+            <Select value={from} onChange={(e) => setFrom(e.target.value)}>
+              {all.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <span className="pb-2 text-sm text-zinc-400">paid</span>
+          <Field label="To">
+            <Select value={toKey} onChange={(e) => setTo(e.target.value)}>
+              {all.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Amount">
+            <Input
+              name="amount"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="10.00"
+              className="w-24"
+            />
+          </Field>
+          <Button type="submit" disabled={pending}>
+            Record
+          </Button>
+        </div>
+        {/* Folded away rather than absent. Nearly every settlement is "they
+            just paid me", where an untouched form is exactly right; the ones
+            that are not — a payback from last week, or a note saying what it
+            covered — had no way to be recorded at all. */}
+        {showDetails ? (
+          <div className="flex flex-wrap items-end gap-2">
+            <Field label="Date">
+              <Input name="date" type="date" defaultValue={todayISO()} />
+            </Field>
+            <Field label="Note">
+              <Input
+                name="note"
+                placeholder="for the Berlin trip"
+                className="w-56"
+              />
+            </Field>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="self-start text-xs text-zinc-500 underline hover:text-zinc-800 dark:hover:text-zinc-200"
+            onClick={() => setShowDetails(true)}
+          >
+            Add a date or note
+          </button>
+        )}
       </form>
       {localError && <p className="mt-1 text-sm text-red-600">{localError}</p>}
     </Card>
