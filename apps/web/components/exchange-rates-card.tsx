@@ -23,11 +23,8 @@ export function ExchangeRatesCard() {
     <Card>
       <h2 className="mb-1 font-medium">Exchange rates</h2>
       <p className="mb-4 text-sm text-zinc-500">
-        Foreign transactions are converted to {base} for your overview.{" "}
-        <b>Sync</b> pulls today&rsquo;s market rate; your exchange fee is applied
-        so the stored rate reflects what you actually get. A rate applies from its
-        date until the next later one; changing it recomputes affected
-        transactions.
+        Foreign transactions are converted to {base} for your overview, using
+        the rate in effect on each transaction&rsquo;s date.
       </p>
       <AddCurrency base={base} />
       {prefs.data?.currencies.length === 0 && (
@@ -36,7 +33,7 @@ export function ExchangeRatesCard() {
           in something other than {base}.
         </p>
       )}
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-2">
         {(prefs.data?.currencies ?? []).map((c) => (
           <CurrencyRates
             key={c.currency}
@@ -125,6 +122,20 @@ function CurrencyRates({
   const [error, setError] = useState<unknown>(null);
   const [spread, setSpread] = useState(String(spreadPct));
   const [pastDate, setPastDate] = useState("");
+  const [open, setOpen] = useState(false);
+  // Changing a rate rewrites the stored base amount of every transaction in
+  // this currency from that date on. The server has always reported how many
+  // it touched; nothing showed it, so past totals moved with no sign that they
+  // had. Silent history is the thing this app is meant not to do.
+  const [notice, setNotice] = useState<string | null>(null);
+  const reportRecomputed = (what: string) => (res: unknown) => {
+    const n = (res as { recomputed?: number } | undefined)?.recomputed ?? 0;
+    setNotice(
+      n === 0
+        ? `${what}. No stored amounts changed.`
+        : `${what}. ${n} transaction${n === 1 ? "" : "s"} recalculated.`,
+    );
+  };
 
   const setAutoSync = useMutation({
     mutationFn: (next: boolean) =>
@@ -166,7 +177,10 @@ function CurrencyRates({
         method: "POST",
         body: JSON.stringify(date ? { currency, date } : { currency }),
       }),
-    onSuccess: invalidate,
+    onSuccess: (res) => {
+      invalidate();
+      reportRecomputed("Rate synced")(res);
+    },
     onError: setError,
   });
   const saveSpread = useMutation({
@@ -181,12 +195,18 @@ function CurrencyRates({
   const setRate = useMutation({
     mutationFn: (body: { currency: string; date: string; rate: number }) =>
       api("/fx/rates", { method: "POST", body: JSON.stringify(body) }),
-    onSuccess: invalidate,
+    onSuccess: (res) => {
+      invalidate();
+      reportRecomputed("Rate saved")(res);
+    },
     onError: setError,
   });
   const remove = useMutation({
     mutationFn: (id: string) => api(`/fx/rates/${id}`, { method: "DELETE" }),
-    onSuccess: invalidate,
+    onSuccess: (res) => {
+      invalidate();
+      reportRecomputed("Rate removed")(res);
+    },
     onError: setError,
   });
 
@@ -217,37 +237,43 @@ function CurrencyRates({
     saveSpread.mutate(pct);
   };
 
+  const latest = rates.data?.rates[0];
+
   return (
-    <div className="border-t border-zinc-100 pt-4 first:border-0 first:pt-0 dark:border-zinc-900">
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <h3 className="font-medium">
-          {currency} → {base}
-        </h3>
-        {rates.data && (
-          <span className="text-sm text-zinc-500">
-            today: 1 {base} = <b>{round(rates.data.effectiveRate)}</b> {currency}
+    <div className="border-t border-zinc-100 pt-3 first:border-0 first:pt-0 dark:border-zinc-900">
+      {/* The whole currency on one line. Everything below used to be open at
+          once, so three tracked currencies filled the screen with forms that
+          are touched about twice a year. Today's rate and Sync are the parts
+          anyone actually looks at; the rest sits one click away. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="w-10 font-medium">{currency}</span>
+        {rates.data ? (
+          <span className="text-sm tabular-nums">
+            1 {base} = <b>{round(rates.data.effectiveRate)}</b> {currency}
+          </span>
+        ) : (
+          <span className="text-sm text-zinc-400">loading…</span>
+        )}
+        {latest && (
+          <span className="text-xs text-zinc-400">
+            as of {latest.date.slice(0, 10)}
           </span>
         )}
-        <label
-          className="ml-auto flex items-center gap-1.5 text-sm text-zinc-500"
-          title="Fetch this rate automatically each morning"
-        >
-          <input
-            type="checkbox"
-            checked={autoSync}
-            disabled={setAutoSync.isPending}
-            onChange={(e) => {
-              setError(null);
-              setAutoSync.mutate(e.target.checked);
-            }}
-          />
-          daily
-        </label>
+        {autoSync && (
+          <span
+            className="text-xs text-zinc-400"
+            title="Fetched automatically each morning"
+          >
+            · daily
+          </span>
+        )}
         <Button
           variant="ghost"
+          className="ml-auto"
           disabled={sync.isPending}
           onClick={() => {
             setError(null);
+            setNotice(null);
             sync.mutate(undefined);
           }}
         >
@@ -255,22 +281,63 @@ function CurrencyRates({
         </Button>
         <button
           type="button"
-          className="text-xs text-zinc-400 hover:text-red-600"
-          title={`Stop tracking ${currency}`}
-          onClick={() => {
-            if (
-              !window.confirm(
-                `Stop tracking ${currency}? Rates already recorded stay, but no new ones are fetched.`,
-              )
-            )
-              return;
-            setError(null);
-            stopTracking.mutate();
-          }}
+          aria-expanded={open}
+          aria-controls={`fx-details-${currency}`}
+          title={open ? "Hide settings" : "Rate history, fee and manual rates"}
+          className="rounded px-1.5 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+          onClick={() => setOpen(!open)}
         >
-          remove
+          <span className="inline-block transition-transform">
+            {open ? "⌃" : "⌄"}
+          </span>
         </button>
       </div>
+
+      {notice && (
+        <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-500">
+          {notice}
+        </p>
+      )}
+
+      <div
+        id={`fx-details-${currency}`}
+        hidden={!open}
+        className="mt-3 border-l-2 border-zinc-100 pl-3 dark:border-zinc-800"
+      >
+        <div className="mb-2 flex flex-wrap items-center gap-3">
+          <label
+            className="flex items-center gap-1.5 text-sm text-zinc-500"
+            title="Fetch this rate automatically each morning"
+          >
+            <input
+              type="checkbox"
+              checked={autoSync}
+              disabled={setAutoSync.isPending}
+              onChange={(e) => {
+                setError(null);
+                setAutoSync.mutate(e.target.checked);
+              }}
+            />
+            Sync daily
+          </label>
+          <button
+            type="button"
+            className="ml-auto text-xs text-zinc-400 hover:text-red-600"
+            title={`Stop tracking ${currency}`}
+            onClick={() => {
+              if (
+                !window.confirm(
+                  `Stop tracking ${currency}? Rates already recorded stay, but no new ones are fetched.`,
+                )
+              )
+                return;
+              setError(null);
+              stopTracking.mutate();
+            }}
+          >
+            stop tracking
+          </button>
+        </div>
 
       <div className="mb-2 flex flex-wrap items-end gap-2">
         <Field label="Fetch the rate for a past day">
@@ -371,6 +438,7 @@ function CurrencyRates({
           }}
         />
       )}
+      </div>
       <ErrorText error={error} />
     </div>
   );
