@@ -337,7 +337,12 @@ function CurrencyRates({
             type="number"
             step="0.0001"
             min="0"
-            placeholder="540"
+            /* The rate in effect, not a constant. It was hardcoded to 540 —
+               a tenge-shaped number sitting under "1 EUR =" on a dollar card,
+               suggesting an answer three orders of magnitude out. */
+            placeholder={
+              rates.data ? String(round(rates.data.effectiveRate)) : undefined
+            }
             className="w-28"
             required
           />

@@ -120,7 +120,6 @@ export class BudgetService {
   ) {
     const override = budget.periods[0]?.limit ?? null;
     const storedLimit = override ?? budget.monthlyLimit;
-    const storedSpent = await this.computeSpent(userId, budget, start, end);
     const { periods: _periods, ...rest } = budget;
     // Presented in the reporting currency, like every other total. Limits are
     // stored in the base currency and converted here rather than on the way in,
@@ -130,20 +129,32 @@ export class BudgetService {
       where: { id: userId },
       select: { baseCurrency: true },
     });
-    const { rate } = await this.fx.displayRate(userId, baseCurrency);
-    const limit = Math.round(storedLimit * rate);
-    const spentCents = Math.round(storedSpent * rate);
+    const display = await this.fx.displayRate(userId, baseCurrency);
+    const spentCents = await this.computeSpent(
+      userId,
+      budget,
+      start,
+      end,
+      display,
+    );
+    // The limit has no account behind it — it is a figure you typed — so it can
+    // only convert at the one rate.
+    const limit = Math.round(storedLimit * display.rate);
     return {
       ...rest,
       period,
       // Effective limit for this month; monthlyLimit stays the recurring base.
       limit,
-      monthlyLimit: Math.round(budget.monthlyLimit * rate),
+      monthlyLimit: Math.round(budget.monthlyLimit * display.rate),
       isOverride: override !== null,
       spentCents,
       remainingCents: limit - spentCents,
-      percent: storedLimit > 0 ? storedSpent / storedLimit : 0,
-      overBudget: storedSpent > storedLimit,
+      // Computed from what is on screen, so the bar always matches the two
+      // numbers beside it. Once part of the spending is in another currency the
+      // ratio genuinely does depend on the rate; pretending otherwise would put
+      // a percentage next to figures that do not produce it.
+      percent: limit > 0 ? spentCents / limit : 0,
+      overBudget: spentCents > limit,
     };
   }
 
@@ -277,6 +288,7 @@ export class BudgetService {
     budget: Budget,
     start: Date,
     end: Date,
+    display: { currency: string; rate: number },
   ): Promise<number> {
     const date = { gte: start, lt: end };
     const owner = { account: { userId } };
@@ -341,7 +353,46 @@ export class BudgetService {
       }),
     ]);
 
-    return (expense._sum.amountBase ?? 0) - (reimbursed._sum.amountBase ?? 0);
+    const inBase =
+      (expense._sum.amountBase ?? 0) - (reimbursed._sum.amountBase ?? 0);
+    if (display.rate === 1) return inBase;
+
+    // Same rule the dashboard aggregates use: an account already in the display
+    // currency contributes its own amount, and only the rest is converted.
+    // Converting the whole base-currency sum instead made the budget card and
+    // the spending card disagree about the same month — $223.06 against
+    // $215.82 — which is the kind of difference nobody can explain away.
+    const native = { account: { is: { currency: display.currency } } };
+    const [nativeExpense, nativeReimbursed] = await Promise.all([
+      this.prisma.transaction.aggregate({
+        _sum: { amountBase: true, amount: true },
+        where: {
+          ...owner,
+          ...native,
+          type: 'EXPENSE',
+          excludeFromStats: false,
+          date,
+          ...expenseScope,
+        },
+      }),
+      this.prisma.transaction.aggregate({
+        _sum: { amountBase: true, amount: true },
+        where: {
+          ...owner,
+          ...native,
+          type: 'INCOME',
+          excludeFromStats: false,
+          parentTransactionId: { not: null },
+          ...reimbScope,
+        },
+      }),
+    ]);
+    const nativeBase =
+      (nativeExpense._sum.amountBase ?? 0) -
+      (nativeReimbursed._sum.amountBase ?? 0);
+    const nativeOwn =
+      (nativeExpense._sum.amount ?? 0) - (nativeReimbursed._sum.amount ?? 0);
+    return Math.round((inBase - nativeBase) * display.rate) + nativeOwn;
   }
 
   private async assertOwn(
