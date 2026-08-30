@@ -8,6 +8,42 @@ import { PrismaService } from '../src/prisma.service';
 import { TelegramService } from '../src/telegram/telegram.service';
 
 describe('API (e2e)', () => {
+  /**
+   * Starts a CSV import and waits for it. The endpoint returns a job id rather
+   * than the result, so that a long categorization is not held open on the
+   * connection; tests poll it the same way the browser does.
+   */
+  const importAndWait = async (
+    token: string,
+    body: Record<string, unknown>,
+  ): Promise<{ status: number; body: unknown; error?: string }> => {
+    const started = await request(http)
+      .post('/imports')
+      .set('Authorization', `Bearer ${token}`)
+      .send(body);
+    if (started.status !== 201) {
+      return { status: started.status, body: started.body };
+    }
+    const { jobId } = started.body as { jobId: string };
+    for (let i = 0; i < 300; i++) {
+      const job = await request(http)
+        .get(`/jobs/${jobId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const j = job.body as {
+        status: string;
+        result?: unknown;
+        error?: string;
+      };
+      if (j.status === 'done') return { status: 201, body: j.result };
+      if (j.status === 'error') {
+        return { status: 400, body: { message: j.error }, error: j.error };
+      }
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    throw new Error('import job did not finish');
+  };
+
   let app: INestApplication<App>;
   let prisma: PrismaService;
   let http: App;
@@ -1658,31 +1694,28 @@ describe('API (e2e)', () => {
     });
 
     it('rejects an import asking for a provider this server cannot run', async () => {
-      await request(http)
-        .post('/imports')
-        .set('Authorization', `Bearer ${token}`)
-        .send({
-          accountId,
-          filename: 'statement.csv',
-          csv: CSV,
-          mapping: MAPPING,
-          categorizer: 'anthropic',
-        })
-        .expect(400);
+      expect(
+        (
+          await importAndWait(token, {
+            accountId,
+            filename: 'statement.csv',
+            csv: CSV,
+            mapping: MAPPING,
+            categorizer: 'anthropic',
+          })
+        ).status,
+      ).toBe(400);
     });
 
     it('records the categorizer an import asked for, not the default', async () => {
-      const created = await request(http)
-        .post('/imports')
-        .set('Authorization', `Bearer ${token}`)
-        .send({
-          accountId,
-          filename: 'statement.csv',
-          csv: CSV,
-          mapping: MAPPING,
-          categorizer: 'heuristic',
-        })
-        .expect(201);
+      const created = await importAndWait(token, {
+        accountId,
+        filename: 'statement.csv',
+        csv: CSV,
+        mapping: MAPPING,
+        categorizer: 'heuristic',
+      });
+      expect(created.status).toBe(201);
       const batchId = (created.body as { batch: { id: string } }).batch.id;
       // Accuracy is only measured over committed rows, so the batch has to
       // land before it shows up in the stats at all.
@@ -1900,16 +1933,13 @@ describe('API (e2e)', () => {
     });
 
     const doImport = async (csv = CSV, withMapping = true): Promise<Batch> => {
-      const res = await request(http)
-        .post('/imports')
-        .set('Authorization', `Bearer ${token}`)
-        .send({
-          accountId,
-          filename: 'statement.csv',
-          csv,
-          ...(withMapping ? { mapping: MAPPING } : {}),
-        })
-        .expect(201);
+      const res = await importAndWait(token, {
+        accountId,
+        filename: 'statement.csv',
+        csv,
+        ...(withMapping ? { mapping: MAPPING } : {}),
+      });
+      expect(res.status).toBe(201);
       return (res.body as { batch: Batch }).batch;
     };
 
@@ -1954,20 +1984,17 @@ describe('API (e2e)', () => {
       // A dot-decimal file read as comma turns 30000000.00 into 3,000,000,000
       // cents, past the 32-bit column. It must skip that row with a hint, not
       // 500, and still import the valid rows.
-      const res = await request(http)
-        .post('/imports')
-        .set('Authorization', `Bearer ${token}`)
-        .send({
-          accountId,
-          filename: 'huge.csv',
-          csv: [
-            'Date,Amount,Description',
-            '2026-07-01,-30000000.00,Overflow Co',
-            '2026-07-02,-12.50,SPAR AMSTERDAM 4471',
-          ].join('\n'),
-          mapping: MAPPING,
-        })
-        .expect(201);
+      const res = await importAndWait(token, {
+        accountId,
+        filename: 'huge.csv',
+        csv: [
+          'Date,Amount,Description',
+          '2026-07-01,-30000000.00,Overflow Co',
+          '2026-07-02,-12.50,SPAR AMSTERDAM 4471',
+        ].join('\n'),
+        mapping: MAPPING,
+      });
+      expect(res.status).toBe(201);
       const body = res.body as {
         batch: Batch;
         skipped: { reason: string }[];
@@ -2185,19 +2212,16 @@ describe('API (e2e)', () => {
 
       // The other account's statement shows the same €100 arriving, dated the
       // same day. (The ±day window was removed, so the mirror match is exact.)
-      const bRes = await request(http)
-        .post('/imports')
-        .set('Authorization', `Bearer ${token}`)
-        .send({
-          accountId: other.id,
-          filename: 'b.csv',
-          csv: [
-            'Date,Amount,Description',
-            '2026-07-10,100.00,From checking',
-          ].join('\n'),
-          mapping: MAPPING,
-        })
-        .expect(201);
+      const bRes = await importAndWait(token, {
+        accountId: other.id,
+        filename: 'b.csv',
+        csv: [
+          'Date,Amount,Description',
+          '2026-07-10,100.00,From checking',
+        ].join('\n'),
+        mapping: MAPPING,
+      });
+      expect(bRes.status).toBe(201);
       const bBatch = (
         bRes.body as { batch: { id: string; rows: { id: string }[] } }
       ).batch;
@@ -2232,19 +2256,16 @@ describe('API (e2e)', () => {
         .expect(201);
 
       // The other account's statement shows the same €100 arriving three days later.
-      const bRes = await request(http)
-        .post('/imports')
-        .set('Authorization', `Bearer ${token}`)
-        .send({
-          accountId: other.id,
-          filename: 'b.csv',
-          csv: [
-            'Date,Amount,Description',
-            '2026-07-13,100.00,From checking',
-          ].join('\n'),
-          mapping: MAPPING,
-        })
-        .expect(201);
+      const bRes = await importAndWait(token, {
+        accountId: other.id,
+        filename: 'b.csv',
+        csv: [
+          'Date,Amount,Description',
+          '2026-07-13,100.00,From checking',
+        ].join('\n'),
+        mapping: MAPPING,
+      });
+      expect(bRes.status).toBe(201);
       const bBatch = (
         bRes.body as { batch: { id: string; rows: { id: string }[] } }
       ).batch;
@@ -2363,11 +2384,28 @@ describe('API (e2e)', () => {
         .get(`/imports/${batch.id}`)
         .set('Authorization', `Bearer ${otherToken}`)
         .expect(404);
-      await request(http)
+      // Importing is a background job now, so a rejection arrives as a failed
+      // job rather than a 4xx on the POST. The refusal still happens and the
+      // reason still reaches the caller — it is one poll later.
+      const started = await request(http)
         .post('/imports')
         .set('Authorization', `Bearer ${otherToken}`)
         .send({ accountId, filename: 'x.csv', csv: CSV, mapping: MAPPING })
-        .expect(404);
+        .expect(201);
+      const { jobId } = started.body as { jobId: string };
+      let outcome = { status: 'running', error: '' };
+      for (let i = 0; i < 200 && outcome.status === 'running'; i++) {
+        const job = await request(http)
+          .get(`/jobs/${jobId}`)
+          .set('Authorization', `Bearer ${otherToken}`)
+          .expect(200);
+        outcome = job.body as { status: string; error: string };
+        if (outcome.status === 'running') {
+          await new Promise((r) => setTimeout(r, 20));
+        }
+      }
+      expect(outcome.status).toBe('error');
+      expect(outcome.error).toMatch(/not found/i);
     });
   });
 

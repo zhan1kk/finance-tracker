@@ -38,9 +38,23 @@ export class ImportController {
     return this.importService.inspect(body.csv, body.hasHeader);
   }
 
+  /**
+   * Stages and categorizes a CSV, in the background, returning a job id to poll.
+   *
+   * It used to hold the connection open for the whole categorization. With a
+   * local model that is minutes, and the work only existed as an in-flight
+   * request — the batch row is not written until categorization finishes — so
+   * navigating away or restarting the API lost the run with no record that it
+   * had ever been attempted. The PDF route has always worked this way; now both
+   * do, and the work runs to completion server-side whether anyone is listening
+   * or not.
+   */
   @Post()
   createImport(@CurrentUser() user: AuthUser, @Body() body: CreateImportDTO) {
-    return this.importService.createImport(user.userId, body);
+    const jobId = this.jobs.start(user.userId, () =>
+      this.importService.createImport(user.userId, body),
+    );
+    return { jobId };
   }
 
   /**

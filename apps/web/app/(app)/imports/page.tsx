@@ -189,17 +189,19 @@ function NewImport({
 
   const create = useMutation({
     mutationFn: () =>
-      api<ImportResult>("/imports", {
-        method: "POST",
-        body: JSON.stringify({
-          accountId,
-          filename,
-          csv,
-          mapping,
-          categorizer: chosen?.id,
-          categorizerModel: runModel,
+      runJob<ImportResult>(() =>
+        api<{ jobId: string }>("/imports", {
+          method: "POST",
+          body: JSON.stringify({
+            accountId,
+            filename,
+            csv,
+            mapping,
+            categorizer: chosen?.id,
+            categorizerModel: runModel,
+          }),
         }),
-      }),
+      ),
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: ["import-batches"] });
       reset();
@@ -348,6 +350,14 @@ function NewImport({
       {!accountId && (
         <p className="mt-2 text-sm text-zinc-400">
           Pick an account first, then choose a CSV or PDF file.
+        </p>
+      )}
+
+      {create.isPending && (
+        <p className="mt-3 text-sm text-amber-600">
+          Categorizing… a local model can take a few minutes. You can leave this
+          page — the import finishes on the server either way and will appear in
+          Import History below.
         </p>
       )}
 
