@@ -31,6 +31,42 @@ export class FxService {
     });
   }
 
+  /**
+   * The single rate used to present base-currency aggregates in another
+   * currency, plus the date it comes from.
+   *
+   * One rate, not one per transaction date. An aggregate is already summed in
+   * the base currency, so presenting it elsewhere is one multiplication — the
+   * parts still add up to the whole, and last month's total does not need a
+   * rate for every day it spans. It does mean a past month's figure moves when
+   * the rate moves, which is why the date is returned: a converted number that
+   * does not say what it was converted at is not a number anyone can check.
+   *
+   * Ensures a rate exists first, so picking a currency that has never been
+   * synced does not silently fall through to a seed value.
+   */
+  async displayRate(
+    userId: string,
+    currency: string,
+  ): Promise<{ currency: string; rate: number; asOf: string }> {
+    const today = new Date();
+    if (currency === BASE_CURRENCY) {
+      return {
+        currency,
+        rate: 1,
+        asOf: today.toISOString().slice(0, 10),
+      };
+    }
+    await this.ensureRate(userId, currency);
+    const rates = await this.ratesFor(userId, currency);
+    const latest = rates.at(-1);
+    return {
+      currency,
+      rate: pickRate(rates, today, currency),
+      asOf: (latest?.date ?? today).toISOString().slice(0, 10),
+    };
+  }
+
   /** The rate in effect for `currency` on `date` (user-set or default). */
   async resolveRate(
     userId: string,

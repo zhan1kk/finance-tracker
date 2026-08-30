@@ -176,9 +176,12 @@ export default function OverviewPage() {
       ...r,
       amount: r.amount / baselineDivisor,
     })) ?? [];
-  // All cross-account aggregates are converted to the base currency server-side,
-  // so they are always formatted in it (not any single account's currency).
-  const currency = user?.baseCurrency ?? "EUR";
+  // Taken from the response, not from the profile: the server converts and says
+  // what it converted to, so the figure and the symbol beside it cannot drift
+  // apart. They used to — totals were summed in EUR whatever the preference
+  // said, and the preference was what got printed next to them.
+  const currency = monthStats.data?.currency ?? user?.baseCurrency ?? "EUR";
+  const displayRate = monthStats.data?.rate ?? 1;
 
   // Spending so far this period against a typical one, both as running totals
   // by day of the period. Periods are 28-31 days, so a shorter baseline month
@@ -350,9 +353,15 @@ export default function OverviewPage() {
           </div>
           <BudgetSummary
             budgets={budgets.data ?? []}
-            currency={currency}
+            currency="EUR"
             className=""
           />
+          {displayRate !== 1 && (
+            <p className="mt-2 text-xs text-zinc-400">
+              Budgets stay in EUR: a limit is something you set, and converting
+              it at each day&apos;s rate would move it on its own.
+            </p>
+          )}
         </Card>
       )}
 

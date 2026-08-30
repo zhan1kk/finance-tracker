@@ -27,7 +27,10 @@ type AuthContextValue = {
   ) => Promise<void>;
   logout: () => Promise<void>;
   /** Update the caller's own reporting preferences (e.g. month start day). */
-  updateProfile: (patch: { monthStartDay?: number }) => Promise<void>;
+  updateProfile: (patch: {
+    monthStartDay?: number;
+    baseCurrency?: string;
+  }) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);

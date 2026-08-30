@@ -84,6 +84,12 @@ export type CategoryStat = {
 };
 
 export type TransactionStats = {
+  /** Currency these figures are presented in. */
+  currency: string;
+  /** Rate applied to the stored base-currency amounts (1 when they match). */
+  rate: number;
+  /** Date that rate is from, so a converted figure can be checked. */
+  rateAsOf: string;
   monthly: MonthlyStat[];
   /** Only days with activity; gaps are zero. */
   daily: DailyStat[];

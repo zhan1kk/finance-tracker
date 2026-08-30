@@ -256,6 +256,44 @@ describe('API (e2e)', () => {
 
   // The register form asks this before anyone can authenticate, to decide
   // whether to show an invite field at all. Tests run without INVITE_CODE.
+  // The bug this guards: baseCurrency was settable but nothing used it. Every
+  // total was computed against a hardcoded EUR while the dashboard printed the
+  // preference beside it, so choosing USD produced euro figures wearing a
+  // dollar sign. A money app must never let the number and its symbol disagree.
+  describe('reporting currency', () => {
+    it('reports the currency and rate it converted with', async () => {
+      const res = await request(http)
+        .get('/transactions/stats')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const body = res.body as {
+        currency: string;
+        rate: number;
+        rateAsOf: string;
+      };
+      expect(body.currency).toBe('EUR');
+      // Base currency converts by definition at 1, never at a fetched rate.
+      expect(body.rate).toBe(1);
+      expect(body.rateAsOf).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    });
+
+    it('refuses a currency it cannot get a rate for', async () => {
+      await request(http)
+        .patch('/auth/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ baseCurrency: 'ZZZ' })
+        .expect(400);
+    });
+
+    it('rejects a malformed code before it reaches the rate lookup', async () => {
+      await request(http)
+        .patch('/auth/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ baseCurrency: 'euro' })
+        .expect(400);
+    });
+  });
+
   describe('registration policy', () => {
     it('is readable without a token, and reports the gate', async () => {
       const res = await request(http).get('/auth/registration').expect(200);

@@ -5,13 +5,17 @@ import {
   recentPeriodLabels,
 } from '../common/period';
 import { BASE_CURRENCY } from '../fx/fx';
+import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
 
 export type NetWorthPoint = { month: string; netWorthCents: number };
 
 @Injectable()
 export class ReportsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fx: FxService,
+  ) {}
 
   /**
    * Net worth (sum of all account balances) at the end of each of the last
@@ -20,10 +24,11 @@ export class ReportsService {
    * anchored to the sum of account starting balances.
    */
   async netWorth(userId: string, months: number): Promise<NetWorthPoint[]> {
-    const { monthStartDay } = await this.prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-      select: { monthStartDay: true },
-    });
+    const { monthStartDay, baseCurrency } =
+      await this.prisma.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { monthStartDay: true, baseCurrency: true },
+      });
     const offset = periodOffsetDays(monthStartDay);
     const shift = periodLabelShiftMonths(monthStartDay);
 
@@ -75,7 +80,15 @@ export class ReportsService {
       running += deltaByMonth.get(month) ?? 0;
       series.push({ month, netWorthCents: running });
     }
-    return series;
+    // Converted last, on the running totals, not on each month's delta: one
+    // rate applied to the finished series keeps the line's shape exactly and
+    // cannot accumulate rounding across months.
+    const { rate } = await this.fx.displayRate(userId, baseCurrency);
+    if (rate === 1) return series;
+    return series.map((p) => ({
+      ...p,
+      netWorthCents: Math.round(p.netWorthCents * rate),
+    }));
   }
 
   /**

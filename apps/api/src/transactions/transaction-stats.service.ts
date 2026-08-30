@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { periodLabelShiftMonths, periodOffsetDays } from '../common/period';
+import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
 import type {
   CategoryStat,
@@ -17,7 +18,10 @@ import type {
  */
 @Injectable()
 export class TransactionStatsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fx: FxService,
+  ) {}
 
   /**
    * Aggregates for dashboards, all in cents. Transfers are excluded.
@@ -27,6 +31,10 @@ export class TransactionStatsService {
    */
   async getStats(userId: string, query: StatsQuery): Promise<TransactionStats> {
     const periodOf = await this.periodExpression(userId);
+    const { baseCurrency } = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { baseCurrency: true },
+    });
     // Which row's date decides the period. Usually the row being summed (t),
     // but a reimbursement is credited against its parent expense, so it counts
     // in the parent's period (p) — in the monthly totals and the categories
@@ -150,7 +158,28 @@ export class TransactionStatsService {
       `,
       ]);
 
-    return { monthly, daily, byCategory, incomeByCategory };
+    // Presented in the user's chosen currency at one current rate. Converted
+    // here rather than in the browser so the figure and the symbol beside it
+    // can never disagree: every caller gets numbers already in `currency`, and
+    // `rate`/`asOf` say what they were converted at.
+    const display = await this.fx.displayRate(userId, baseCurrency);
+    const to = (cents: number) => Math.round(cents * display.rate);
+    return {
+      currency: display.currency,
+      rate: display.rate,
+      rateAsOf: display.asOf,
+      monthly: monthly.map((m) => ({
+        ...m,
+        income: to(m.income),
+        expense: to(m.expense),
+      })),
+      daily: daily.map((d) => ({ ...d, expense: to(d.expense) })),
+      byCategory: byCategory.map((c) => ({ ...c, amount: to(c.amount) })),
+      incomeByCategory: incomeByCategory.map((c) => ({
+        ...c,
+        amount: to(c.amount),
+      })),
+    };
   }
 
   /**

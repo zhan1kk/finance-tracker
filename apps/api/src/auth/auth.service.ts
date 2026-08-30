@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -10,6 +11,8 @@ import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { optionalSetting } from '../common/env';
+import { BASE_CURRENCY } from '../fx/fx';
+import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
 import { DEFAULT_SUBCATEGORIES } from '../subcategories/default-subcategories';
 import { REFRESH_TOKEN_TTL_DAYS } from './auth.constants';
@@ -28,6 +31,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
+    private readonly fx: FxService,
   ) {}
 
   /**
@@ -174,11 +178,29 @@ export class AuthService {
   /** Updates the caller's own reporting preferences. */
   async updateProfile(
     userId: string,
-    input: { monthStartDay?: number },
+    input: { monthStartDay?: number; baseCurrency?: string },
   ): Promise<PublicUser> {
+    // Proven before it is stored, by actually obtaining a rate for it. The
+    // field used to be settable only at registration and nothing checked it,
+    // while every total was computed in EUR regardless — so a user who picked
+    // USD got euro figures wearing a dollar sign, which is the worst thing a
+    // money app can do quietly. A currency with no obtainable rate is refused
+    // here rather than falling through to a seed value later.
+    if (input.baseCurrency && input.baseCurrency !== BASE_CURRENCY) {
+      try {
+        await this.fx.displayRate(userId, input.baseCurrency);
+      } catch {
+        throw new BadRequestException(
+          `No exchange rate is available for ${input.baseCurrency}`,
+        );
+      }
+    }
     const user = await this.prisma.user.update({
       where: { id: userId },
-      data: { monthStartDay: input.monthStartDay },
+      data: {
+        monthStartDay: input.monthStartDay,
+        baseCurrency: input.baseCurrency,
+      },
     });
     return this.toPublicUser(user);
   }
