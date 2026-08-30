@@ -180,6 +180,70 @@ const STEPS: Step[] = [
     ),
   },
   {
+    icon: "🏷️",
+    title: "Naming your categories",
+    body: "When the app auto-categorizes an import, all it is shown is your category names, the payment description and the amount. It has no idea what you meant by a name. Names that would make sense to a stranger get sorted well; private shorthand does not — and this is the single cheapest thing you can do to make imports more accurate.",
+    example: (
+      <Eg>
+        <p className="text-zinc-500">
+          <span className="line-through">Rex&rsquo;s food + extras</span> →{" "}
+          <span className="text-zinc-700 dark:text-zinc-200">
+            Pet food and vet
+          </span>
+        </p>
+        <p className="mt-1 text-zinc-500">
+          <span className="line-through">M&rsquo;s stuff</span> →{" "}
+          <span className="text-zinc-700 dark:text-zinc-200">
+            Kids&rsquo; clothes and school
+          </span>
+        </p>
+      </Eg>
+    ),
+    details: (
+      <>
+        <Point label="Say what belongs in it, not what you call it.">
+          Initials, nicknames and pet names carry nothing a model can use.
+          &ldquo;Bella&rsquo;s things&rdquo; could be a child, a dog or a
+          flatmate, so charges from a pet shop have no reason to land there.
+          &ldquo;Pet food and vet&rdquo; places them on the first try. The same
+          goes for a person&rsquo;s name on its own — add what it is for.
+        </Point>
+        <Point label="If two categories could both be right, both will be wrong about half the time.">
+          &ldquo;Dining out&rdquo; and &ldquo;Food delivery&rdquo; are a coin
+          flip on a restaurant charge, because the description rarely says which
+          it was. Put the deciding word in the name — &ldquo;Restaurants (ate
+          there)&rdquo; and &ldquo;Delivery (ordered in)&rdquo; — or merge them
+          and stop paying for the distinction.
+        </Point>
+        <Point label="Watch out for a subscription and the thing it pays for.">
+          A membership and the spending it unlocks often arrive under nearly the
+          same merchant name, and the model only sees that text. A monthly
+          &ldquo;Uber One&rdquo; charge and an Uber ride read almost alike.
+          Naming them so the words differ — &ldquo;Ride membership&rdquo; vs
+          &ldquo;Taxis and rides&rdquo; — is what separates them.
+        </Point>
+        <Point label="A shorter list is a more accurate one.">
+          Measured on this app: the same local model given a 61-category list
+          got 0–1 of 6 rows right and pushed whole batches into one arbitrary
+          category. Given 19, it got 5 of 6. If two categories almost always
+          get used together, merging them buys real accuracy.
+        </Point>
+        <Point label="Don’t add a catch-all like “Other” or “No category”.">
+          A row the app can&rsquo;t place is already set aside for you to decide
+          — that is the design. A catch-all just gives the model somewhere to
+          put its doubt, so rows that should have reached you quietly disappear
+          into a bucket instead.
+        </Point>
+        <Point label="Renaming is free, so fix them whenever you notice.">
+          Categories are stored by id, so renaming one keeps every transaction,
+          rule and budget attached to it. The only thing that changes is what
+          the categorizer reads. Click a name on the Categories page to edit it.
+        </Point>
+      </>
+    ),
+    cta: { href: "/subcategories", label: "Review my categories" },
+  },
+  {
     icon: "📊",
     title: "Overview",
     body: "Your dashboard: income vs spending for the month, a donut of where money goes, how you're trending vs your 3-month average, net worth over time, and what's due soon.",
