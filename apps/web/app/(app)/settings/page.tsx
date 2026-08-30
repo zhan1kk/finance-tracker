@@ -128,10 +128,17 @@ function ReportingCurrency({
   const [saving, setSaving] = useState(false);
   const prefs = useQuery({
     queryKey: ["fx-preferences"],
-    queryFn: () => api<{ currency: string }[]>("/fx/preferences"),
+    queryFn: () =>
+      api<{ baseCurrency: string; currencies: { currency: string }[] }>(
+        "/fx/preferences",
+      ),
   });
   const options = Array.from(
-    new Set(["EUR", ...(prefs.data ?? []).map((p) => p.currency)]),
+    new Set([
+      "EUR",
+      ...(prefs.data?.currencies ?? []).map((c) => c.currency),
+      current,
+    ]),
   );
 
   return (

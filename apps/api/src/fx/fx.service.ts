@@ -242,13 +242,21 @@ export class FxService {
     const existing = await this.prisma.exchangeRate.count({
       where: { userId, currency },
     });
-    if (existing > 0 || DEFAULT_RATES[currency] !== undefined) return;
+    if (existing > 0) return;
 
-    const mid = await fetchMidRate(currency).catch(() => {
+    // Fetched even when a seed exists. Skipping the fetch for seeded currencies
+    // meant the two most likely to be used were the two that never got a real
+    // rate: USD sat on 1.08 against an actual 1.1582, so every dollar amount
+    // was stored ~7% wrong until someone synced by hand. The seeds are a floor
+    // for when the network is unavailable, not a reason not to ask.
+    const mid = await fetchMidRate(currency).catch(
+      () => DEFAULT_RATES[currency],
+    );
+    if (mid === undefined) {
       throw new BadRequestException(
         `No exchange rate for ${currency} yet, and it could not be fetched. Add one under Exchange rates first.`,
       );
-    });
+    }
     await this.prisma.currencyPreference.upsert({
       where: { userId_currency: { userId, currency } },
       update: {},
