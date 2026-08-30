@@ -35,6 +35,16 @@ type MatchableRule = {
   excludeFromStats: boolean;
 };
 
+/** Whether a rule still names something to do: a subcategory, a transfer
+ *  account, or the internal flag. */
+function isTargeted(rule: MatchableRule): boolean {
+  return (
+    rule.subcategoryId !== null ||
+    rule.counterAccountId !== null ||
+    rule.excludeFromStats
+  );
+}
+
 /**
  * Does `pattern` occur in `text`, as a whole word or anywhere?
  *
@@ -282,6 +292,13 @@ export class RulesService {
   ): RuleMatch | null {
     let best: MatchableRule | null = null;
     for (const rule of rules) {
+      // A rule with no target left decides nothing, so it must not claim the
+      // row: matching one used to hand back a null subcategory that the import
+      // still marked READY, committing the transaction uncategorized. These
+      // exist because the subcategory FK is ON DELETE SET NULL — deleting a
+      // subcategory empties its rules rather than removing them. Skipping here
+      // sends the row to the categorizer, which is what an absent rule does.
+      if (!isTargeted(rule)) continue;
       if (rule.type !== 'TRANSFER' && rule.type !== rowType) continue;
       if (
         !patternMatches(

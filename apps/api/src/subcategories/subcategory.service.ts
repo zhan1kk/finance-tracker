@@ -74,7 +74,18 @@ export class SubcategoryService {
       );
     }
 
-    await this.prisma.subcategory.delete({ where: { id } });
+    // Take the rules that pointed here down with it. The FK is ON DELETE SET
+    // NULL, so they would otherwise survive with an empty target — and a rule
+    // that names a pattern but no target still matched rows on import, claimed
+    // them from the categorizer, and let them commit with no category at all.
+    // Rules are derived from corrections, not records in their own right, so
+    // removing them with their target loses nothing a re-import cannot relearn.
+    await this.prisma.$transaction([
+      this.prisma.categorizationRule.deleteMany({
+        where: { userId, subcategoryId: id },
+      }),
+      this.prisma.subcategory.delete({ where: { id } }),
+    ]);
   }
 
   private async ensureNameIsFree(userId: string, name: string) {

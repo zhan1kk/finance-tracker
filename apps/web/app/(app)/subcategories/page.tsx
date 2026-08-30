@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import {
@@ -10,9 +10,54 @@ import {
   type TransactionCategory,
 } from "@/lib/types";
 
+/**
+ * The name, while it is being edited. Saves on Enter or on clicking away, and
+ * abandons on Escape; `done` keeps the blur that follows either key from
+ * submitting the same edit a second time.
+ */
+function RenameInput({
+  initial,
+  onSave,
+  onCancel,
+}: {
+  initial: string;
+  onSave: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const done = useRef(false);
+  const finish = (value: string) => {
+    if (done.current) return;
+    done.current = true;
+    const name = value.trim();
+    if (!name || name === initial) onCancel();
+    else onSave(name);
+  };
+  return (
+    <input
+      autoFocus
+      defaultValue={initial}
+      aria-label={`Rename ${initial}`}
+      size={Math.max(initial.length, 8)}
+      className="bg-transparent outline-none"
+      onFocus={(e) => e.currentTarget.select()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          finish(e.currentTarget.value);
+        } else if (e.key === "Escape") {
+          done.current = true;
+          onCancel();
+        }
+      }}
+      onBlur={(e) => finish(e.currentTarget.value)}
+    />
+  );
+}
+
 export default function SubcategoriesPage() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<unknown>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
 
   const subcategories = useQuery({
     queryKey: ["subcategories"],
@@ -36,6 +81,21 @@ export default function SubcategoriesPage() {
     mutationFn: (id: string) =>
       api(`/subcategories/${id}`, { method: "DELETE" }),
     onSuccess: invalidate,
+    onError: setError,
+  });
+
+  const rename = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) =>
+      api<Subcategory>(`/subcategories/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      }),
+    // Only close the editor once the rename lands: a duplicate name comes back
+    // as a 409, and closing on send would discard the typing along with it.
+    onSuccess: () => {
+      setRenaming(null);
+      return invalidate();
+    },
     onError: setError,
   });
 
@@ -136,12 +196,36 @@ export default function SubcategoriesPage() {
                       light grey, with no shape to fall back on. */}
                   {subcategory.pinned ? "★" : "☆"}
                 </button>
-                {subcategory.name}
+                {renaming === subcategory.id ? (
+                  <RenameInput
+                    initial={subcategory.name}
+                    onSave={(name) => {
+                      setError(null);
+                      rename.mutate({ id: subcategory.id, name });
+                    }}
+                    onCancel={() => setRenaming(null)}
+                  />
+                ) : (
+                  <button
+                    title="Rename"
+                    className="hover:underline"
+                    onClick={() => {
+                      setError(null);
+                      setRenaming(subcategory.id);
+                    }}
+                  >
+                    {subcategory.name}
+                  </button>
+                )}
                 <button
                   aria-label={`Delete ${subcategory.name}`}
                   className="text-zinc-400 hover:text-red-600"
                   onClick={() => {
-                    if (window.confirm(`Delete "${subcategory.name}"?`)) {
+                    if (
+                      window.confirm(
+                        `Delete "${subcategory.name}"?\n\nAny import rules that assign it are deleted too. To just change the wording, click the name and rename it instead — that keeps its transactions and rules.`,
+                      )
+                    ) {
                       setError(null);
                       remove.mutate(subcategory.id);
                     }

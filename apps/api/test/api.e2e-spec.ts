@@ -288,6 +288,92 @@ describe('API (e2e)', () => {
       await createSubcategory('Coffee', 'Expenses');
       await createSubcategory('Coffee', 'Expenses', otherToken);
     });
+
+    // Renaming is the safe way to reword a category: everything points at the
+    // id, so the transaction stays attached and its rules keep working. Only
+    // the text the categorizer is shown changes — which is the whole point,
+    // since a name like "Kira's food" tells a model nothing about a dog.
+    it('renaming keeps the transactions and rules attached', async () => {
+      const account = await createAccount();
+      const { id } = await createSubcategory(
+        "Kira's food and extras",
+        'Expenses',
+      );
+      await request(http)
+        .post('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ pattern: 'fressnapf', subcategoryId: id })
+        .expect(201);
+      await request(http)
+        .post('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'EXPENSE',
+          amount: 2500,
+          date: '2026-08-01',
+          description: 'Fressnapf',
+          accountId: account.id,
+          subcategoryId: id,
+        })
+        .expect(201);
+
+      await request(http)
+        .patch(`/subcategories/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'Dog food and vet' })
+        .expect(200);
+
+      const tx = await request(http)
+        .get('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect((tx.body as { items: unknown[] }).items).toContainEqual(
+        expect.objectContaining({ subcategoryId: id }),
+      );
+
+      const rules = await request(http)
+        .get('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(rules.body as unknown[]).toContainEqual(
+        expect.objectContaining({ pattern: 'fressnapf', subcategoryId: id }),
+      );
+    });
+
+    // The subcategory FK is ON DELETE SET NULL, so a delete used to leave the
+    // rule behind pointing at nothing. That rule still matched on import and
+    // claimed the row from the categorizer, which then committed with no
+    // category and never appeared for review.
+    it('deleting takes its rules with it, leaving none without a target', async () => {
+      const { id } = await createSubcategory('Doomed', 'Expenses');
+      await request(http)
+        .post('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ pattern: 'doomed merchant', subcategoryId: id })
+        .expect(201);
+
+      await request(http)
+        .delete(`/subcategories/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const rules = await request(http)
+        .get('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const list = rules.body as {
+        pattern: string;
+        subcategoryId: string | null;
+        counterAccountId: string | null;
+        excludeFromStats: boolean;
+      }[];
+      expect(list.map((r) => r.pattern)).not.toContain('doomed merchant');
+      expect(
+        list.filter(
+          (r) => !r.subcategoryId && !r.counterAccountId && !r.excludeFromStats,
+        ),
+      ).toEqual([]);
+    });
   });
 
   // The register form asks this before anyone can authenticate, to decide

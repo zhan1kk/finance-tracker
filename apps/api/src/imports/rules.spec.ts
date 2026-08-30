@@ -99,6 +99,28 @@ describe('RulesService.match', () => {
     });
   });
 
+  // Deleting a subcategory used to empty its rules instead of removing them
+  // (the FK is ON DELETE SET NULL). Such a rule still matched, and the import
+  // marked the row READY with a null subcategory — committing it with no
+  // category and never showing it for review. It must not match at all.
+  it('ignores a rule left with no target', () => {
+    const orphan = [rule('u', 'uber', 'EXPENSE', {})];
+    expect(
+      rules.match(orphan, 'uber trip help uber com', 'EXPENSE'),
+    ).toBeNull();
+  });
+
+  it('lets a shorter targeted rule win over a longer orphaned one', () => {
+    const set = [
+      rule('orphan', 'uber eats delivery', 'EXPENSE', {}),
+      rule('ok', 'uber', 'EXPENSE', { subcategoryId: 'transport' }),
+    ];
+    expect(rules.match(set, 'uber eats delivery fee', 'EXPENSE')).toEqual({
+      subcategoryId: 'transport',
+      ruleId: 'ok',
+    });
+  });
+
   it('reports whichever target the winning rule carries', () => {
     const mixed = [
       rule('a', 'rewe', 'EXPENSE', { subcategoryId: 'groceries' }),
