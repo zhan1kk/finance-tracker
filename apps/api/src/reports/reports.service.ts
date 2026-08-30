@@ -5,6 +5,7 @@ import {
   recentPeriodLabels,
 } from '../common/period';
 import { BASE_CURRENCY } from '../fx/fx';
+import { Prisma } from '@prisma/client';
 import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
 
@@ -38,13 +39,37 @@ export class ReportsService {
     // are excluded from both — the anchor and the flows — so the line tracks
     // only counted wealth. Their spending still shows in the income/spending
     // stats, which come from a different query.
-    const base =
+    const display = await this.fx.displayRate(userId, baseCurrency);
+    // Same rule as the dashboard aggregates: an account already in the display
+    // currency contributes its own figure, untouched. Only the others are
+    // converted, at the one rate.
+    const inDisplay = (base: string, native: string) =>
+      display.rate === 1
+        ? Prisma.raw(`"${base}"`)
+        : Prisma.sql`(CASE WHEN a."currency" = ${display.currency}
+            THEN a.${Prisma.raw(`"${native}"`)}
+            ELSE ROUND(a.${Prisma.raw(`"${base}"`)} * ${display.rate}) END)`;
+
+    const base = Number(
       (
-        await this.prisma.account.aggregate({
-          _sum: { initialBalanceBase: true },
-          where: { userId, countInNetWorth: true },
-        })
-      )._sum.initialBalanceBase ?? 0;
+        await this.prisma.$queryRaw<{ total: bigint }[]>`
+          SELECT COALESCE(SUM(${
+            display.rate === 1
+              ? Prisma.sql`a."initialBalanceBase"`
+              : inDisplay('initialBalanceBase', 'initialBalance')
+          }), 0)::bigint AS total
+          FROM "Account" a
+          WHERE a."userId" = ${userId} AND a."countInNetWorth" = true
+        `
+      )[0]?.total ?? 0,
+    );
+
+    const txAmount =
+      display.rate === 1
+        ? Prisma.sql`t."amountBase"`
+        : Prisma.sql`(CASE WHEN a."currency" = ${display.currency}
+            THEN t."amount"
+            ELSE ROUND(t."amountBase" * ${display.rate}) END)`;
 
     // Grouped by financial month, matching the dashboard's periods.
     const rows = await this.prisma.$queryRaw<
@@ -56,8 +81,8 @@ export class ReportsService {
           'YYYY-MM'
         ) AS month,
         SUM(CASE t."type"
-          WHEN 'INCOME' THEN t."amountBase"
-          WHEN 'EXPENSE' THEN -t."amountBase"
+          WHEN 'INCOME' THEN ${txAmount}
+          WHEN 'EXPENSE' THEN -${txAmount}
           ELSE 0 END)::bigint AS delta
       FROM "Transaction" t
       JOIN "Account" a ON a."id" = t."accountId"
@@ -80,15 +105,7 @@ export class ReportsService {
       running += deltaByMonth.get(month) ?? 0;
       series.push({ month, netWorthCents: running });
     }
-    // Converted last, on the running totals, not on each month's delta: one
-    // rate applied to the finished series keeps the line's shape exactly and
-    // cannot accumulate rounding across months.
-    const { rate } = await this.fx.displayRate(userId, baseCurrency);
-    if (rate === 1) return series;
-    return series.map((p) => ({
-      ...p,
-      netWorthCents: Math.round(p.netWorthCents * rate),
-    }));
+    return series;
   }
 
   /**

@@ -35,6 +35,19 @@ export class TransactionStatsService {
       where: { id: userId },
       select: { baseCurrency: true },
     });
+    const display = await this.fx.displayRate(userId, baseCurrency);
+    // A row whose account is already in the display currency is used as it
+    // stands. Converting it to EUR at its own date and back at today's rate
+    // moves a number that never needed to change: someone whose accounts are
+    // all in dollars, reporting in dollars, would watch their own spending
+    // drift by whatever the euro did in between. Everything else converts at
+    // the one rate, which is what a mixed-currency total has to do anyway.
+    const amount =
+      display.rate === 1
+        ? Prisma.sql`t."amountBase"`
+        : Prisma.sql`(CASE WHEN a."currency" = ${display.currency}
+            THEN t."amount"
+            ELSE ROUND(t."amountBase" * ${display.rate}) END)`;
     // Which row's date decides the period. Usually the row being summed (t),
     // but a reimbursement is credited against its parent expense, so it counts
     // in the parent's period (p) — in the monthly totals and the categories
@@ -64,11 +77,11 @@ export class TransactionStatsService {
         this.prisma.$queryRaw<MonthlyStat[]>`
         SELECT
           ${periodOf(effectiveDate)} AS month,
-          COALESCE(SUM(t."amountBase") FILTER (
+          COALESCE(SUM(${amount}) FILTER (
             WHERE t."type" = 'INCOME' AND t."parentTransactionId" IS NULL
           ), 0)::int AS income,
-          (COALESCE(SUM(t."amountBase") FILTER (WHERE t."type" = 'EXPENSE'), 0)
-           - COALESCE(SUM(t."amountBase") FILTER (
+          (COALESCE(SUM(${amount}) FILTER (WHERE t."type" = 'EXPENSE'), 0)
+           - COALESCE(SUM(${amount}) FILTER (
                -- Skip reimbursements of an internal parent: that expense isn't
                -- counted, so netting its payback would leave a phantom credit.
                WHERE t."type" = 'INCOME' AND t."parentTransactionId" IS NOT NULL
@@ -92,8 +105,8 @@ export class TransactionStatsService {
         this.prisma.$queryRaw<DailyStat[]>`
         SELECT
           TO_CHAR(${effectiveDate}, 'YYYY-MM-DD') AS day,
-          (COALESCE(SUM(t."amountBase") FILTER (WHERE t."type" = 'EXPENSE'), 0)
-           - COALESCE(SUM(t."amountBase") FILTER (
+          (COALESCE(SUM(${amount}) FILTER (WHERE t."type" = 'EXPENSE'), 0)
+           - COALESCE(SUM(${amount}) FILTER (
                WHERE t."type" = 'INCOME' AND t."parentTransactionId" IS NOT NULL
                  AND p."excludeFromStats" = false
              ), 0))::int AS expense
@@ -114,12 +127,12 @@ export class TransactionStatsService {
           s."category"::text AS category,
           SUM(x.signed)::int AS amount
         FROM (
-          SELECT t."subcategoryId" AS sid, t."amountBase" AS signed
+          SELECT t."subcategoryId" AS sid, ${amount} AS signed
           FROM "Transaction" t
           JOIN "Account" a ON a."id" = t."accountId"
           WHERE ${scope(Prisma.sql`t."type" = 'EXPENSE'`)}
           UNION ALL
-          SELECT p."subcategoryId" AS sid, -t."amountBase" AS signed
+          SELECT p."subcategoryId" AS sid, -${amount} AS signed
           FROM "Transaction" t
           JOIN "Account" a ON a."id" = t."accountId"
           JOIN "Transaction" p ON p."id" = t."parentTransactionId"
@@ -146,7 +159,7 @@ export class TransactionStatsService {
           s."id" AS "subcategoryId",
           s."name",
           s."category"::text AS category,
-          COALESCE(SUM(t."amountBase"), 0)::int AS amount
+          COALESCE(SUM(${amount}), 0)::int AS amount
         FROM "Transaction" t
         JOIN "Account" a ON a."id" = t."accountId"
         JOIN "Subcategory" s ON s."id" = t."subcategoryId"
@@ -162,23 +175,14 @@ export class TransactionStatsService {
     // here rather than in the browser so the figure and the symbol beside it
     // can never disagree: every caller gets numbers already in `currency`, and
     // `rate`/`asOf` say what they were converted at.
-    const display = await this.fx.displayRate(userId, baseCurrency);
-    const to = (cents: number) => Math.round(cents * display.rate);
     return {
       currency: display.currency,
       rate: display.rate,
       rateAsOf: display.asOf,
-      monthly: monthly.map((m) => ({
-        ...m,
-        income: to(m.income),
-        expense: to(m.expense),
-      })),
-      daily: daily.map((d) => ({ ...d, expense: to(d.expense) })),
-      byCategory: byCategory.map((c) => ({ ...c, amount: to(c.amount) })),
-      incomeByCategory: incomeByCategory.map((c) => ({
-        ...c,
-        amount: to(c.amount),
-      })),
+      monthly,
+      daily,
+      byCategory,
+      incomeByCategory,
     };
   }
 
