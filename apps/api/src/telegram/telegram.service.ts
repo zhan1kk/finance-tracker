@@ -177,6 +177,7 @@ export class TelegramService {
     const subcategories = await this.prisma.subcategory.findMany({
       where: {
         userId: user.id,
+        archivedAt: null,
         category: parsed.type === 'INCOME' ? 'Income' : { not: 'Income' },
       },
       orderBy: { name: 'asc' },

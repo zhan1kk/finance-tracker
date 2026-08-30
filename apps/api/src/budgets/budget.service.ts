@@ -189,6 +189,13 @@ export class BudgetService {
           'Budgets can only target the Expenses category',
         );
       }
+      // Only for new budgets: an existing one whose category is later retired
+      // keeps working, so archiving never invalidates something already set up.
+      if (subcategory.archivedAt) {
+        throw new BadRequestException(
+          `"${subcategory.name}" is archived — bring it back before budgeting for it`,
+        );
+      }
     }
 
     const scope: Prisma.BudgetWhereInput = hasSub

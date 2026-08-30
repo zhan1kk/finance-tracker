@@ -1320,8 +1320,12 @@ export class ImportService {
     const pending = staged.filter((r) => r.status !== 'DUPLICATE');
     if (pending.length === 0) return;
 
+    // Retired categories are not candidates. This is the only place the
+    // categorizer's list is built, and the two-stage prompt derives its parent
+    // list from whatever it is handed — so excluding them here also drops a
+    // parent once its last live category is retired, with no special case.
     const subcategories = await this.prisma.subcategory.findMany({
-      where: { userId },
+      where: { userId, archivedAt: null },
       select: { id: true, name: true, category: true },
     });
 

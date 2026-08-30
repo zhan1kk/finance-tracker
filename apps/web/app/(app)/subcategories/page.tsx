@@ -124,11 +124,22 @@ export default function SubcategoriesPage() {
     );
   };
 
+  const setArchived = useMutation({
+    mutationFn: ({ id, archived }: { id: string; archived: boolean }) =>
+      api<Subcategory>(`/subcategories/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ archived }),
+      }),
+    onSuccess: invalidate,
+    onError: setError,
+  });
+
+  const active = subcategories.data?.filter((s) => !s.archivedAt) ?? [];
+  const archived = subcategories.data?.filter((s) => s.archivedAt) ?? [];
+
   const grouped = TRANSACTION_CATEGORIES.map((category) => ({
     category,
-    items:
-      subcategories.data?.filter((s) => s.category === category) ??
-      ([] as Subcategory[]),
+    items: active.filter((s) => s.category === category),
   })).filter((group) => group.items.length > 0);
 
   return (
@@ -218,6 +229,17 @@ export default function SubcategoriesPage() {
                   </button>
                 )}
                 <button
+                  aria-label={`Archive ${subcategory.name}`}
+                  title="Archive — keeps its history, stops offering it for anything new"
+                  className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+                  onClick={() => {
+                    setError(null);
+                    setArchived.mutate({ id: subcategory.id, archived: true });
+                  }}
+                >
+                  ⊘
+                </button>
+                <button
                   aria-label={`Delete ${subcategory.name}`}
                   className="text-zinc-400 hover:text-red-600"
                   onClick={() => {
@@ -238,6 +260,45 @@ export default function SubcategoriesPage() {
           </div>
         </section>
       ))}
+
+      {/* Collapsed: retired categories are history, not something to scan past
+          every visit. Their transactions, rules and past totals are untouched —
+          they are simply no longer offered to the categorizer or the pickers,
+          which is what keeps the list the model sees short. */}
+      {archived.length > 0 && (
+        <details className="rounded-lg border border-zinc-200 dark:border-zinc-800">
+          <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-300">
+            Archived ({archived.length})
+          </summary>
+          <div className="flex flex-wrap gap-2 px-3 pb-3">
+            {archived.map((subcategory) => (
+              <span
+                key={subcategory.id}
+                className="flex items-center gap-2 rounded-full border border-dashed border-zinc-300 px-3 py-1 text-sm text-zinc-500 dark:border-zinc-700"
+              >
+                {subcategory.name}
+                <span className="text-xs text-zinc-400">
+                  {subcategory.category}
+                </span>
+                <button
+                  aria-label={`Restore ${subcategory.name}`}
+                  title="Bring it back"
+                  className="text-zinc-400 hover:text-emerald-600"
+                  onClick={() => {
+                    setError(null);
+                    setArchived.mutate({
+                      id: subcategory.id,
+                      archived: false,
+                    });
+                  }}
+                >
+                  ↩
+                </button>
+              </span>
+            ))}
+          </div>
+        </details>
+      )}
     </main>
   );
 }

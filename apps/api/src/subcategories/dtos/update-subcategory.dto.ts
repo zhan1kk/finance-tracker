@@ -7,4 +7,10 @@ export class UpdateSubcategoryDTO extends PartialType(CreateSubcategoryDTO) {
   @IsOptional()
   @IsBoolean()
   public readonly pinned?: boolean;
+
+  /** Retire (true) or bring back (false). A retired category keeps everything
+   *  it already holds; it is just no longer offered for anything new. */
+  @IsOptional()
+  @IsBoolean()
+  public readonly archived?: boolean;
 }

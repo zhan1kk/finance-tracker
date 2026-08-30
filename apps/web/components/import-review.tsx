@@ -520,7 +520,11 @@ function Row({
           >
             <option value="">Pick…</option>
             <option value={INT}>⊘ Internal move (exclude from stats)</option>
-            <SubcategoryOptions subcategories={eligible} prefix={SUB} />
+            <SubcategoryOptions
+              subcategories={eligible}
+              prefix={SUB}
+              keepId={row.subcategoryId}
+            />
             {accounts.length > 0 && (
               <optgroup label="Transfer (not income or spending)">
                 {accounts.map((a) => (

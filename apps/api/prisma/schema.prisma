@@ -243,6 +243,18 @@ model Subcategory {
   /// Shown as a one-tap shortcut in the Telegram capture picker; the rest sit
   /// behind "More…". Ordered by name.
   pinned   Boolean             @default(false)
+  /// When set, the category is retired: it is no longer offered to the
+  /// categorizer or in the pickers, but every transaction, rule and budget
+  /// already pointing at it is untouched and every past total is unchanged.
+  ///
+  /// This is the other half of delete, which is refused once transactions
+  /// exist — correctly, since removing it would orphan history. A blocked
+  /// account that paid out for the last time, or a debt now settled, can
+  /// never legitimately match another row, yet still competes for every one
+  /// of them: measured here, the same model scored 0-1 of 6 against a
+  /// 61-category list and 5 of 6 against 19. Retiring the dead ones is the
+  /// cheapest way to shorten that list without losing the history.
+  archivedAt DateTime?
 
   userId String
   user   User   @relation(fields: [userId], references: [id])

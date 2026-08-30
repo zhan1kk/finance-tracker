@@ -58,7 +58,18 @@ export class SubcategoryService {
       }
     }
 
-    return this.prisma.subcategory.update({ where: { id }, data: input });
+    // `archived` is a boolean at the edge and a timestamp in the column: the
+    // date a category was retired is worth keeping, and it costs nothing here.
+    const { archived, ...rest } = input;
+    return this.prisma.subcategory.update({
+      where: { id },
+      data: {
+        ...rest,
+        ...(archived === undefined
+          ? {}
+          : { archivedAt: archived ? new Date() : null }),
+      },
+    });
   }
 
   async deleteSubcategory(userId: string, id: string) {

@@ -133,6 +133,9 @@ export type Subcategory = {
   category: TransactionCategory;
   /** One-tap shortcut in the Telegram capture picker. */
   pinned?: boolean;
+  /** Set when the category is retired: kept for history, offered for nothing
+   *  new. Null or absent means active. */
+  archivedAt?: string | null;
 };
 
 export type TransactionType = 'INCOME' | 'EXPENSE' | 'TRANSFER';

@@ -19,14 +19,25 @@ import { TRANSACTION_CATEGORIES, type Subcategory } from "@/lib/types";
 export function SubcategoryOptions({
   subcategories,
   prefix = "",
+  keepId = null,
 }: {
   subcategories: Subcategory[];
   /** Prepended to each value, for pickers that namespace their options. */
   prefix?: string;
+  /**
+   * The id this picker is currently showing, kept in the list even when it is
+   * archived. Without it, opening an old transaction whose category has since
+   * been retired would find no matching <option>, and the select would fall to
+   * its first entry — silently recategorizing the row on the next save.
+   */
+  keepId?: string | null;
 }) {
+  const visible = subcategories.filter(
+    (s) => !s.archivedAt || s.id === keepId,
+  );
   const grouped = TRANSACTION_CATEGORIES.map((category) => ({
     category,
-    items: subcategories.filter((s) => s.category === category),
+    items: visible.filter((s) => s.category === category),
   })).filter((g) => g.items.length > 0);
 
   return (

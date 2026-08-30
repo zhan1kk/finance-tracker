@@ -374,6 +374,120 @@ describe('API (e2e)', () => {
         ),
       ).toEqual([]);
     });
+
+    // The guarantee archiving rests on. Stats group by the subcategoryId on
+    // each transaction and never consult the category list, so retiring one
+    // cannot move a past total — this asserts it rather than trusting it.
+    it('archiving does not change any past total', async () => {
+      const account = await createAccount();
+      const { id } = await createSubcategory('Retiring soon', 'Expenses');
+      await request(http)
+        .post('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'EXPENSE',
+          amount: 4200,
+          date: '2026-07-14',
+          description: 'Last one',
+          accountId: account.id,
+          subcategoryId: id,
+        })
+        .expect(201);
+
+      const stats = () =>
+        request(http)
+          .get('/transactions/stats')
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200)
+          .then((r) => r.body as unknown);
+
+      const before = await stats();
+      await request(http)
+        .patch(`/subcategories/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ archived: true })
+        .expect(200);
+
+      expect(await stats()).toEqual(before);
+    });
+
+    it('stops offering an archived category to the categorizer', async () => {
+      const account = await createAccount();
+      const { id } = await createSubcategory('Bouldering', 'Expenses');
+      const mapping = {
+        dateColumn: 'Date',
+        amountColumn: 'Amount',
+        descriptionColumn: 'Description',
+        dateFormat: 'ISO',
+        decimalSeparator: '.',
+        negativeIsExpense: true,
+        hasHeader: true,
+      };
+      type Row = { status: string; subcategory: { name: string } | null };
+
+      // While active, the heuristic name-matches it.
+      const first = await importAndWait(token, {
+        accountId: account.id,
+        filename: 'a.csv',
+        csv: 'Date,Amount,Description\n2026-07-05,-18.00,Bouldering\n',
+        mapping,
+      });
+      expect(
+        (first.body as { batch: { rows: Row[] } }).batch.rows[0],
+      ).toMatchObject({
+        status: 'READY',
+        subcategory: { name: 'Bouldering' },
+      });
+
+      await request(http)
+        .patch(`/subcategories/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ archived: true })
+        .expect(200);
+
+      // Archived, it is not a candidate — so nothing claims the row.
+      const second = await importAndWait(token, {
+        accountId: account.id,
+        filename: 'b.csv',
+        csv: 'Date,Amount,Description\n2026-07-06,-19.00,Bouldering\n',
+        mapping,
+      });
+      expect(
+        (second.body as { batch: { rows: Row[] } }).batch.rows[0],
+      ).toMatchObject({
+        status: 'NEEDS_REVIEW',
+        subcategory: null,
+      });
+    });
+
+    it('still lists an archived category, so history can display it', async () => {
+      const { id } = await createSubcategory('Old thing', 'Expenses');
+      await request(http)
+        .patch(`/subcategories/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ archived: true })
+        .expect(200);
+
+      const res = await request(http)
+        .get('/subcategories')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(res.body as unknown[]).toContainEqual(
+        expect.objectContaining({ id, archivedAt: expect.any(String) }),
+      );
+
+      // And it comes back, still holding everything it had.
+      await request(http)
+        .patch(`/subcategories/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ archived: false })
+        .expect(200);
+      const after = await request(http)
+        .get(`/subcategories/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(after.body).toMatchObject({ id, archivedAt: null });
+    });
   });
 
   // The register form asks this before anyone can authenticate, to decide

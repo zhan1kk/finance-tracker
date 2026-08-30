@@ -779,7 +779,10 @@ function SplitDialog({
                 className="min-w-[9rem]"
                 onChange={(e) => setPart(i, { subcategoryId: e.target.value })}
               >
-                <SubcategoryOptions subcategories={eligible} />
+                <SubcategoryOptions
+                  subcategories={eligible}
+                  keepId={p.subcategoryId}
+                />
               </Select>
               <Input
                 value={p.description}
@@ -1189,7 +1192,10 @@ function TransactionRow({
                 onChange={(e) => setSubcategoryId(e.target.value)}
                 disabled={excludeFromStats}
               >
-                <SubcategoryOptions subcategories={eligible} />
+                <SubcategoryOptions
+                  subcategories={eligible}
+                  keepId={subcategoryId}
+                />
               </Select>
               <label className="mt-1 flex items-center gap-1 text-xs text-zinc-500">
                 <input

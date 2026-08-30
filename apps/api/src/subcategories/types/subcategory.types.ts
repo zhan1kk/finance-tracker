@@ -14,4 +14,6 @@ export type CreateSubcategoryInput = {
 export type UpdateSubcategoryInput = Partial<CreateSubcategoryInput> & {
   /** One-tap shortcut in the Telegram capture picker. */
   pinned?: boolean;
+  /** Retire it (true) or bring it back (false). */
+  archived?: boolean;
 };

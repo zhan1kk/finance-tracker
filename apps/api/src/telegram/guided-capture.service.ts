@@ -66,7 +66,12 @@ export class GuidedCaptureService {
     if ('error' in context) return { text: context.error };
 
     const pinned = await this.prisma.subcategory.findMany({
-      where: { userId: context.userId, pinned: true, ...signFilter(type) },
+      where: {
+        userId: context.userId,
+        pinned: true,
+        archivedAt: null,
+        ...signFilter(type),
+      },
       orderBy: { name: 'asc' },
     });
     // Without shortcuts configured there is nothing to shortcut to — go
@@ -141,7 +146,7 @@ export class GuidedCaptureService {
     }
 
     const found = await this.prisma.subcategory.findMany({
-      where: { userId: context.userId, category },
+      where: { userId: context.userId, category, archivedAt: null },
       orderBy: { name: 'asc' },
     });
     if (found.length === 0) {
