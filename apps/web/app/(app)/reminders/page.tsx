@@ -8,6 +8,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatCents, formatDate, parseAmountToCents } from "@/lib/format";
 import { runJob } from "@/lib/poll-job";
+import { SubcategoryOptions } from "@/components/subcategory-options";
 import type {
   RecurringCadence,
   RecurringRule,
@@ -555,11 +556,7 @@ export default function RemindersPage() {
           <Field label="Category">
             <Select name="subcategoryId" defaultValue="">
               <option value="">—</option>
-              {(subcategories.data ?? []).map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} ({s.category})
-                </option>
-              ))}
+              <SubcategoryOptions subcategories={subcategories.data ?? []} />
             </Select>
           </Field>
           <Field label="Amount">
