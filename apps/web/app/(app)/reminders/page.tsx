@@ -78,6 +78,7 @@ function IncomePicker({
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         placeholder="search income (name, amount)…"
+        aria-label="Search income transactions"
         className="w-full text-sm"
         autoFocus
       />
@@ -128,7 +129,13 @@ export default function RemindersPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const baseCurrency = user?.baseCurrency ?? "EUR";
-  const [error, setError] = useState<unknown>(null);
+  // One error slot per region. A single shared one put every message in the
+  // first card: a bad amount typed into the form below, or a failed "Mark
+  // paid" further down, appeared only at the top of the page — often
+  // scrolled out of sight, next to a control that had nothing to do with it.
+  const [scanError, setScanError] = useState<unknown>(null);
+  const [formError, setFormError] = useState<unknown>(null);
+  const [listError, setListError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // Blank means "recent transactions" (the capped default); a date scans
   // everything from then on, for picking up notes written a while ago.
@@ -160,14 +167,14 @@ export default function RemindersPage() {
     mutationFn: (body: Record<string, unknown>) =>
       api<Reminder>("/reminders", { method: "POST", body: JSON.stringify(body) }),
     onSuccess: invalidate,
-    onError: setError,
+    onError: setFormError,
   });
 
   const markPaid = useMutation({
     mutationFn: (id: string) =>
       api(`/reminders/${id}/paid`, { method: "POST" }),
     onSuccess: invalidate,
-    onError: setError,
+    onError: setListError,
   });
 
   // Links the income that paid back an "Ask …" reminder: reimburses the source
@@ -184,7 +191,7 @@ export default function RemindersPage() {
       void queryClient.invalidateQueries({ queryKey: ["transactions"] });
       void queryClient.invalidateQueries({ queryKey: ["stats"] });
     },
-    onError: setError,
+    onError: setListError,
   });
 
   const scan = useMutation({
@@ -205,7 +212,7 @@ export default function RemindersPage() {
             : "No new reminders in your recent transactions.",
       );
     },
-    onError: setError,
+    onError: setScanError,
   });
 
   const detect = useMutation({
@@ -221,7 +228,7 @@ export default function RemindersPage() {
           : "No new recurring bills found in your Bills/Subscriptions.",
       );
     },
-    onError: setError,
+    onError: setScanError,
   });
 
   const setDone = useMutation({
@@ -231,29 +238,29 @@ export default function RemindersPage() {
         body: JSON.stringify({ done: vars.done }),
       }),
     onSuccess: invalidate,
-    onError: setError,
+    onError: setListError,
   });
 
   const remove = useMutation({
     mutationFn: (id: string) => api(`/reminders/${id}`, { method: "DELETE" }),
     onSuccess: invalidate,
-    onError: setError,
+    onError: setListError,
   });
 
   const onCreate = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setError(null);
+    setFormError(null);
     setNotice(null);
     const form = new FormData(e.currentTarget);
     const label = String(form.get("label") || "").trim();
     if (!label) {
-      setError(new Error("Give the reminder a name"));
+      setFormError(new Error("Give the reminder a name"));
       return;
     }
     const amountRaw = String(form.get("amount") || "").trim();
     const amountCents = amountRaw ? parseAmountToCents(amountRaw) : undefined;
     if (amountRaw && amountCents === null) {
-      setError(new Error("Invalid amount — e.g. 12.50"));
+      setFormError(new Error("Invalid amount — e.g. 12.50"));
       return;
     }
     const instRaw = String(form.get("installmentsTotal") || "").trim();
@@ -262,7 +269,7 @@ export default function RemindersPage() {
       instRaw &&
       (!Number.isInteger(installmentsTotal) || (installmentsTotal ?? 0) < 2)
     ) {
-      setError(new Error("Installments must be a whole number of 2 or more"));
+      setFormError(new Error("Installments must be a whole number of 2 or more"));
       return;
     }
     const form_ = e.currentTarget;
@@ -367,7 +374,7 @@ export default function RemindersPage() {
             <Button
               variant="ghost"
               onClick={() => {
-                setError(null);
+                setListError(null);
                 setSettling(settling === r.id ? null : r.id);
               }}
             >
@@ -378,7 +385,7 @@ export default function RemindersPage() {
           <Button
             variant="ghost"
             onClick={() => {
-              setError(null);
+              setListError(null);
               markPaid.mutate(r.id);
             }}
           >
@@ -388,7 +395,7 @@ export default function RemindersPage() {
         <Button
           variant="ghost"
           onClick={() => {
-            setError(null);
+            setListError(null);
             setDone.mutate({ id: r.id, done: !r.done });
           }}
         >
@@ -406,7 +413,7 @@ export default function RemindersPage() {
               )
             )
               return;
-            setError(null);
+            setListError(null);
             remove.mutate(r.id);
           }}
         >
@@ -489,7 +496,7 @@ export default function RemindersPage() {
             <Button
               variant="ghost"
               onClick={() => {
-                setError(null);
+                setScanError(null);
                 setNotice(null);
                 detect.mutate();
               }}
@@ -512,7 +519,7 @@ export default function RemindersPage() {
             </label>
             <Button
               onClick={() => {
-                setError(null);
+                setScanError(null);
                 setNotice(null);
                 scan.mutate(scanSince);
               }}
@@ -544,7 +551,7 @@ export default function RemindersPage() {
         {notice && !scan.isPending && (
           <p className="text-sm text-zinc-500">{notice}</p>
         )}
-        <ErrorText error={error} />
+        <ErrorText error={scanError} />
       </Card>
 
       <Card>
@@ -590,11 +597,19 @@ export default function RemindersPage() {
             Add
           </Button>
         </form>
+        <ErrorText error={formError} />
       </Card>
 
       <Card>
+        <ErrorText error={listError} />
         {reminders.isLoading && (
           <p className="text-sm text-zinc-500">Loading…</p>
+        )}
+        {/* Without this the card just looks empty on a dropped connection:
+            isLoading is false, data is undefined, and the empty-state message
+            below needs data to exist before it will render. */}
+        {reminders.isError && (
+          <ErrorText error={reminders.error} />
         )}
         {reminders.data &&
           open.length === 0 &&
