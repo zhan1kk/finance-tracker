@@ -1,13 +1,13 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { AccuracyCard } from "@/components/accuracy-card";
 import { ImportReview } from "@/components/import-review";
 import { Button, Card, ErrorText, Field, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { formatTimestamp } from "@/lib/format";
-import { runJob } from "@/lib/poll-job";
+import { listRunningJobs, runJob } from "@/lib/poll-job";
 import {
   type Account,
   type CategorizerOption,
@@ -19,6 +19,12 @@ import {
   type SkippedRow,
 } from "@/lib/types";
 
+/** Rounded-up wall time since an ISO timestamp, for a progress line. */
+function minutesSince(iso: string): string {
+  const mins = Math.max(1, Math.round((Date.now() - Date.parse(iso)) / 60_000));
+  return `${mins} minute${mins === 1 ? "" : "s"}`;
+}
+
 /** First header matching any of the patterns (case-insensitive), else "". */
 function guessColumn(headers: string[], patterns: RegExp[]): string {
   for (const pattern of patterns) {
@@ -29,7 +35,34 @@ function guessColumn(headers: string[], patterns: RegExp[]): string {
 }
 
 export default function ImportsPage() {
+  const queryClient = useQueryClient();
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
+
+  // An import in flight belongs to the page, not to the form. NewImport holds
+  // its job id in a promise local, so navigating away discards it and coming
+  // back showed nothing at all while the server was still working. The server
+  // is the only thing that still knows, so ask it.
+  const running = useQuery({
+    queryKey: ["running-jobs"],
+    queryFn: listRunningJobs,
+    refetchInterval: (query) => (query.state.data?.length ? 3_000 : 20_000),
+  });
+  const inFlight = running.data?.find(
+    (job) => job.kind === "import" || job.kind === "pdf-import",
+  );
+
+  // When it disappears it has finished, so pull the new batch into History.
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (inFlight) {
+      wasRunning.current = true;
+      return;
+    }
+    if (wasRunning.current) {
+      wasRunning.current = false;
+      void queryClient.invalidateQueries({ queryKey: ["import-batches"] });
+    }
+  }, [inFlight, queryClient]);
   // Owned here, not in NewImport: opening a batch unmounts NewImport in the same
   // tick it sets this, so a banner rendered there would never reach the screen —
   // and unparseable rows would go missing silently.
@@ -82,6 +115,14 @@ export default function ImportsPage() {
   return (
     <main className="flex flex-col gap-6">
       {skippedNotice}
+      {inFlight && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+          Still importing
+          {inFlight.label ? ` ${inFlight.label}` : ""} — running for{" "}
+          {minutesSince(inFlight.startedAt)}. It finishes on the server whether
+          this page is open or not, and will appear in Import History below.
+        </div>
+      )}
       <NewImport
         onImported={(batchId, skippedRows) => {
           setSkipped(skippedRows);

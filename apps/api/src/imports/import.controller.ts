@@ -51,8 +51,10 @@ export class ImportController {
    */
   @Post()
   createImport(@CurrentUser() user: AuthUser, @Body() body: CreateImportDTO) {
-    const jobId = this.jobs.start(user.userId, () =>
-      this.importService.createImport(user.userId, body),
+    const jobId = this.jobs.start(
+      user.userId,
+      () => this.importService.createImport(user.userId, body),
+      { kind: 'import', label: body.filename },
     );
     return { jobId };
   }
@@ -63,8 +65,10 @@ export class ImportController {
    */
   @Post('pdf')
   importPdf(@CurrentUser() user: AuthUser, @Body() body: CreatePdfImportDTO) {
-    const jobId = this.jobs.start(user.userId, () =>
-      this.pdfImportService.importPdf(user.userId, body),
+    const jobId = this.jobs.start(
+      user.userId,
+      () => this.pdfImportService.importPdf(user.userId, body),
+      { kind: 'pdf-import', label: body.filename },
     );
     return { jobId };
   }

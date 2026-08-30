@@ -3,9 +3,15 @@ import { randomUUID } from 'node:crypto';
 
 export type JobStatus = 'running' | 'done' | 'error';
 
+/** What the job is doing, so a page can reattach only to its own kind of work. */
+export type JobKind = 'import' | 'pdf-import' | 'reminder-scan' | 'other';
+
 export type Job = {
   id: string;
   userId: string;
+  kind: JobKind;
+  /** Shown while it runs, e.g. the statement's filename. */
+  label?: string;
   status: JobStatus;
   result?: unknown;
   error?: string;
@@ -31,12 +37,18 @@ export class JobsService {
   private readonly jobs = new Map<string, Job>();
 
   /** Starts `work` in the background; returns a job id to poll immediately. */
-  start(userId: string, work: () => Promise<unknown>): string {
+  start(
+    userId: string,
+    work: () => Promise<unknown>,
+    meta: { kind?: JobKind; label?: string } = {},
+  ): string {
     const id = randomUUID();
     const now = Date.now();
     this.jobs.set(id, {
       id,
       userId,
+      kind: meta.kind ?? 'other',
+      label: meta.label,
       status: 'running',
       createdAt: now,
       updatedAt: now,
@@ -57,6 +69,20 @@ export class JobsService {
       );
     this.sweep();
     return id;
+  }
+
+  /**
+   * The caller's jobs that are still running, oldest first.
+   *
+   * Without this a job was only reachable by an id the browser held in memory,
+   * so navigating away lost it: the work ran on to completion server-side, but
+   * nothing on the page could tell it was still going. A page reattaches by
+   * asking what is running rather than by remembering.
+   */
+  listRunning(userId: string): Job[] {
+    return [...this.jobs.values()]
+      .filter((job) => job.userId === userId && job.status === 'running')
+      .sort((a, b) => a.createdAt - b.createdAt);
   }
 
   /** The caller's own job, or 404 — never another user's. */

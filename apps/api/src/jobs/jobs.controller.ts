@@ -7,6 +7,20 @@ import { JobsService } from './jobs.service';
 export class JobsController {
   constructor(private readonly jobs: JobsService) {}
 
+  /**
+   * What the caller has running right now. Declared before `:id` so "running"
+   * is not swallowed as a job id.
+   */
+  @Get('running')
+  running(@CurrentUser() user: AuthUser) {
+    return this.jobs.listRunning(user.userId).map((job) => ({
+      id: job.id,
+      kind: job.kind,
+      label: job.label,
+      startedAt: new Date(job.createdAt).toISOString(),
+    }));
+  }
+
   /** Poll a background job's status and (once done) its result. */
   @Get(':id')
   get(@CurrentUser() user: AuthUser, @Param('id') id: string) {
