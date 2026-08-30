@@ -175,17 +175,24 @@ export class FxService {
         select: { baseCurrency: true },
       }),
     ]);
+    void user;
 
     const byCurrency = new Map(prefs.map((p) => [p.currency, p]));
     // An account in a currency you have no preference row for still needs a
     // rate, so surface it rather than letting it convert silently at 1:1.
+    //
+    // Compared against BASE_CURRENCY, not the user's reporting preference.
+    // Every stored rate means "foreign units per 1 EUR" — that is what the
+    // whole ledger is anchored to. Filtering by the preference instead meant
+    // that choosing USD for reports turned EUR itself into a trackable foreign
+    // currency and labelled the rates "1 USD = 1.1582 USD".
     for (const { currency } of accountCurrencies) {
-      if (currency !== user.baseCurrency && !byCurrency.has(currency)) {
+      if (currency !== BASE_CURRENCY && !byCurrency.has(currency)) {
         byCurrency.set(currency, { currency, spreadPct: 0, autoSync: false });
       }
     }
     return {
-      baseCurrency: user.baseCurrency,
+      baseCurrency: BASE_CURRENCY,
       currencies: [...byCurrency.values()].sort((a, b) =>
         a.currency.localeCompare(b.currency),
       ),

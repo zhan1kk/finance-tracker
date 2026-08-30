@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { type Budget, Prisma } from '@prisma/client';
 import { periodBounds, periodLabel } from '../common/period';
+import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
 import type { CreateBudgetDTO } from './dtos/create-budget.dto';
 import type { UpdateBudgetDTO } from './dtos/update-budget.dto';
@@ -16,7 +17,10 @@ const BUDGET_INCLUDE = {
 
 @Injectable()
 export class BudgetService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fx: FxService,
+  ) {}
 
   /**
    * Budgets with spending progress for one financial month (default: the
@@ -115,19 +119,31 @@ export class BudgetService {
     end: Date,
   ) {
     const override = budget.periods[0]?.limit ?? null;
-    const limit = override ?? budget.monthlyLimit;
-    const spentCents = await this.computeSpent(userId, budget, start, end);
+    const storedLimit = override ?? budget.monthlyLimit;
+    const storedSpent = await this.computeSpent(userId, budget, start, end);
     const { periods: _periods, ...rest } = budget;
+    // Presented in the reporting currency, like every other total. Limits are
+    // stored in the base currency and converted here rather than on the way in,
+    // so the commitment itself never moves — only how it is shown. percent and
+    // overBudget are ratios and come out the same either way.
+    const { baseCurrency } = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { baseCurrency: true },
+    });
+    const { rate } = await this.fx.displayRate(userId, baseCurrency);
+    const limit = Math.round(storedLimit * rate);
+    const spentCents = Math.round(storedSpent * rate);
     return {
       ...rest,
       period,
       // Effective limit for this month; monthlyLimit stays the recurring base.
       limit,
+      monthlyLimit: Math.round(budget.monthlyLimit * rate),
       isOverride: override !== null,
       spentCents,
       remainingCents: limit - spentCents,
-      percent: limit > 0 ? spentCents / limit : 0,
-      overBudget: spentCents > limit,
+      percent: storedLimit > 0 ? storedSpent / storedLimit : 0,
+      overBudget: storedSpent > storedLimit,
     };
   }
 
