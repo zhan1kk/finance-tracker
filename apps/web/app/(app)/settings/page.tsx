@@ -61,7 +61,7 @@ function ReportingCurrency({
 
   return (
     <Card>
-      <h2 className="font-semibold">Reporting currency</h2>
+      <h2 className="font-medium">Reporting currency</h2>
       <p className="mb-3 mt-1 text-sm text-zinc-500">
         The currency your totals are shown in — the dashboard, the charts and
         the reports. Your accounts keep their own currencies, and every amount

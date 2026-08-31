@@ -66,8 +66,11 @@ const RECENT_BATCHES = 8;
 function RecentBatches({ rows }: { rows: AccuracyStats["byBatch"] }) {
   const recent = rows.slice(0, RECENT_BATCHES);
   const older = rows.slice(RECENT_BATCHES);
+  // Each row is five fixed-width columns and does not wrap, so on a phone it
+  // clipped or pushed the whole page sideways. Every other wide block in the
+  // app scrolls inside itself instead.
   const list = (items: AccuracyStats["byBatch"]) => (
-    <ul className="flex flex-col gap-1.5">
+    <ul className="flex flex-col gap-1.5 overflow-x-auto">
       {items.map((batch) => (
               <li key={batch.batchId} className="flex items-center gap-3">
                 <span

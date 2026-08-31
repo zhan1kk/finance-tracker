@@ -23,10 +23,14 @@ function targetLabel(rule: CategorizationRule): string {
 /** Below this the whole list fits on a screen and a search box is just clutter. */
 const SEARCHABLE_FROM = 8;
 
+/** Rules shown before the list asks to be expanded. */
+const INITIAL_RULES = 25;
+
 export default function RulesPage() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<unknown>(null);
   const [search, setSearch] = useState("");
+  const [showAll, setShowAll] = useState(false);
   const [sort, setSort] = useState<"pattern" | "hits">("pattern");
 
   const rules = useQuery({
@@ -94,6 +98,11 @@ export default function RulesPage() {
     // actually relying on, and which are dead weight?". hitCount now counts
     // committed transactions the rule categorized and the user kept.
     .sort((a, b) => (sort === "hits" ? b.hitCount - a.hitCount : 0));
+  // Rules are created automatically by every corrected import, so this is the
+  // fastest-growing list in the app and the only one still rendering whole.
+  // Capped like the import history and rate lists; searching or sorting still
+  // works on all of them, since the cap is applied after both.
+  const visible = showAll ? shown : shown.slice(0, INITIAL_RULES);
 
   return (
     <main className="flex flex-col gap-6">
@@ -198,7 +207,7 @@ export default function RulesPage() {
               </tr>
             </thead>
             <tbody>
-              {shown.map((rule) => (
+              {visible.map((rule) => (
                 <tr
                   key={rule.id}
                   className="border-b border-zinc-100 dark:border-zinc-900"
@@ -250,6 +259,15 @@ export default function RulesPage() {
             </tbody>
           </table>
           </div>
+        )}
+        {shown.length > visible.length && (
+          <button
+            type="button"
+            className="mt-3 text-sm text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+            onClick={() => setShowAll(true)}
+          >
+            Show all {shown.length} rules
+          </button>
         )}
       </Card>
     </main>

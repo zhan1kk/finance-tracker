@@ -753,6 +753,8 @@ function SplitDialog({
             {t.description ? ` · ${t.description}` : ""}
           </h2>
           <button
+            aria-label="Close"
+            title="Close"
             className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300"
             onClick={onClose}
           >
