@@ -218,6 +218,7 @@ function NewImport({
           /payee|merchant|name/i,
           /memo|omschrijving|details/i,
         ]),
+        feeColumn: guessColumn(found.headers, [/^fee/i, /charge|commission/i]),
         dateFormat: "ISO",
         decimalSeparator: ".",
         negativeIsExpense: true,
@@ -437,6 +438,14 @@ function NewImport({
               value={mapping.descriptionColumn}
               onChange={(v) => setMapping({ ...mapping, descriptionColumn: v })}
             />
+            <ColumnSelect
+              label="Fee column"
+              headers={inspection.headers}
+              value={mapping.feeColumn ?? ""}
+              onChange={(v) => setMapping({ ...mapping, feeColumn: v })}
+              optional
+              hint="Banks that charge a fee per transaction report it separately. Mapped, each fee is imported as its own expense, so it is neither lost nor folded into the amount."
+            />
             <Field label="Date format">
               <Select
                 value={mapping.dateFormat}
@@ -506,20 +515,26 @@ function ColumnSelect({
   headers,
   value,
   onChange,
+  optional = false,
+  hint,
 }: {
   label: string;
   headers: string[];
   value: string;
   onChange: (value: string) => void;
+  /** No amber outline and a "None" option: most exports have no such column. */
+  optional?: boolean;
+  hint?: string;
 }) {
   return (
     <Field label={label}>
       <Select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className={value ? "" : "border-amber-400"}
+        title={hint}
+        className={value || optional ? "" : "border-amber-400"}
       >
-        <option value="">Select…</option>
+        <option value="">{optional ? "None" : "Select…"}</option>
         {headers.map((h) => (
           <option key={h} value={h}>
             {h}

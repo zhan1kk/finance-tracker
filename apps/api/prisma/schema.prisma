@@ -497,6 +497,11 @@ model AccountImportMapping {
   dateColumn        String
   amountColumn      String
   descriptionColumn String
+  /// Column holding a per-transaction fee, when the bank reports one separately
+  /// (Revolut's "Fee"). Optional: most exports have no such column. A non-zero
+  /// fee is staged as its own expense row — see stageRows for why it is not
+  /// folded into the amount.
+  feeColumn         String?
   /// e.g. "ISO", "DD.MM.YYYY", "MM/DD/YYYY", "DD/MM/YYYY"
   dateFormat        String   @default("ISO")
   decimalSeparator  String   @default(".")

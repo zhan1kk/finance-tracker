@@ -241,6 +241,8 @@ export type ColumnMapping = {
   dateColumn: string;
   amountColumn: string;
   descriptionColumn: string;
+  /** Optional: a column holding a per-transaction fee, imported as its own row. */
+  feeColumn?: string;
   dateFormat?: DateFormat;
   decimalSeparator?: '.' | ',';
   negativeIsExpense?: boolean;

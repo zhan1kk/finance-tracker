@@ -24,7 +24,11 @@ import { dedupeHash, normalizeMerchant } from './normalization';
 import { parseAmount, parseDate } from './parsing';
 import { RulesService } from './rules.service';
 
-type ResolvedMapping = Required<ColumnMappingDTO>;
+// feeColumn is genuinely absent for most banks, so it stays nullable rather
+// than being forced to a string by Required<>.
+type ResolvedMapping = Required<Omit<ColumnMappingDTO, 'feeColumn'>> & {
+  feeColumn: string | null;
+};
 
 type StagedRow = {
   rowIndex: number;
@@ -163,6 +167,7 @@ export class ImportService {
       mapping.dateColumn,
       mapping.amountColumn,
       mapping.descriptionColumn,
+      ...(mapping.feeColumn ? [mapping.feeColumn] : []),
     ]) {
       if (!parsed.headers.includes(col)) {
         throw new BadRequestException(
@@ -1202,6 +1207,28 @@ export class ImportService {
     const staged: StagedRow[] = [];
     const skipped: { rowIndex: number; reason: string; raw: unknown }[] = [];
 
+    // Ordering only: the review table sorts on this and never prints it, while
+    // the skipped notice — the one place a number is shown — keeps the CSV line
+    // so it can be looked up in the file. Numbering by staging order is what
+    // puts a fee directly after the charge it was taken from, since the two
+    // share a line and would otherwise tie.
+    const stage = (
+      row: Omit<StagedRow, 'dedupeHash' | 'status' | 'rowIndex'>,
+    ) => {
+      staged.push({
+        ...row,
+        rowIndex: staged.length + 1,
+        dedupeHash: dedupeHash({
+          accountId,
+          date: row.date,
+          type: row.type,
+          amount: row.amount,
+          normalizedDescription: row.normalizedDescription,
+        }),
+        status: 'NEEDS_REVIEW',
+      });
+    };
+
     records.forEach((raw, index) => {
       const rowIndex = index + 1;
       const date = parseDate(raw[mapping.dateColumn] ?? '', mapping.dateFormat);
@@ -1211,30 +1238,33 @@ export class ImportService {
       );
       const tooLarge =
         signedAmount !== null && Math.abs(signedAmount) > PG_INT_MAX;
-      if (!date || signedAmount === null || signedAmount === 0 || tooLarge) {
-        skipped.push({
-          rowIndex,
-          reason: !date
-            ? 'unparseable date'
-            : signedAmount === null
-              ? 'unparseable amount'
-              : signedAmount === 0
-                ? 'zero amount'
-                : 'amount out of range — check the decimal separator',
-          raw,
-        });
-        return;
-      }
 
-      // Drop rows whose (unmapped) state column marks them as never booked.
+      // A statement line can carry both a charge and the bank's fee for it, in
+      // separate columns. The fee is not part of the amount, so it cannot be
+      // folded in: doing so would stop the imported figure matching the
+      // statement, and would hide the fee whenever the charge itself is marked
+      // an internal transfer — which is exactly when a transfer fee is easiest
+      // to lose. It becomes its own expense row instead, categorizable on its
+      // own and unaffected by what the charge is later marked as.
+      const rawFee = mapping.feeColumn ? (raw[mapping.feeColumn] ?? '') : '';
+      const fee = rawFee ? parseAmount(rawFee, mapping.decimalSeparator) : null;
+      const feeAmount =
+        fee !== null && Math.abs(fee) > 0 && Math.abs(fee) <= PG_INT_MAX
+          ? Math.abs(fee)
+          : 0;
+
+      // Never booked: no money moved, so neither the charge nor its fee is real.
+      // Checked before the amount, so a reverted zero-amount line reports the
+      // status rather than the less useful "zero amount".
       const stateHit = Object.entries(raw).find(
         ([col, val]) =>
           col !== mapping.dateColumn &&
           col !== mapping.amountColumn &&
           col !== mapping.descriptionColumn &&
+          col !== mapping.feeColumn &&
           SKIP_STATES.has(String(val).trim().toUpperCase()),
       );
-      if (stateHit) {
+      if (date && stateHit) {
         skipped.push({
           rowIndex,
           reason: `not booked (status: ${String(stateHit[1]).trim()})`,
@@ -1243,30 +1273,63 @@ export class ImportService {
         return;
       }
 
+      const description = raw[mapping.descriptionColumn] ?? '';
+      // Staged whether or not the charge is: a subscription fee arrives as a
+      // zero-amount line whose entire cost sits in the fee column, so tying the
+      // fee's fate to the charge's would drop precisely those.
+      const stageFee = () => {
+        if (!date || feeAmount === 0) return;
+        const feeDescription = description ? `Fee · ${description}` : 'Fee';
+        stage({
+          raw,
+          date,
+          amount: feeAmount,
+          // A fee is money leaving, whichever way the charge itself went.
+          type: 'EXPENSE',
+          description: feeDescription,
+          normalizedDescription: normalizeMerchant(feeDescription),
+          predictedSubcategoryId: null,
+          confidence: null,
+          source: 'NONE',
+          predictionSource: null,
+          subcategoryId: null,
+          counterAccountId: null,
+          excludeFromStats: false,
+          note: null,
+        });
+      };
+
+      if (!date || signedAmount === null || signedAmount === 0 || tooLarge) {
+        skipped.push({
+          rowIndex,
+          reason: !date
+            ? 'unparseable date'
+            : signedAmount === null
+              ? 'unparseable amount'
+              : signedAmount === 0
+                ? feeAmount > 0
+                  ? 'zero amount — its fee was imported on its own'
+                  : 'zero amount'
+                : 'amount out of range — check the decimal separator',
+          raw,
+        });
+        stageFee();
+        return;
+      }
+
       const isExpense = mapping.negativeIsExpense
         ? signedAmount < 0
         : signedAmount > 0;
       const type: TransactionType = isExpense ? 'EXPENSE' : 'INCOME';
       const amount = Math.abs(signedAmount);
-      const description = raw[mapping.descriptionColumn] ?? '';
-      const normalizedDescription = normalizeMerchant(description);
 
-      staged.push({
-        rowIndex,
+      stage({
         raw,
         date,
         amount,
         type,
         description,
-        normalizedDescription,
-        dedupeHash: dedupeHash({
-          accountId,
-          date,
-          type,
-          amount,
-          normalizedDescription,
-        }),
-        status: 'NEEDS_REVIEW',
+        normalizedDescription: normalizeMerchant(description),
         predictedSubcategoryId: null,
         confidence: null,
         source: 'NONE',
@@ -1276,6 +1339,7 @@ export class ImportService {
         excludeFromStats: false,
         note: null,
       });
+      stageFee();
     });
 
     return { staged, skipped };

@@ -19,6 +19,9 @@ export class MappingService {
       dateColumn: dto.dateColumn,
       amountColumn: dto.amountColumn,
       descriptionColumn: dto.descriptionColumn,
+      // Explicitly nulled when absent, so clearing the fee column on a
+      // re-import actually clears it instead of keeping the old choice.
+      feeColumn: dto.feeColumn ?? null,
       dateFormat: dto.dateFormat ?? 'ISO',
       decimalSeparator: dto.decimalSeparator ?? '.',
       negativeIsExpense: dto.negativeIsExpense ?? true,

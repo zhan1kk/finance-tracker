@@ -1682,6 +1682,122 @@ describe('API (e2e)', () => {
       hasHeader: true,
     };
 
+    // A bank that reports the fee in its own column (Revolut's "Fee"). The fee
+    // is real spending that used to be dropped with the other unmapped columns.
+    describe('fee column', () => {
+      const FEE_MAPPING = { ...MAPPING, feeColumn: 'Fee' };
+      type Row = {
+        description: string;
+        amount: number;
+        type: string;
+        status: string;
+      };
+      const rowsOf = (res: { body: unknown }) =>
+        (res.body as { batch: { rows: Row[] } }).batch.rows;
+
+      it('stages a fee as its own expense beside the charge', async () => {
+        const res = await importAndWait(token, {
+          accountId,
+          filename: 'fees.csv',
+          csv: [
+            'Date,Amount,Description,Fee',
+            '2026-07-01,-42.93,Lacher Patisserie,0.43',
+          ].join('\n'),
+          mapping: FEE_MAPPING,
+        });
+        expect(rowsOf(res)).toEqual([
+          expect.objectContaining({
+            description: 'Lacher Patisserie',
+            amount: 4293,
+            type: 'EXPENSE',
+          }),
+          expect.objectContaining({
+            description: 'Fee · Lacher Patisserie',
+            amount: 43,
+            type: 'EXPENSE',
+          }),
+        ]);
+      });
+
+      // The case that is invisible without this: the whole cost is the fee, so
+      // the charge itself is zero and the line was skipped outright.
+      it('keeps the fee when the charge itself is zero', async () => {
+        const res = await importAndWait(token, {
+          accountId,
+          filename: 'metal.csv',
+          csv: [
+            'Date,Amount,Description,Fee',
+            '2026-07-02,0.00,Metal plan fee,15.99',
+          ].join('\n'),
+          mapping: FEE_MAPPING,
+        });
+        expect(rowsOf(res)).toEqual([
+          expect.objectContaining({
+            description: 'Fee · Metal plan fee',
+            amount: 1599,
+            type: 'EXPENSE',
+          }),
+        ]);
+        expect((res.body as { skipped: { reason: string }[] }).skipped).toEqual(
+          [
+            expect.objectContaining({
+              reason: 'zero amount — its fee was imported on its own',
+            }),
+          ],
+        );
+      });
+
+      // A fee is money out even when the line it sits on is money in.
+      it('books a fee on an income line as an expense', async () => {
+        const res = await importAndWait(token, {
+          accountId,
+          filename: 'in.csv',
+          csv: [
+            'Date,Amount,Description,Fee',
+            '2026-07-03,500.00,Incoming transfer,18.00',
+          ].join('\n'),
+          mapping: FEE_MAPPING,
+        });
+        expect(rowsOf(res)).toEqual([
+          expect.objectContaining({ type: 'INCOME', amount: 50000 }),
+          expect.objectContaining({ type: 'EXPENSE', amount: 1800 }),
+        ]);
+      });
+
+      it('ignores a zero fee, and any fee at all without the mapping', async () => {
+        const csv = [
+          'Date,Amount,Description,Fee',
+          '2026-07-04,-10.00,No fee here,0.00',
+          '2026-07-05,-20.00,Has a fee,1.50',
+        ].join('\n');
+        const mapped = await importAndWait(token, {
+          accountId,
+          filename: 'mixed.csv',
+          csv,
+          mapping: FEE_MAPPING,
+        });
+        expect(rowsOf(mapped)).toHaveLength(3); // two charges + one fee
+
+        const unmapped = await importAndWait(token, {
+          accountId,
+          filename: 'unmapped.csv',
+          csv,
+          mapping: MAPPING,
+        });
+        expect(rowsOf(unmapped)).toHaveLength(2);
+      });
+
+      it('rejects a fee column that is not in the file', async () => {
+        const res = await importAndWait(token, {
+          accountId,
+          filename: 'bad.csv',
+          csv: 'Date,Amount,Description\n2026-07-06,-1.00,x',
+          mapping: { ...MAPPING, feeColumn: 'Charges' },
+        });
+        expect(res.status).toBe(400);
+      });
+    });
+
     // Rent + Salary name-match the seeded subcategories; the shop does not.
     const CSV = [
       'Date,Amount,Description',
