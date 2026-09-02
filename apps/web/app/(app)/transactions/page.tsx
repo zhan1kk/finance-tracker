@@ -260,6 +260,11 @@ export default function TransactionsPage() {
         onCreated={invalidateAll}
       />
 
+      <UnlinkedReimbursements
+        currencyOf={currencyOf}
+        onLinked={invalidateAll}
+      />
+
       <Card>
         <div className="mb-3 flex flex-wrap items-end gap-3">
           <Field label="Type">
@@ -921,6 +926,117 @@ function CategoryFilter({
       placeholder="All"
       searchPlaceholder="Search categories…"
     />
+  );
+}
+
+/**
+ * Refunds and paybacks that never got tied to the expense they repaid.
+ *
+ * Unlinked, such an income counts as fresh earnings *and* leaves the expense at
+ * full price, so both sides of the month are overstated at once. The server
+ * decides which income categories to watch from the links already made rather
+ * than from any fixed list of names, so this works whatever the categories are
+ * called (see listUnlinkedReimbursements).
+ *
+ * Collapsed by default and absent entirely when there is nothing to do: this is
+ * a nudge, and a nudge that is always on screen stops being read.
+ */
+function UnlinkedReimbursements({
+  currencyOf,
+  onLinked,
+}: {
+  currencyOf: (id: string) => string;
+  onLinked: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+
+  const unlinked = useQuery({
+    queryKey: ["unlinked-reimbursements"],
+    queryFn: () => api<Transaction[]>("/transactions/unlinked-reimbursements"),
+  });
+
+  const link = useMutation({
+    mutationFn: (vars: { id: string; parentTransactionId: string }) =>
+      api<Transaction>(`/transactions/${vars.id}/reimburses`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          parentTransactionId: vars.parentTransactionId,
+        }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["unlinked-reimbursements"],
+      });
+      onLinked();
+    },
+    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+  });
+
+  const rows = unlinked.data ?? [];
+  if (rows.length === 0) return null;
+
+  // One sum is only meaningful within one currency; these are almost always in
+  // the account currency the refunds arrived in, so it is shown per currency.
+  const totals = rows.reduce<Record<string, number>>((acc, r) => {
+    const c = currencyOf(r.accountId);
+    acc[c] = (acc[c] ?? 0) + r.amount;
+    return acc;
+  }, {});
+
+  return (
+    <Card>
+      <details>
+        <summary className="cursor-pointer list-none text-sm">
+          <span className="font-medium">
+            {rows.length} refund{rows.length === 1 ? "" : "s"} not linked to an
+            expense
+          </span>{" "}
+          <span className="text-zinc-500">
+            ·{" "}
+            {Object.entries(totals)
+              .map(([c, amount]) => formatCents(amount, c))
+              .join(" + ")}{" "}
+            counting as income
+          </span>
+        </summary>
+        <p className="mt-2 text-xs text-zinc-500">
+          Linking one cancels it against the expense it repaid, instead of
+          counting as money earned.
+        </p>
+        <ul className="mt-2 flex flex-col gap-3">
+          {rows.map((r) => (
+            <li
+              key={r.id}
+              className="border-t border-zinc-100 pt-2 dark:border-zinc-900"
+            >
+              <div className="flex flex-wrap items-baseline gap-2 text-sm">
+                <span className="text-zinc-500 tabular-nums">
+                  {r.date.slice(0, 10)}
+                </span>
+                <span>{r.description || r.subcategory?.name || "income"}</span>
+                <span className="text-zinc-400">
+                  {r.subcategory?.name ?? ""}
+                </span>
+                <span className="ml-auto tabular-nums text-emerald-600">
+                  {formatCents(r.amount, currencyOf(r.accountId))}
+                </span>
+              </div>
+              <ReimbursePicker
+                value=""
+                currencyOf={currencyOf}
+                onChange={(parentTransactionId) => {
+                  if (!parentTransactionId) return;
+                  setError(null);
+                  link.mutate({ id: r.id, parentTransactionId });
+                }}
+              />
+            </li>
+          ))}
+        </ul>
+        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      </details>
+    </Card>
   );
 }
 

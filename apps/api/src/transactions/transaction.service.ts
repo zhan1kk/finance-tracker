@@ -24,12 +24,59 @@ const TRANSACTION_INCLUDE = {
   reimbursements: true,
 } as const;
 
+/** Links in one income category before it is treated as a refund category. */
+const MIN_LINKS_TO_WATCH = 2;
+
 @Injectable()
 export class TransactionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly fx: FxService,
   ) {}
+
+  /**
+   * Income that looks like it should reimburse an expense but is not linked to
+   * one yet.
+   *
+   * An unlinked refund is counted as fresh income *and* leaves the expense it
+   * repaid at full price, so it overstates both sides at once. There is no
+   * field marking a category as "refunds" and there should not be — the name is
+   * the user's own, in their own language, so no fixed list could recognise it.
+   *
+   * Which categories to watch is therefore learned from the links already made:
+   * an income category the user has linked before is one where linking is the
+   * norm. Measured on the live account, the separation is not subtle — the two
+   * reimbursement categories sit at 17 of 20 and 9 of 12 linked, while salary,
+   * family transfers and currency exchange are at zero. Two links are required
+   * so a single stray one cannot start nagging about a salary.
+   */
+  async listUnlinkedReimbursements(userId: string) {
+    const linkedByCategory = await this.prisma.transaction.groupBy({
+      by: ['subcategoryId'],
+      where: {
+        account: { userId },
+        type: 'INCOME',
+        parentTransactionId: { not: null },
+        subcategoryId: { not: null },
+      },
+      _count: { _all: true },
+    });
+    const watched = linkedByCategory
+      .filter((row) => row._count._all >= MIN_LINKS_TO_WATCH)
+      .map((row) => row.subcategoryId as string);
+    if (watched.length === 0) return [];
+
+    return this.prisma.transaction.findMany({
+      where: {
+        account: { userId },
+        type: 'INCOME',
+        parentTransactionId: null,
+        subcategoryId: { in: watched },
+      },
+      include: TRANSACTION_INCLUDE,
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+    });
+  }
 
   async listTransactions(userId: string, query: ListTransactionsQuery) {
     const page = query.page ?? 1;

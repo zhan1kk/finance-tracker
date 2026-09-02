@@ -1007,6 +1007,74 @@ describe('API (e2e)', () => {
       ).toHaveLength(1);
     });
 
+    // Which income categories to watch is learned from the links already made,
+    // so no fixed list of category names is involved and it works in any
+    // language. The risk is the opposite of a missed refund: nagging about a
+    // salary, so one stray link must not be enough to start watching.
+    describe('unlinked refunds', () => {
+      const unlinked = async () => {
+        const res = await request(http)
+          .get('/transactions/unlinked-reimbursements')
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200);
+        return res.body as { id: string; description: string | null }[];
+      };
+
+      const plainIncome = (subcategoryId: string, amount: number) =>
+        request(http)
+          .post('/transactions')
+          .set('Authorization', `Bearer ${token}`)
+          .send({
+            type: 'INCOME',
+            date: '2026-07-03',
+            amount,
+            subcategoryId,
+            accountId,
+            description: 'unlinked',
+          })
+          .expect(201);
+
+      it('stays quiet until a category has been linked twice', async () => {
+        await plainIncome(incomeId, 5_000);
+        expect(await unlinked()).toEqual([]);
+
+        await reimburse(expenseTxId);
+        expect(await unlinked()).toEqual([]); // one link is not a pattern
+
+        await reimburse(expenseTxId);
+        expect(await unlinked()).toEqual([
+          expect.objectContaining({ description: 'unlinked' }),
+        ]);
+      });
+
+      it('never reports a category that was only ever plain income', async () => {
+        const salary = (await createSubcategory('Consulting fees', 'Income'))
+          .id;
+        await reimburse(expenseTxId);
+        await reimburse(expenseTxId);
+        await plainIncome(salary, 200_000);
+
+        const rows = await unlinked();
+        expect(rows).toEqual([]);
+      });
+
+      it('drops a row from the list once it is linked', async () => {
+        await reimburse(expenseTxId);
+        await reimburse(expenseTxId);
+        await plainIncome(incomeId, 5_000);
+        const [row] = await unlinked();
+        expect(row).toBeDefined();
+
+        await request(http)
+          .patch(`/transactions/${row.id}/reimburses`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({ parentTransactionId: expenseTxId })
+          .expect(200);
+
+        expect(await unlinked()).toEqual([]);
+      });
+    });
+
     it('rejects an EXPENSE as a reimbursement', async () => {
       const sub = await createSubcategory('Coffee', 'Expenses');
       await reimburse(expenseTxId, 400, {

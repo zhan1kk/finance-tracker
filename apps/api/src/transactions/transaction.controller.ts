@@ -47,6 +47,12 @@ export class TransactionController {
     return this.statsService.getStats(user.userId, query);
   }
 
+  // Also before @Get(':id'), for the same reason as 'stats'.
+  @Get('unlinked-reimbursements')
+  listUnlinkedReimbursements(@CurrentUser() user: AuthUser) {
+    return this.transactionService.listUnlinkedReimbursements(user.userId);
+  }
+
   /** On-demand: phrase the dashboard's exact insight facts into a sentence or two. */
   @Post('insights/summary')
   summarizeInsights(
