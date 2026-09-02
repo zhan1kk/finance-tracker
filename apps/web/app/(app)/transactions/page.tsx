@@ -858,7 +858,10 @@ function Pager({
   onGo: (page: number) => void;
 }) {
   return (
-    <div className="flex items-center justify-end gap-2 text-sm">
+    // Five controls in a row: on a narrow phone they were wider than the
+    // viewport and pushed the whole page sideways, since flex items do not
+    // shrink below their content. The table above already scrolls in place.
+    <div className="flex flex-wrap items-center justify-end gap-2 text-sm">
       <Button variant="ghost" disabled={page <= 1} onClick={() => onGo(1)}>
         « First
       </Button>

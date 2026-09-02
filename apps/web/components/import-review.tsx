@@ -218,6 +218,83 @@ export function ImportReview({
     correct.error ?? acceptAll.error ?? skip.error ?? include.error ??
     flip.error ?? annotate.error ?? forgetRule.error;
 
+  // Rendered at both ends of the table. A statement runs to a hundred-odd
+  // rows, so finishing the review left Import and Discard a full scroll
+  // away, back past everything just checked.
+  const actions = (
+    <>
+      {pending && (
+        <>
+          {suggested.length > 0 && (
+            <Button
+              variant="ghost"
+              onClick={() =>
+                acceptAll.mutate(
+                  suggested.map((r) => ({
+                    rowId: r.id,
+                    subcategoryId: (r.predictedSubcategory as {
+                      id: string;
+                    }).id,
+                  })),
+                )
+              }
+              disabled={acceptAll.isPending}
+              title={`${suggested.length} of the ${reviewCount} rows needing review carry a guess the categorizer was not confident enough to apply on its own. This accepts those, and leaves the rest for you.`}
+            >
+              {acceptAll.isPending
+                ? "Accepting…"
+                : `Accept ${suggested.length} suggestion${
+                    suggested.length === 1 ? "" : "s"
+                  }`}
+            </Button>
+          )}
+          <Button
+            onClick={() => commit.mutate()}
+            disabled={commit.isPending || readyCount === 0}
+          >
+            Import {readyCount} ready
+          </Button>
+          <Button
+            variant="danger"
+            onClick={() => {
+              if (window.confirm("Discard this uncommitted import?")) {
+                discard.mutate();
+              }
+            }}
+            disabled={discard.isPending}
+          >
+            Discard
+          </Button>
+        </>
+      )}
+      {data.status === "COMMITTED" && (
+        <Button
+          variant="ghost"
+          onClick={() => {
+            if (
+              window.confirm(
+                "Undo this import? Its transactions are removed and your balances go back.\n\nRules it learned from your corrections are kept — undo cannot tell a rule it created from one it updated, so removing them is done on the Rules page.",
+              )
+            ) {
+              undo.mutate();
+            }
+          }}
+          disabled={undo.isPending}
+        >
+          Undo import
+        </Button>
+      )}
+      {data.status === "UNDONE" && (
+        <Button
+          onClick={() => reopen.mutate()}
+          disabled={reopen.isPending}
+        >
+          {reopen.isPending ? "Reopening…" : "Reopen for review"}
+        </Button>
+      )}
+    </>
+  );
+
   return (
     <Card>
       <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -234,77 +311,7 @@ export function ImportReview({
             {data.rows.length} rows
           </p>
         </div>
-        <div className="ml-auto flex gap-2">
-          {pending && (
-            <>
-              {suggested.length > 0 && (
-                <Button
-                  variant="ghost"
-                  onClick={() =>
-                    acceptAll.mutate(
-                      suggested.map((r) => ({
-                        rowId: r.id,
-                        subcategoryId: (r.predictedSubcategory as {
-                          id: string;
-                        }).id,
-                      })),
-                    )
-                  }
-                  disabled={acceptAll.isPending}
-                  title={`${suggested.length} of the ${reviewCount} rows needing review carry a guess the categorizer was not confident enough to apply on its own. This accepts those, and leaves the rest for you.`}
-                >
-                  {acceptAll.isPending
-                    ? "Accepting…"
-                    : `Accept ${suggested.length} suggestion${
-                        suggested.length === 1 ? "" : "s"
-                      }`}
-                </Button>
-              )}
-              <Button
-                onClick={() => commit.mutate()}
-                disabled={commit.isPending || readyCount === 0}
-              >
-                Import {readyCount} ready
-              </Button>
-              <Button
-                variant="danger"
-                onClick={() => {
-                  if (window.confirm("Discard this uncommitted import?")) {
-                    discard.mutate();
-                  }
-                }}
-                disabled={discard.isPending}
-              >
-                Discard
-              </Button>
-            </>
-          )}
-          {data.status === "COMMITTED" && (
-            <Button
-              variant="ghost"
-              onClick={() => {
-                if (
-                  window.confirm(
-                    "Undo this import? Its transactions are removed and your balances go back.\n\nRules it learned from your corrections are kept — undo cannot tell a rule it created from one it updated, so removing them is done on the Rules page.",
-                  )
-                ) {
-                  undo.mutate();
-                }
-              }}
-              disabled={undo.isPending}
-            >
-              Undo import
-            </Button>
-          )}
-          {data.status === "UNDONE" && (
-            <Button
-              onClick={() => reopen.mutate()}
-              disabled={reopen.isPending}
-            >
-              {reopen.isPending ? "Reopening…" : "Reopen for review"}
-            </Button>
-          )}
-        </div>
+        <div className="ml-auto flex gap-2">{actions}</div>
       </div>
 
       {benchmark.data && <RunStats data={benchmark.data} />}
@@ -406,6 +413,9 @@ export function ImportReview({
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-zinc-100 pt-4 dark:border-zinc-800">
+        {actions}
       </div>
       <ErrorText error={error} />
     </Card>

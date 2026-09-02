@@ -192,7 +192,7 @@ export default function BudgetsPage() {
               </optgroup>
             </Select>
           </Field>
-          <Field label="Limit">
+          <Field label={`Limit (${currency})`}>
             <Input name="limit" required placeholder="300.00" className="w-28" />
           </Field>
           <Field label="Repeats">
