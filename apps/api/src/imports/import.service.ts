@@ -104,6 +104,8 @@ const SKIP_STATES = new Set([
 // it truly cancels out.
 const REVERSAL_WINDOW_DAYS = 3;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 /** Notes rows that look like the two halves of a reversal (charge + refund). */
 function flagReversalPairs(staged: StagedRow[]): void {
   const windowMs = REVERSAL_WINDOW_DAYS * 24 * 60 * 60 * 1000;
@@ -183,6 +185,7 @@ export class ImportService {
     );
     await this.dedupe(dto.accountId, staged);
     flagReversalPairs(staged);
+    await this.flagPossibleDuplicates(dto.accountId, staged);
 
     const threshold =
       dto.threshold ??
@@ -1370,6 +1373,71 @@ export class ImportService {
         row.status = 'DUPLICATE';
         row.note = 'Already imported in a previous statement';
       }
+    }
+  }
+
+  /**
+   * Warns about a staged row that looks like something already in the ledger on
+   * the same day, for the same amount, in the same direction — but was worded
+   * differently, so the fingerprint could not see it.
+   *
+   * The fingerprint includes the normalized description, which is what makes it
+   * safe to exclude a match outright. That same inclusion is why it misses a
+   * transaction the user typed in themselves and described in their own words:
+   * "Open code monthly subscription" and the bank's "Anomaly" are the same
+   * EUR 19.11 charge and share no key at all. A hand-entered transaction has no
+   * fingerprint to begin with, so even identical wording would not have matched.
+   *
+   * Deliberately only a note. Two identical coffees on one day are two coffees,
+   * and a rule that silently dropped the second would lose real spending — the
+   * failure this whole area is built to avoid. The existing description is
+   * quoted because that is the thing the user cannot otherwise recover: it is
+   * what they called it when they knew what it was.
+   */
+  private async flagPossibleDuplicates(
+    accountId: string,
+    staged: StagedRow[],
+  ): Promise<void> {
+    // A row the fingerprint already caught is settled; one already carrying a
+    // note (a reversal pair) keeps the more specific warning.
+    const candidates = staged.filter(
+      (row) => row.status !== 'DUPLICATE' && !row.note,
+    );
+    if (candidates.length === 0) return;
+
+    const times = candidates.map((row) => row.date.getTime());
+    const existing = await this.prisma.transaction.findMany({
+      where: {
+        accountId,
+        amount: { in: [...new Set(candidates.map((row) => row.amount))] },
+        // Widened by a day at each end so the calendar-day comparison below is
+        // never cut off by a timestamped row sitting near a boundary.
+        date: {
+          gte: new Date(Math.min(...times) - DAY_MS),
+          lte: new Date(Math.max(...times) + DAY_MS),
+        },
+      },
+      select: { date: true, amount: true, type: true, description: true },
+    });
+    if (existing.length === 0) return;
+
+    // Matched on the calendar day, not the timestamp: most imported rows carry
+    // the statement's time of day while hand-entered ones sit at midnight, so
+    // comparing the instants would never agree.
+    const key = (date: Date, type: TransactionType, amount: number) =>
+      `${date.toISOString().slice(0, 10)}|${type}|${amount}`;
+    const byKey = new Map<string, string>();
+    for (const txn of existing) {
+      byKey.set(
+        key(txn.date, txn.type, txn.amount),
+        txn.description?.trim() || 'no description',
+      );
+    }
+
+    for (const row of candidates) {
+      const match = byKey.get(key(row.date, row.type, row.amount));
+      if (match === undefined) continue;
+      row.note = `Possible duplicate: you already have ${(row.amount / 100).toFixed(2)} on this day in this account, described as "${match}". Skip this row if it is the same charge.`;
     }
   }
 

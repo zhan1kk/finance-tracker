@@ -1682,6 +1682,85 @@ describe('API (e2e)', () => {
       hasHeader: true,
     };
 
+    // The fingerprint includes the description, so a charge the user typed in
+    // themselves — in their own words, and with no fingerprint at all — is
+    // invisible to it. This is the second, weaker check that notices anyway.
+    describe('possible duplicates of existing transactions', () => {
+      type Row = { description: string; status: string; note: string | null };
+      const rowsOf = (res: { body: unknown }) =>
+        (res.body as { batch: { rows: Row[] } }).batch.rows;
+
+      const addManual = async (description: string, amount = 1911) => {
+        const sub = await createSubcategory(`Typed ${description}`, 'Expenses');
+        return request(http)
+          .post('/transactions')
+          .set('Authorization', `Bearer ${token}`)
+          .send({
+            type: 'EXPENSE',
+            date: '2026-08-12',
+            amount,
+            description,
+            subcategoryId: sub.id,
+            accountId,
+          })
+          .expect(201);
+      };
+
+      const importOne = (description: string, amount = '-19.11') =>
+        importAndWait(token, {
+          accountId,
+          filename: 'x.csv',
+          csv: `Date,Amount,Description\n2026-08-12,${amount},${description}`,
+          mapping: MAPPING,
+        });
+
+      it('notes a charge already entered by hand under a different name', async () => {
+        await addManual('Open code monthly subscription');
+        const rows = rowsOf(await importOne('Anomaly'));
+        expect(rows).toHaveLength(1);
+        expect(rows[0].status).not.toBe('DUPLICATE');
+        expect(rows[0].note).toContain('Possible duplicate');
+        // The description is the part that cannot be recovered otherwise.
+        expect(rows[0].note).toContain('Open code monthly subscription');
+      });
+
+      it('says nothing when the day, amount or direction differ', async () => {
+        await addManual('Open code monthly subscription');
+        expect(rowsOf(await importOne('Anomaly', '-19.12'))[0].note).toBeNull();
+        expect(
+          rowsOf(
+            await importAndWait(token, {
+              accountId,
+              filename: 'y.csv',
+              csv: 'Date,Amount,Description\n2026-08-13,-19.11,Anomaly',
+              mapping: MAPPING,
+            }),
+          )[0].note,
+        ).toBeNull();
+        // Same amount and day, but money coming in rather than going out.
+        expect(
+          rowsOf(
+            await importAndWait(token, {
+              accountId,
+              filename: 'z.csv',
+              csv: 'Date,Amount,Description\n2026-08-12,19.11,Anomaly',
+              mapping: MAPPING,
+            }),
+          )[0].note,
+        ).toBeNull();
+      });
+
+      // Same wording is caught by the fingerprint, which excludes it outright;
+      // the weaker note would be redundant and must not overwrite that.
+      it('leaves an exact re-import as a plain duplicate', async () => {
+        await importOne('Anomaly');
+        const batch = await importOne('Anomaly');
+        const committed = rowsOf(batch)[0];
+        expect(committed.status).toBe('NEEDS_REVIEW');
+        expect(committed.note).toBeNull();
+      });
+    });
+
     // A bank that reports the fee in its own column (Revolut's "Fee"). The fee
     // is real spending that used to be dropped with the other unmapped columns.
     describe('fee column', () => {
