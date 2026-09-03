@@ -60,72 +60,111 @@ export function buildPdfExtractionPrompt(
  * The model has to *write out* every transaction it finds, so the reply grows
  * with the statement while the timeout does not. Measured on the 4-CPU server:
  * a transaction costs about 45 output tokens, and generation runs at 6.6
- * tokens/s on qwen2.5:7b, 9.3 on qwen3:4b. A whole Vivid month asked for at
- * once was cut off mid-JSON after 180s and the import failed with nothing to
- * show for three minutes of work.
+ * tokens/s on qwen2.5:7b, 9.3 on qwen3:4b. A whole month asked for at once was
+ * cut off mid-JSON after 180s, and a cut-off reply is not valid JSON — so the
+ * import failed with nothing to show for three minutes of work.
  *
  * Ten transactions is ~450 tokens: about 70s on the slower model, comfortably
- * inside the per-request timeout. A first attempt budgeted by character count
- * instead, and 2500 characters turned out to be thirty-odd transactions of a
- * densely printed statement — it timed out exactly as before. Count what the
- * model has to write, not how much it has to read.
+ * inside the per-request timeout.
  */
 const MAX_TRANSACTIONS_PER_CHUNK = 10;
-/** Secondary guard, for a statement that prints each entry over several lines. */
+/** Secondary guard, for a statement that prints each entry at length. */
 const CHUNK_CHARS = 2500;
-
-/** A line that opens a transaction — a date in any of the usual layouts. */
-const DATE_LINE =
-  /(\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b)|(\b\d{4}-\d{2}-\d{2}\b)|(\b\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{2,4}\b)/i;
+/** Used when nothing date-shaped is found at all, so a chunk is always bounded. */
+const FALLBACK_CHUNK_CHARS = 2000;
+/**
+ * A statement prints a booking date and a value date side by side. Two matches
+ * this close together are one entry's pair of dates, not two transactions.
+ */
+const MIN_ENTRY_CHARS = 25;
 /** Enough header for the statement period, without pulling in the table. */
-const MAX_HEADER_LINES = 12;
+const MAX_HEADER_CHARS = 600;
+
+/**
+ * Where a transaction entry begins.
+ *
+ * Anchored on digit boundaries rather than `\b`, because the text arrives with
+ * the table's cells run together: in "...15,99 EUR01.08.2026 Metal plan..."
+ * there is no word boundary before the date, and `\b\d` finds nothing at all.
+ */
+const ENTRY_START =
+  /(?<!\d)(\d{4}-\d{2}-\d{2}|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}\s?(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s?\d{2,4})(?!\d)/gi;
+
+/** Cuts oversized text at the last space inside the budget. */
+function splitOnSize(text: string, budget: number): string[] {
+  const chunks: string[] = [];
+  let rest = text;
+  while (rest.length > budget) {
+    const window = rest.slice(0, budget);
+    const space = Math.max(window.lastIndexOf('\n'), window.lastIndexOf(' '));
+    const at = space > budget / 2 ? space : budget;
+    chunks.push(rest.slice(0, at));
+    rest = rest.slice(at);
+  }
+  chunks.push(rest);
+  return chunks.filter((c) => c.trim().length > 0);
+}
 
 /**
  * Splits statement text into a shared header plus body chunks, so extraction
  * can be asked for ten transactions at a time instead of all of them.
  *
- * The header is whatever precedes the first dated line — the bank's name, the
+ * Cuts land on dates found anywhere in the text, not on line breaks. pdf.js
+ * only emits a newline where a text item happens to carry `hasEOL`, which for a
+ * table layout is almost nowhere — a real Vivid statement arrives as one
+ * continuous run, so a line-based split produced a single chunk and timed out
+ * exactly as before the splitting existed.
+ *
+ * The header is whatever precedes the first date — the bank's name, the
  * account, the statement period. It is repeated in every chunk because the
  * prompt asks the model to infer a missing year from the period, which only
  * chunk one would otherwise have.
  *
- * Chunks are only ever cut immediately before a dated line, so an entry printed
- * across several lines stays whole; and they never overlap, so no transaction is
- * offered twice. Both matter downstream: two genuinely identical charges on one
- * day are real, so the merged result cannot be de-duplicated to clean up after a
- * sloppy split.
+ * Chunks never overlap, so no transaction is offered twice: two genuinely
+ * identical charges on one day are real, so the merged result cannot be
+ * de-duplicated afterwards to clean up a sloppy split.
  */
 export function splitStatementText(text: string): {
   header: string;
   chunks: string[];
 } {
-  const lines = text.split('\n');
-  const firstDated = lines.findIndex((l) => DATE_LINE.test(l));
-  const headerEnd =
-    firstDated === -1 ? 0 : Math.min(firstDated, MAX_HEADER_LINES);
-  const header = lines.slice(0, headerEnd).join('\n').trim();
-
-  const chunks: string[] = [];
-  let current: string[] = [];
-  let dated = 0;
-  let size = 0;
-  for (const line of lines.slice(headerEnd)) {
-    const startsTransaction = DATE_LINE.test(line);
-    if (
-      startsTransaction &&
-      current.length > 0 &&
-      (dated >= MAX_TRANSACTIONS_PER_CHUNK || size >= CHUNK_CHARS)
-    ) {
-      chunks.push(current.join('\n'));
-      current = [];
-      dated = 0;
-      size = 0;
+  const starts: number[] = [];
+  for (const match of text.matchAll(ENTRY_START)) {
+    const at = match.index ?? 0;
+    if (starts.length > 0 && at - starts[starts.length - 1] < MIN_ENTRY_CHARS) {
+      continue;
     }
-    current.push(line);
-    size += line.length + 1;
-    if (startsTransaction) dated += 1;
+    starts.push(at);
   }
-  if (current.length > 0) chunks.push(current.join('\n'));
+
+  // No date anywhere: there is likely nothing to extract, but the model still
+  // has to read whatever this is, so bound it by size rather than sending it
+  // whole and hoping.
+  if (starts.length === 0) {
+    return { header: '', chunks: splitOnSize(text, FALLBACK_CHUNK_CHARS) };
+  }
+
+  const header = text.slice(0, starts[0]).trim().slice(0, MAX_HEADER_CHARS);
+
+  const bounds = [...starts, text.length];
+  const chunks: string[] = [];
+  let current = '';
+  let count = 0;
+  for (let i = 0; i < starts.length; i += 1) {
+    const entry = text.slice(bounds[i], bounds[i + 1]);
+    if (
+      current.length > 0 &&
+      (count >= MAX_TRANSACTIONS_PER_CHUNK ||
+        current.length + entry.length > CHUNK_CHARS)
+    ) {
+      chunks.push(current);
+      current = '';
+      count = 0;
+    }
+    current += entry;
+    count += 1;
+  }
+  if (current.length > 0) chunks.push(current);
 
   return { header, chunks: chunks.filter((c) => c.trim().length > 0) };
 }

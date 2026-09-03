@@ -66,8 +66,8 @@ describe('PDF_EXTRACTION_SYSTEM_PROMPT', () => {
 describe('splitStatementText', () => {
   const txn = (day: number) =>
     `${String(day).padStart(2, '0')}.08.2026 Card payment SOME MERCHANT GMBH Berlin -42,17 EUR`;
-  const dated = (chunk: string) =>
-    chunk.split('\n').filter((l) => /\d{2}\.08\.2026/.test(l)).length;
+  const entries = (chunk: string) =>
+    chunk.match(/\d{2}\.08\.2026/g)?.length ?? 0;
 
   it('keeps the pre-table header out of the chunks and repeats it to callers', () => {
     const { header, chunks } = splitStatementText(
@@ -78,65 +78,103 @@ describe('splitStatementText', () => {
         txn(2),
       ].join('\n'),
     );
-    // The period line is dated, so the header stops before it — but the bank
-    // name still travels with every chunk.
-    expect(header).toBe('Vivid Money GmbH');
+    // The cut lands on the first date, which is inside the period line, so
+    // "Period" stays behind with the bank name and the dates open the body.
+    // Either way the period reaches every chunk, which is the point of it.
+    expect(header).toBe('Vivid Money GmbH\nPeriod');
     expect(chunks).toHaveLength(1);
-    expect(chunks[0]).toContain('Period 01.08.2026');
+    expect(chunks[0]).toContain('01.08.2026 - 31.08.2026');
     expect(chunks[0]).toContain(txn(2));
   });
 
-  it('caps each chunk at ten transactions, however short the lines are', () => {
+  it('splits a statement that arrives as one line, with no line breaks at all', () => {
+    // What a real PDF table gives back: pdf.js sets hasEOL on almost nothing,
+    // so unpdf returns the cells run together. A line-based split found no
+    // boundary here and sent the lot as one chunk, which timed out.
+    const run = Array.from({ length: 40 }, (_, i) => txn((i % 28) + 1)).join(
+      ' ',
+    );
+    const { chunks } = splitStatementText(`Vivid Money GmbH ${run}`);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) expect(entries(chunk)).toBeLessThanOrEqual(10);
+    expect(chunks.join('')).toContain(txn(28));
+  });
+
+  it('finds a date with no word boundary before it', () => {
+    // "…15,99 EUR01.08.2026 Metal plan…" — \b\d matches nothing here.
+    const run = Array.from(
+      { length: 30 },
+      (_, i) => `${txn((i % 28) + 1)} EUR`,
+    ).join('');
+    const { chunks } = splitStatementText(run);
+    expect(chunks.length).toBeGreaterThan(1);
+  });
+
+  it('caps each chunk at ten transactions, however short the entries are', () => {
     const lines = Array.from({ length: 60 }, (_, i) => txn((i % 28) + 1));
     const { chunks } = splitStatementText(['Bank', ...lines].join('\n'));
 
-    // The bug this replaces: a character budget let a densely printed
-    // statement put thirty-odd transactions in one request, which timed out.
     expect(chunks).toHaveLength(6);
-    for (const chunk of chunks) expect(dated(chunk)).toBeLessThanOrEqual(10);
+    for (const chunk of chunks) expect(entries(chunk)).toBeLessThanOrEqual(10);
     // Nothing is lost and nothing is offered twice: the chunks rejoin to the
     // original body exactly, so a duplicate row can only be a real one.
-    expect(chunks.join('\n')).toBe(lines.join('\n'));
+    expect(chunks.join('')).toBe(lines.join('\n'));
+  });
+
+  it('counts a booking/value date pair as one transaction, not two', () => {
+    const paired = Array.from(
+      { length: 20 },
+      (_, i) =>
+        `${String(i + 1).padStart(2, '0')}.08.2026 ${String(i + 1).padStart(2, '0')}.08.2026 MERCHANT -10,00 EUR`,
+    ).join(' ');
+    const { chunks } = splitStatementText(paired);
+    // Forty date matches, but twenty entries: two chunks, not four.
+    expect(chunks).toHaveLength(2);
   });
 
   it('keeps an entry printed over several lines in one piece', () => {
-    const entry = (day: number) => [
-      txn(day),
-      '   Reference 1234567890',
-      '   Original amount 45,00 USD',
-    ];
-    const lines = Array.from({ length: 24 }, (_, i) => entry(i + 1)).flat();
-    const { chunks } = splitStatementText(['Bank', ...lines].join('\n'));
+    const entry = (day: number) =>
+      [
+        txn(day),
+        '   Reference 1234567890',
+        '   Original amount 45,00 USD',
+      ].join('\n');
+    const body = Array.from({ length: 24 }, (_, i) => entry(i + 1)).join('\n');
+    const { chunks } = splitStatementText(`Bank\n${body}`);
 
-    // Every chunk starts on a dated line, so no continuation line is ever
-    // orphaned from the transaction it belongs to.
-    for (const chunk of chunks) {
-      expect(chunk.split('\n')[0]).toMatch(/\d{2}\.08\.2026/);
-    }
-    expect(chunks.join('\n')).toBe(lines.join('\n'));
+    // Every chunk opens on a date, so no continuation text is ever orphaned
+    // from the transaction it belongs to.
+    for (const chunk of chunks) expect(chunk).toMatch(/^\d{2}\.08\.2026/);
+    expect(chunks.join('')).toBe(body);
   });
 
   it('splits early on size when entries are verbose, before hitting ten', () => {
-    const fat = (day: number) => [txn(day), `   ${'detail '.repeat(60)}`];
-    const lines = Array.from({ length: 12 }, (_, i) => fat(i + 1)).flat();
-    const { chunks } = splitStatementText(['Bank', ...lines].join('\n'));
+    const body = Array.from(
+      { length: 12 },
+      (_, i) => `${txn(i + 1)} ${'detail '.repeat(60)}`,
+    ).join('');
+    const { chunks } = splitStatementText(`Bank\n${body}`);
 
     expect(chunks.length).toBeGreaterThan(1);
-    for (const chunk of chunks) expect(dated(chunk)).toBeLessThan(10);
+    for (const chunk of chunks) expect(entries(chunk)).toBeLessThan(10);
   });
 
-  it('treats a statement with no recognisable date as all body', () => {
-    const { header, chunks } = splitStatementText('nothing dated here\nat all');
+  it('bounds the chunks by size when nothing date-shaped is found', () => {
+    // The safety net: an unrecognised date format must not put the whole
+    // statement back into one request.
+    const text = 'no dates here at all '.repeat(500);
+    const { header, chunks } = splitStatementText(text);
     expect(header).toBe('');
-    expect(chunks).toEqual(['nothing dated here\nat all']);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(2000);
+    expect(chunks.join('')).toBe(text);
   });
 
-  it('caps the header so a dateless preamble cannot swallow the statement', () => {
-    const preamble = Array.from({ length: 30 }, (_, i) => `notice line ${i}`);
-    const { header, chunks } = splitStatementText(
-      [...preamble, txn(1)].join('\n'),
-    );
-    expect(header.split('\n')).toHaveLength(12);
-    expect(chunks.join('\n')).toContain(txn(1));
+  it('caps the header so a long preamble cannot swallow the request', () => {
+    const preamble = 'terms and conditions apply '.repeat(100);
+    const { header, chunks } = splitStatementText(`${preamble}${txn(1)}`);
+    expect(header.length).toBe(600);
+    expect(chunks.join('')).toContain(txn(1));
   });
 });

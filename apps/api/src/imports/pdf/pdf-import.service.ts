@@ -145,6 +145,12 @@ export class PdfImportService {
       'llama3.1';
 
     const { header, chunks } = splitStatementText(text);
+    // Logged before the first call, because when this stage fails it fails
+    // slowly: knowing the shape of the text up front is the difference between
+    // reading one line of log and guessing at what the PDF looked like.
+    this.logger.log(
+      `PDF extraction: ${text.length} chars, ${text.split('\n').length} lines, ${chunks.length} chunk(s), model "${model}"`,
+    );
     const rows: ExtractedTransaction[] = [];
     for (const [i, chunk] of chunks.entries()) {
       const part = header ? `${header}\n\n${chunk}` : chunk;
