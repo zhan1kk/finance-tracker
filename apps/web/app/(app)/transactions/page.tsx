@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { ConfirmPhrase } from "@/components/confirm-phrase";
 import { MultiSelect } from "@/components/multi-select";
@@ -1495,6 +1495,9 @@ function QuickAdd({
 }) {
   const [type, setType] = useState<TransactionType>("EXPENSE");
   const [internal, setInternal] = useState(false);
+  // Focus returns here after a save, so entering a run of transactions is
+  // Tab-forward all the way and never Shift+Tab back to the start.
+  const typeRef = useRef<HTMLSelectElement>(null);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -1632,6 +1635,7 @@ function QuickAdd({
         // Remember the date and clear the form only once it actually saved.
         window.localStorage.setItem(LAST_DATE_KEY, date);
         form_.reset();
+        typeRef.current?.focus();
       },
     });
     setInternal(false);
@@ -1644,6 +1648,7 @@ function QuickAdd({
       <form onSubmit={onSubmit} className="flex flex-wrap items-end gap-3">
         <Field label="Type">
           <Select
+            ref={typeRef}
             value={type}
             onChange={(e) => setType(e.target.value as TransactionType)}
           >

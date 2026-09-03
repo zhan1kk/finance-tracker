@@ -358,6 +358,9 @@ export type Reminder = {
   done: boolean;
   subcategoryId: string | null;
   subcategory: { id: string; name: string; category: TransactionCategory } | null;
+  /** Set when only payments from one account settle it. */
+  accountId: string | null;
+  account: { id: string; name: string } | null;
   sourceTransactionId: string | null;
   /** The transaction the reminder was read from (present on scanned ones). */
   sourceTransaction: {

@@ -31,6 +31,12 @@ export class CreateReminderDTO {
   @IsUUID()
   public readonly subcategoryId?: string;
 
+  /** Optional: only payments from this account settle the reminder. For a
+   *  category two people share, each paying from their own card. */
+  @IsOptional()
+  @IsUUID()
+  public readonly accountId?: string;
+
   /** Next payment date, ISO "YYYY-MM-DD". */
   @IsOptional()
   @IsDateString()

@@ -1,8 +1,8 @@
 import type {
   ButtonHTMLAttributes,
+  ComponentPropsWithRef,
   InputHTMLAttributes,
   ReactNode,
-  SelectHTMLAttributes,
 } from "react";
 
 export function Button({
@@ -36,7 +36,10 @@ export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
   );
 }
 
-export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
+// ComponentPropsWithRef, not SelectHTMLAttributes: React 19 passes `ref` as an
+// ordinary prop to function components, and the plain attributes type has no
+// slot for it.
+export function Select(props: ComponentPropsWithRef<"select">) {
   return (
     <select
       {...props}

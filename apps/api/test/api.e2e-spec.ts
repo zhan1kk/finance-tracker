@@ -3552,6 +3552,81 @@ describe('API (e2e)', () => {
         .send(body)
         .expect(expected);
 
+    // Two people, one category, each paying from their own card: without an
+    // account on the reminder either payment settles both.
+    describe('scoped to one account', () => {
+      let n = 0;
+      const setup = async () => {
+        const mine = (await createAccount(100_000)).id;
+        const theirs = (await createAccount(100_000)).id;
+        // Unique per test: subcategory names are unique per user.
+        const gym = (await createSubcategory(`Gym ${++n}`, 'Subscriptions')).id;
+        return { mine, theirs, gym };
+      };
+
+      const pay = (accountId: string, gym: string, amount: number) =>
+        request(http)
+          .post('/transactions')
+          .set('Authorization', `Bearer ${token}`)
+          .send({
+            type: 'EXPENSE',
+            date: '2026-08-25',
+            amount,
+            accountId,
+            subcategoryId: gym,
+          })
+          .expect(201);
+
+      const dueDateOf = async (id: string) => {
+        const res = await request(http)
+          .get('/reminders')
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200);
+        const found = (res.body as { id: string; dueDate: string }[]).find(
+          (r) => r.id === id,
+        );
+        return found?.dueDate?.slice(0, 10);
+      };
+
+      it('is not settled by the other account paying the same category', async () => {
+        const { mine, theirs, gym } = await setup();
+        const created = await addReminder({
+          label: 'Gym (mine)',
+          subcategoryId: gym,
+          accountId: mine,
+          dueDate: '2026-08-24',
+          cadence: 'monthly',
+        });
+        const id = (created.body as { id: string }).id;
+
+        await pay(theirs, gym, 6_900);
+        expect(await dueDateOf(id)).toBe('2026-08-24'); // unmoved
+
+        await pay(mine, gym, 11_500);
+        expect(await dueDateOf(id)).toBe('2026-09-24');
+      });
+
+      it('without an account, any payment still settles it', async () => {
+        const { theirs, gym } = await setup();
+        const created = await addReminder({
+          label: 'Gym (either)',
+          subcategoryId: gym,
+          dueDate: '2026-08-24',
+          cadence: 'monthly',
+        });
+        const id = (created.body as { id: string }).id;
+
+        await pay(theirs, gym, 6_900);
+        expect(await dueDateOf(id)).toBe('2026-09-24');
+      });
+
+      it("rejects another user's account", async () => {
+        const otherToken = await registerUser('gym-other@example.com');
+        const foreign = (await createAccount(0, otherToken)).id;
+        await addReminder({ label: 'Gym', accountId: foreign }, 404);
+      });
+    });
+
     it('adds a manual reminder and tracks installments to completion', async () => {
       const created = await addReminder({
         label: 'Sofa',

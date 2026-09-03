@@ -25,6 +25,8 @@ const REMINDER_INCLUDE = {
   // The transaction the reminder was read from — its type tells the UI whether
   // an "Ask …" reminder can be settled by linking an incoming payment.
   sourceTransaction: { select: { id: true, type: true, description: true } },
+  // Shown on the row so a reminder scoped to one card says which one.
+  account: { select: { id: true, name: true } },
 } satisfies Prisma.ReminderInclude;
 
 // Fetch a bounded, recent window to scan — enough to cover the latest imports
@@ -47,9 +49,9 @@ export class ReminderService {
 
   /** Open reminders first (soonest due), dismissed ones last. */
   async list(userId: string) {
-    // Self-heal first: advance any payment reminder past months already paid
-    // (an imported transaction covers them), so a settled bill/installment
-    // stops showing as due/overdue.
+    // Self-heal first: advance any payment reminder past months already paid,
+    // so a settled bill/installment stops showing as due/overdue. Whether the
+    // payment was imported or typed in by hand makes no difference.
     await this.reconcile(userId);
     return this.prisma.reminder.findMany({
       where: { userId },
@@ -61,7 +63,8 @@ export class ReminderService {
   /**
    * Advances open payment reminders (bills/installments with a cadence and a
    * category) past every period that already has a matching, non-internal
-   * expense on/after the due date — i.e. a payment you've made and imported.
+   * expense on/after the due date — a payment you have made, whether it was
+   * imported from a statement or entered by hand.
    * Installments also bump their paid count and auto-complete. Idempotent: once
    * the due date sits beyond the latest matching transaction, nothing changes,
    * so it's safe to run on every list. Best-effort — a failure never breaks the
@@ -81,6 +84,7 @@ export class ReminderService {
         select: {
           id: true,
           subcategoryId: true,
+          accountId: true,
           dueDate: true,
           cadence: true,
           installmentsTotal: true,
@@ -98,6 +102,11 @@ export class ReminderService {
             type: 'EXPENSE',
             excludeFromStats: false,
             subcategoryId: r.subcategoryId,
+            // Scoped to one account when the reminder names one. Two people
+            // sharing a category — each paying their own gym membership from
+            // their own card — are identical by category, so without this
+            // either payment settles both reminders.
+            ...(r.accountId ? { accountId: r.accountId } : {}),
             date: { gte: dueDate },
           },
           orderBy: { date: 'desc' },
@@ -153,12 +162,24 @@ export class ReminderService {
         );
       }
     }
+    if (input.accountId) {
+      const account = await this.prisma.account.findFirst({
+        where: { id: input.accountId, userId },
+        select: { id: true },
+      });
+      if (!account) {
+        throw new NotFoundException(
+          `Account with id ${input.accountId} was not found`,
+        );
+      }
+    }
     const isInstallment = input.installmentsTotal != null;
     return this.prisma.reminder.create({
       data: {
         userId,
         label: input.label,
         subcategoryId: input.subcategoryId ?? null,
+        accountId: input.accountId ?? null,
         dueDate: input.dueDate ? new Date(input.dueDate) : null,
         dueAnchorDay: input.dueDate
           ? new Date(input.dueDate).getUTCDate()

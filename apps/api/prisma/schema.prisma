@@ -225,6 +225,7 @@ model Account {
 
   transactions      Transaction[]         @relation("AccountTransactions")
   incomingTransfers Transaction[]         @relation("TransferCounterAccount")
+  reminders         Reminder[]            @relation("ReminderAccount")
   defaultForUsers   User[]                @relation("UserDefaultAccount")
   importBatches     ImportBatch[]
   importMapping     AccountImportMapping?
@@ -656,6 +657,14 @@ model Reminder {
   /// Optional category, mainly for manually-added reminders (subscriptions/bills).
   subcategoryId String?
   subcategory   Subcategory? @relation(fields: [subcategoryId], references: [id], onDelete: SetNull)
+
+  /// Optional: only payments from this account settle the reminder. Two people
+  /// sharing one category — both partners' gym memberships, billed to their own
+  /// cards — are indistinguishable by category alone, so either payment would
+  /// advance both reminders. The account is the discriminator that already
+  /// exists in the data. Null means any account counts, as it always did.
+  accountId String?
+  account   Account? @relation("ReminderAccount", fields: [accountId], references: [id], onDelete: SetNull)
 
   /// The transaction whose description it came from; also the re-scan dedupe key
   /// (one reminder per source transaction). Null for manually-added reminders.

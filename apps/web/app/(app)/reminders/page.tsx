@@ -10,6 +10,7 @@ import { formatCents, formatDate, parseAmountToCents } from "@/lib/format";
 import { runJob } from "@/lib/poll-job";
 import { SubcategoryOptions } from "@/components/subcategory-options";
 import type {
+  Account,
   RecurringCadence,
   RecurringRule,
   Reminder,
@@ -152,6 +153,10 @@ export default function RemindersPage() {
     queryKey: ["subcategories"],
     queryFn: () => api<Subcategory[]>("/subcategories"),
   });
+  const accounts = useQuery({
+    queryKey: ["accounts"],
+    queryFn: () => api<Account[]>("/accounts"),
+  });
   // Active recurring rules surface as read-only "upcoming (auto)" rows — they
   // post their own transaction on the date, so they're shown for visibility, not
   // as something to act on.
@@ -277,6 +282,7 @@ export default function RemindersPage() {
       {
         label,
         subcategoryId: String(form.get("subcategoryId") || "") || undefined,
+        accountId: String(form.get("accountId") || "") || undefined,
         dueDate: String(form.get("dueDate") || "") || undefined,
         amountCents: amountCents ?? undefined,
         currency: amountCents != null ? baseCurrency : undefined,
@@ -337,6 +343,14 @@ export default function RemindersPage() {
       )}
       {/* Skip the category chip when it just repeats the label (detected
           recurring bills use the subcategory name as the label). */}
+      {r.account && (
+        <span
+          className="text-xs text-zinc-400"
+          title="Only payments from this account settle this reminder"
+        >
+          · {r.account.name}
+        </span>
+      )}
       {r.subcategory && r.subcategory.name !== r.label && (
         <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
           {r.subcategory.name}
@@ -564,6 +578,18 @@ export default function RemindersPage() {
             <Select name="subcategoryId" defaultValue="">
               <option value="">—</option>
               <SubcategoryOptions subcategories={subcategories.data ?? []} />
+            </Select>
+          </Field>
+          {/* Only needed when two people share a category, so it defaults to
+              "any" and stays out of the way otherwise. */}
+          <Field label="Paid from">
+            <Select name="accountId" defaultValue="">
+              <option value="">Any account</option>
+              {(accounts.data ?? []).map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
             </Select>
           </Field>
           <Field label="Amount">
