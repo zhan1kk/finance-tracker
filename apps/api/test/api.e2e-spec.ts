@@ -3627,6 +3627,46 @@ describe('API (e2e)', () => {
       });
     });
 
+    // The reported bug: a due date read out of an imported statement line keeps
+    // that line's time of day, and a transaction entered by hand sits at
+    // midnight. Compared as instants, paying on the due date looked early, so
+    // the reminder stayed overdue however many times it was paid.
+    it('is settled by a payment on the due date itself, whatever the times', async () => {
+      const accountId = (await createAccount(100_000)).id;
+      const sub = (await createSubcategory('Claude Pro', 'Subscriptions')).id;
+      const created = await addReminder({
+        label: 'Claude Pro',
+        subcategoryId: sub,
+        // 13:28:03, exactly as inherited from the statement line it came from.
+        dueDate: '2026-08-27T13:28:03.000Z',
+        cadence: 'monthly',
+      });
+      const id = (created.body as { id: string }).id;
+
+      // Entered by hand: date only, so it lands at midnight — before the due
+      // date as an instant, on it as a calendar day.
+      await request(http)
+        .post('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'EXPENSE',
+          date: '2026-08-27',
+          amount: 2_142,
+          accountId,
+          subcategoryId: sub,
+        })
+        .expect(201);
+
+      const res = await request(http)
+        .get('/reminders')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const found = (res.body as { id: string; dueDate: string }[]).find(
+        (r) => r.id === id,
+      );
+      expect(found?.dueDate?.slice(0, 10)).toBe('2026-09-27');
+    });
+
     it('adds a manual reminder and tracks installments to completion', async () => {
       const created = await addReminder({
         label: 'Sofa',

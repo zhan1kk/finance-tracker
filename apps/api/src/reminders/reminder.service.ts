@@ -19,6 +19,7 @@ import {
 } from './reminder-prompt';
 import { detectRecurringBills } from './recurring-detect';
 import { advanceDate, planSettlement } from './settle';
+import { startOfUtcDay } from '../common/date';
 
 const REMINDER_INCLUDE = {
   subcategory: { select: { id: true, name: true, category: true } },
@@ -107,7 +108,11 @@ export class ReminderService {
             // their own card — are identical by category, so without this
             // either payment settles both reminders.
             ...(r.accountId ? { accountId: r.accountId } : {}),
-            date: { gte: dueDate },
+            // From the start of the due date's day, not the instant: a due date
+            // inherits the time of day from the statement line it was read out
+            // of, and a payment entered by hand sits at midnight. Comparing
+            // instants made your own entry on the due date look too early.
+            date: { gte: startOfUtcDay(dueDate) },
           },
           orderBy: { date: 'desc' },
           select: { date: true },
@@ -119,9 +124,12 @@ export class ReminderService {
         const total = r.installmentsTotal;
         let done = false;
         let guard = 0;
+        // Same day-level comparison as the query above, or a payment on the due
+        // date would be found and then not advance anything.
+        const latestDay = startOfUtcDay(latest.date).getTime();
         // Step forward one period per paid month, until the due date is beyond
         // the latest payment (or the plan is complete).
-        while (next.getTime() <= latest.date.getTime() && guard++ < 120) {
+        while (startOfUtcDay(next).getTime() <= latestDay && guard++ < 120) {
           next = advanceDate(next, r.cadence as string);
           if (total != null) {
             paid = Math.min(paid + 1, total);

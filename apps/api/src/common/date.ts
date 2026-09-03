@@ -32,3 +32,20 @@ export function addDays(date: Date, days: number): Date {
   d.setUTCDate(d.getUTCDate() + days);
   return d;
 }
+
+/**
+ * Midnight UTC on the same calendar day.
+ *
+ * Transaction dates are stored two ways: an imported row keeps the time printed
+ * on the statement, a hand-entered one sits at midnight. Comparing those as
+ * instants makes a payment entered by hand on the due date look like it
+ * happened *before* a due date carrying a time — so a reminder whose due date
+ * came from an imported transaction (13:28:03, say) was never settled by
+ * entering that month's payment yourself. Reminder matching is a question about
+ * days, so it asks about days.
+ */
+export function startOfUtcDay(date: Date): Date {
+  const d = new Date(date);
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
