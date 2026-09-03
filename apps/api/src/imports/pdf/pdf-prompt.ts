@@ -64,10 +64,15 @@ export function buildPdfExtractionPrompt(
  * cut off mid-JSON after 180s, and a cut-off reply is not valid JSON — so the
  * import failed with nothing to show for three minutes of work.
  *
- * Ten transactions is ~450 tokens: about 70s on the slower model, comfortably
- * inside the per-request timeout.
+ * Five is both safer and, measured, faster. On a real 16-transaction Kaspi
+ * statement with qwen3:4b, both sizes read all 16 correctly, but the smaller
+ * chunks finished sooner — 96s against 124s — because attention cost grows
+ * faster than the prompt does, so ten rows in one request costs more than the
+ * same ten split in two. It matches what the categorizer measured
+ * independently (see ollama.provider.ts), and it leaves the most headroom
+ * against the timeout, which is the failure this whole path keeps hitting.
  */
-const MAX_TRANSACTIONS_PER_CHUNK = 10;
+const MAX_TRANSACTIONS_PER_CHUNK = 5;
 /** Secondary guard, for a statement that prints each entry at length. */
 const CHUNK_CHARS = 2500;
 /** Used when nothing date-shaped is found at all, so a chunk is always bounded. */
@@ -77,8 +82,17 @@ const FALLBACK_CHUNK_CHARS = 2000;
  * this close together are one entry's pair of dates, not two transactions.
  */
 const MIN_ENTRY_CHARS = 25;
-/** Enough header for the statement period, without pulling in the table. */
-const MAX_HEADER_CHARS = 600;
+/**
+ * Enough header for the statement period, without pulling in the table.
+ *
+ * A statement's preamble can be long — Kaspi's is a covering letter plus a
+ * summary of totals — and all of it is re-read on every chunk, so it is capped.
+ * Cut on a line boundary: the first attempt sliced 600 characters flat and
+ * landed mid-sentence on "Balance statement for the period from | 28.07.26 to
+ * 25.08.26", which left every chunk but the first with no period to read a
+ * missing year from. One row came back dated to the letterhead instead.
+ */
+const MAX_HEADER_CHARS = 1500;
 
 /**
  * Where a transaction entry begins.
@@ -87,8 +101,32 @@ const MAX_HEADER_CHARS = 600;
  * the table's cells run together: in "...15,99 EUR01.08.2026 Metal plan..."
  * there is no word boundary before the date, and `\b\d` finds nothing at all.
  */
-const ENTRY_START =
-  /(?<!\d)(\d{4}-\d{2}-\d{2}|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}\s?(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s?\d{2,4})(?!\d)/gi;
+const DATE = String.raw`(?<!\d)(?:\d{4}-\d{2}-\d{2}|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}\s?(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s?\d{2,4})(?!\d)`;
+const ENTRY_START = new RegExp(DATE, 'gi');
+/**
+ * The same date, but only where a line opens with it.
+ *
+ * Preferred whenever a statement has line structure, because a transaction row
+ * begins with its date while the noise around it merely contains one: "Card
+ * balance 25.08.26 + 16 886,54 ₸", "Transfers - 34 760,00 ₸", "balance
+ * statement for the period from 28.07.26 to 25.08.26". Counting those as
+ * entries spent half of a chunk's budget on a summary table, so the chunk held
+ * five real transactions and the next one held ten — and the overstuffed one
+ * dropped a row and misdated another.
+ */
+const LINE_ENTRY_START = new RegExp(String.raw`^[^\S\r\n]*${DATE}`, 'gim');
+/** Below this, line anchoring is more likely to be a coincidence than a layout. */
+const MIN_LINE_ANCHORED = 3;
+
+/** Trims the header to budget, keeping whole lines. */
+function capHeader(header: string): string {
+  const trimmed = header.trim();
+  if (trimmed.length <= MAX_HEADER_CHARS) return trimmed;
+  const lineBreak = trimmed.lastIndexOf('\n', MAX_HEADER_CHARS);
+  return trimmed
+    .slice(0, lineBreak > 0 ? lineBreak : MAX_HEADER_CHARS)
+    .trimEnd();
+}
 
 /** Cuts oversized text at the last space inside the budget. */
 function splitOnSize(text: string, budget: number): string[] {
@@ -128,8 +166,18 @@ export function splitStatementText(text: string): {
   header: string;
   chunks: string[];
 } {
+  // Where a statement has line structure, a date opening a line is a
+  // transaction and a date buried in a line is prose. Text that arrives as one
+  // run (pdf.js sets no line breaks for a table) has no line starts to prefer,
+  // and falls back to dates wherever they appear.
+  const lineAnchored = [...text.matchAll(LINE_ENTRY_START)];
+  const matches =
+    lineAnchored.length >= MIN_LINE_ANCHORED
+      ? lineAnchored
+      : [...text.matchAll(ENTRY_START)];
+
   const starts: number[] = [];
-  for (const match of text.matchAll(ENTRY_START)) {
+  for (const match of matches) {
     const at = match.index ?? 0;
     if (starts.length > 0 && at - starts[starts.length - 1] < MIN_ENTRY_CHARS) {
       continue;
@@ -144,7 +192,7 @@ export function splitStatementText(text: string): {
     return { header: '', chunks: splitOnSize(text, FALLBACK_CHUNK_CHARS) };
   }
 
-  const header = text.slice(0, starts[0]).trim().slice(0, MAX_HEADER_CHARS);
+  const header = capHeader(text.slice(0, starts[0]));
 
   const bounds = [...starts, text.length];
   const chunks: string[] = [];

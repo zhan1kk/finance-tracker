@@ -76,15 +76,14 @@ describe('splitStatementText', () => {
         'Period 01.08.2026 - 31.08.2026',
         txn(1),
         txn(2),
+        txn(3),
       ].join('\n'),
     );
-    // The cut lands on the first date, which is inside the period line, so
-    // "Period" stays behind with the bank name and the dates open the body.
-    // Either way the period reaches every chunk, which is the point of it.
-    expect(header).toBe('Vivid Money GmbH\nPeriod');
+    // The period line does not *open* with its date, so it stays whole in the
+    // header and travels with every chunk — which is the point of the header.
+    expect(header).toBe('Vivid Money GmbH\nPeriod 01.08.2026 - 31.08.2026');
     expect(chunks).toHaveLength(1);
-    expect(chunks[0]).toContain('01.08.2026 - 31.08.2026');
-    expect(chunks[0]).toContain(txn(2));
+    expect(chunks[0]).toContain(txn(3));
   });
 
   it('splits a statement that arrives as one line, with no line breaks at all', () => {
@@ -97,7 +96,7 @@ describe('splitStatementText', () => {
     const { chunks } = splitStatementText(`Vivid Money GmbH ${run}`);
 
     expect(chunks.length).toBeGreaterThan(1);
-    for (const chunk of chunks) expect(entries(chunk)).toBeLessThanOrEqual(10);
+    for (const chunk of chunks) expect(entries(chunk)).toBeLessThanOrEqual(5);
     expect(chunks.join('')).toContain(txn(28));
   });
 
@@ -111,12 +110,12 @@ describe('splitStatementText', () => {
     expect(chunks.length).toBeGreaterThan(1);
   });
 
-  it('caps each chunk at ten transactions, however short the entries are', () => {
+  it('caps each chunk at five transactions, however short the entries are', () => {
     const lines = Array.from({ length: 60 }, (_, i) => txn((i % 28) + 1));
     const { chunks } = splitStatementText(['Bank', ...lines].join('\n'));
 
-    expect(chunks).toHaveLength(6);
-    for (const chunk of chunks) expect(entries(chunk)).toBeLessThanOrEqual(10);
+    expect(chunks).toHaveLength(12);
+    for (const chunk of chunks) expect(entries(chunk)).toBeLessThanOrEqual(5);
     // Nothing is lost and nothing is offered twice: the chunks rejoin to the
     // original body exactly, so a duplicate row can only be a real one.
     expect(chunks.join('')).toBe(lines.join('\n'));
@@ -129,8 +128,8 @@ describe('splitStatementText', () => {
         `${String(i + 1).padStart(2, '0')}.08.2026 ${String(i + 1).padStart(2, '0')}.08.2026 MERCHANT -10,00 EUR`,
     ).join(' ');
     const { chunks } = splitStatementText(paired);
-    // Forty date matches, but twenty entries: two chunks, not four.
-    expect(chunks).toHaveLength(2);
+    // Forty date matches, but twenty entries: four chunks, not eight.
+    expect(chunks).toHaveLength(4);
   });
 
   it('keeps an entry printed over several lines in one piece', () => {
@@ -152,12 +151,12 @@ describe('splitStatementText', () => {
   it('splits early on size when entries are verbose, before hitting ten', () => {
     const body = Array.from(
       { length: 12 },
-      (_, i) => `${txn(i + 1)} ${'detail '.repeat(60)}`,
+      (_, i) => `${txn(i + 1)} ${'detail '.repeat(120)}`,
     ).join('');
     const { chunks } = splitStatementText(`Bank\n${body}`);
 
     expect(chunks.length).toBeGreaterThan(1);
-    for (const chunk of chunks) expect(entries(chunk)).toBeLessThan(10);
+    for (const chunk of chunks) expect(entries(chunk)).toBeLessThan(5);
   });
 
   it('bounds the chunks by size when nothing date-shaped is found', () => {
@@ -171,10 +170,44 @@ describe('splitStatementText', () => {
     expect(chunks.join('')).toBe(text);
   });
 
-  it('caps the header so a long preamble cannot swallow the request', () => {
-    const preamble = 'terms and conditions apply '.repeat(100);
+  it('caps a long preamble, cutting on a line boundary', () => {
+    // The bug this replaces: a flat character cut landed mid-sentence on
+    // "Balance statement for the period from | 28.07.26 to 25.08.26", so every
+    // chunk but the first lost the period and one row was dated to the
+    // letterhead instead.
+    const preamble = `${'terms and conditions apply\n'.repeat(100)}`;
     const { header, chunks } = splitStatementText(`${preamble}${txn(1)}`);
-    expect(header.length).toBe(600);
+    expect(header.length).toBeLessThanOrEqual(1500);
+    expect(header.endsWith('apply')).toBe(true);
     expect(chunks.join('')).toContain(txn(1));
+  });
+
+  it('ignores dates buried in summary lines when rows open with theirs', () => {
+    // A real Kaspi statement: a covering letter and a table of totals, all
+    // carrying dates. Counting those as entries spent half a chunk's budget on
+    // the summary, so the next chunk was overstuffed and dropped a row.
+    const preamble = [
+      'JSC «Kaspi Bank», BIC CASPKZKA',
+      'Balance statement for the period from 28.07.26 to 25.08.26 is attached.',
+      'Card balance 28.07.26 + 3 932,80 ₸',
+      'Card balance 25.08.26 + 16 886,54 ₸',
+      'Date Amount Transaction Details',
+    ].join('\n');
+    const rows = Array.from({ length: 12 }, (_, i) =>
+      [
+        `${String(i + 1).padStart(2, '0')}.08.26 - 10 000,00 ₸ Transfer to your`,
+        'account',
+      ].join('\n'),
+    ).join('\n');
+    const { header, chunks } = splitStatementText(`${preamble}\n${rows}`);
+
+    // The whole preamble stays in the header, period included.
+    expect(header).toBe(preamble);
+    expect(chunks).toHaveLength(3);
+    expect(
+      chunks[0].split('\n').filter((l) => /^\d{2}\.08\.26/.test(l)),
+    ).toHaveLength(5);
+    // The wrapped "account" line stays with the transaction it belongs to.
+    expect(chunks[0]).toContain('Transfer to your\naccount');
   });
 });
