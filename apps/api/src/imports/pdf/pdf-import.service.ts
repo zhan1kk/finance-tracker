@@ -11,10 +11,11 @@ import {
   type ExtractedTransaction,
   PDF_EXTRACTION_SCHEMA,
   PDF_EXTRACTION_SYSTEM_PROMPT,
+  splitStatementText,
 } from './pdf-prompt';
 
-// Extraction of a whole statement is a bigger generation than categorising one
-// chunk, and a cold local model loads slowly — allow plenty of time.
+// Per chunk, not per statement: a cold local model loads slowly, and a chunk
+// of a dozen transactions is still a few hundred tokens to write out.
 const REQUEST_TIMEOUT_MS = 180_000;
 // Ollama's default context is small (a few thousand tokens); a monthly
 // statement plus the prompt needs more room, or rows past the cut-off vanish.
@@ -22,10 +23,10 @@ const NUM_CTX = 8192;
 
 /**
  * Turns an uploaded PDF statement into a normal import batch: extract the text
- * (Mozilla's pdf.js via unpdf), have a local Ollama model read it into
- * {date, amount, description} rows, then feed those through the exact same
- * pipeline as a CSV — dedup, rules, categorization, and the review screen — so
- * nothing is committed without the user confirming it.
+ * (Mozilla's pdf.js via unpdf), have a local Ollama model read it a chunk at a
+ * time into {date, amount, description} rows, then feed those through the exact
+ * same pipeline as a CSV — dedup, rules, categorization, and the review screen —
+ * so nothing is committed without the user confirming it.
  *
  * Always uses Ollama (OLLAMA_BASE_URL / OLLAMA_MODEL), independent of the
  * CATEGORIZER setting: extraction is a local, private, zero-cost step whatever
@@ -116,6 +117,19 @@ export class PdfImportService {
     }
   }
 
+  /**
+   * Reads the statement a chunk at a time and concatenates the results.
+   *
+   * One request for the whole statement is what made a normal month fail: the
+   * reply has to spell out every transaction, so the generation grows with the
+   * statement while the timeout stays fixed, and a cut-off reply is not valid
+   * JSON — three minutes of work thrown away with nothing to review. Asking for
+   * a dozen transactions at a time keeps every request the same size no matter
+   * how long the statement is.
+   *
+   * Sequential, like the Ollama categorizer: a local Ollama runs one generation
+   * at a time, so parallel chunks would only queue up and race the timeout.
+   */
   private async extractTransactions(
     text: string,
     currency?: string,
@@ -130,6 +144,43 @@ export class PdfImportService {
       optionalSetting(this.config, 'OLLAMA_MODEL') ??
       'llama3.1';
 
+    const { header, chunks } = splitStatementText(text);
+    const rows: ExtractedTransaction[] = [];
+    for (const [i, chunk] of chunks.entries()) {
+      const part = header ? `${header}\n\n${chunk}` : chunk;
+      try {
+        rows.push(...(await this.extractChunk(part, baseUrl, model, currency)));
+      } catch (err) {
+        // Naming the part that failed matters: "it timed out" on its own gives
+        // no clue whether the model is unreachable or merely too slow for this
+        // machine, which are opposite fixes.
+        const detail =
+          err instanceof Error && err.name === 'AbortError'
+            ? `Ollama took too long to read the PDF (timed out on part ${i + 1} of ${chunks.length}, model "${model}"). A smaller OLLAMA_EXTRACTION_MODEL would read it faster.`
+            : err instanceof BadRequestException
+              ? err.message
+              : `Ollama extraction failed: ${
+                  err instanceof Error ? err.message : String(err)
+                }. Is Ollama running at ${baseUrl}?`;
+        this.logger.error(detail);
+        // Everything or nothing. Returning the parts that did come back would
+        // look like a complete statement and quietly lose the rest.
+        throw new BadRequestException(detail);
+      }
+      this.logger.log(
+        `PDF extraction: part ${i + 1}/${chunks.length}, ${rows.length} transactions so far`,
+      );
+    }
+    return rows;
+  }
+
+  /** One /api/chat call for one slice of the statement. */
+  private async extractChunk(
+    text: string,
+    baseUrl: string,
+    model: string,
+    currency?: string,
+  ): Promise<ExtractedTransaction[]> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
@@ -169,16 +220,6 @@ export class PdfImportService {
       if (typeof content !== 'string') return [];
       const parsed = JSON.parse(content) as { transactions?: unknown };
       return coerceExtractedTransactions(parsed.transactions);
-    } catch (err) {
-      if (err instanceof BadRequestException) throw err;
-      const message =
-        err instanceof Error && err.name === 'AbortError'
-          ? 'Ollama took too long to read the PDF (timed out).'
-          : `Ollama extraction failed: ${
-              err instanceof Error ? err.message : String(err)
-            }. Is Ollama running at ${baseUrl}?`;
-      this.logger.error(message);
-      throw new BadRequestException(message);
     } finally {
       clearTimeout(timer);
     }
