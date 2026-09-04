@@ -6,7 +6,8 @@ import { ExchangeRatesCard } from "@/components/exchange-rates-card";
 import { PromptDialog } from "@/components/prompt-dialog";
 import { TelegramCard } from "@/components/telegram-card";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
-import { api, downloadFile } from "@/lib/api";
+import { api } from "@/lib/api";
+import { useDownload } from "@/lib/use-download";
 import { formatCents, parseSignedAmountToCents } from "@/lib/format";
 import { TYPE_ACCENT, TYPE_BADGE } from "@/lib/account-style";
 import {
@@ -25,6 +26,7 @@ export default function AccountsPage() {
   // — and reporting that inside the "New account" card meant scrolling back up
   // past every account to find out why nothing happened.
   const [error, setError] = useState<unknown>(null);
+  const download = useDownload();
   const [rowError, setRowError] = useState<unknown>(null);
 
   const fxPrefs = useQuery({
@@ -305,6 +307,10 @@ export default function AccountsPage() {
       {accounts.isLoading && (
         <p className="text-sm text-zinc-500">Loading accounts…</p>
       )}
+      {/* Without this the page just looks empty on a dropped connection:
+          isLoading is false, data is undefined, and the empty-state message
+          below needs data to exist before it renders. */}
+      {accounts.isError && <ErrorText error={accounts.error} />}
       {accounts.data?.length === 0 && (
         <p className="text-sm text-zinc-500">
           No accounts yet — add your first one above.
@@ -348,24 +354,27 @@ export default function AccountsPage() {
         <div className="flex gap-2">
           <Button
             variant="ghost"
+            disabled={download.pending}
             onClick={() =>
-              void downloadFile(
+              download.start(
                 "/reports/export.json",
                 "finance-tracker-export.json",
               )
             }
           >
-            Download JSON
+            {download.pending ? "Preparing…" : "Download JSON"}
           </Button>
           <Button
             variant="ghost"
+            disabled={download.pending}
             onClick={() =>
-              void downloadFile("/reports/transactions.csv", "transactions.csv")
+              download.start("/reports/transactions.csv", "transactions.csv")
             }
           >
-            Transactions CSV
+            {download.pending ? "Preparing…" : "Transactions CSV"}
           </Button>
         </div>
+        <ErrorText error={download.error} />
       </Card>
 
       {editing?.kind === "name" && (

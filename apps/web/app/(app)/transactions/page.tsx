@@ -6,7 +6,8 @@ import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { ConfirmPhrase } from "@/components/confirm-phrase";
 import { MultiSelect } from "@/components/multi-select";
 import { SubcategoryOptions } from "@/components/subcategory-options";
-import { api, downloadFile } from "@/lib/api";
+import { api } from "@/lib/api";
+import { useDownload } from "@/lib/use-download";
 import { useAuth } from "@/lib/auth";
 import { formatCents, parseAmountToCents, todayISO } from "@/lib/format";
 import { periodOf, periodRange, shiftPeriod } from "@/lib/period";
@@ -93,6 +94,7 @@ export default function TransactionsPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [splitting, setSplitting] = useState<Transaction | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
+  const download = useDownload();
   // Wiping every transaction is the one action here with no way back, so it
   // asks for a typed word rather than a one-click confirm.
   const [confirmingWipe, setConfirmingWipe] = useState(false);
@@ -362,12 +364,13 @@ export default function TransactionsPage() {
             )}
             {total} transaction{total === 1 ? "" : "s"}
             <button
-              className="underline decoration-zinc-300 underline-offset-2 hover:text-zinc-700 dark:decoration-zinc-700 dark:hover:text-zinc-300"
+              className="underline decoration-zinc-300 underline-offset-2 hover:text-zinc-700 disabled:no-underline disabled:opacity-50 dark:decoration-zinc-700 dark:hover:text-zinc-300"
+              disabled={download.pending}
               onClick={() =>
-                void downloadFile("/reports/transactions.csv", "transactions.csv")
+                download.start("/reports/transactions.csv", "transactions.csv")
               }
             >
-              Export CSV
+              {download.pending ? "Preparing…" : "Export CSV"}
             </button>
             <button
               className="text-red-600 hover:underline disabled:opacity-50"
@@ -378,6 +381,7 @@ export default function TransactionsPage() {
             </button>
           </span>
         </div>
+        <ErrorText error={download.error} />
 
         <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs">
           <span className="text-zinc-400">Quick range:</span>
@@ -490,6 +494,18 @@ export default function TransactionsPage() {
                     className="py-6 text-center text-zinc-500"
                   >
                     Loading…
+                  </td>
+                </tr>
+              )}
+              {/* Without this the table just looks empty on a dropped
+                  connection: isLoading is false, data is undefined, and the
+                  "No transactions match." row below needs data to exist
+                  before it renders — so a failed load was indistinguishable
+                  from an account with nothing in it. */}
+              {transactions.isError && (
+                <tr>
+                  <td colSpan={emptyColSpan} className="py-6 text-center">
+                    <ErrorText error={transactions.error} />
                   </td>
                 </tr>
               )}

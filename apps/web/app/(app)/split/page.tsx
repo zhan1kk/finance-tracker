@@ -165,6 +165,10 @@ export default function SplitPage() {
         {balances.isLoading && (
           <p className="text-sm text-zinc-500">Loading…</p>
         )}
+        {/* Without this the card just looks empty on a dropped connection:
+            isLoading is false, data is undefined, and the empty-state message
+            below needs data to exist before it renders. */}
+        {balances.isError && <ErrorText error={balances.error} />}
         {balances.data && balances.data.balances.length === 0 && (
           <p className="text-sm text-zinc-500">All settled up. ✨</p>
         )}

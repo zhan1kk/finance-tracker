@@ -110,6 +110,10 @@ export default function RecurringPage() {
         {rules.isLoading && (
           <p className="text-sm text-zinc-500">Loading…</p>
         )}
+        {/* Without this the card just looks empty on a dropped connection:
+            isLoading is false, data is undefined, and the empty-state message
+            below needs data to exist before it renders. */}
+        {rules.isError && <ErrorText error={rules.error} />}
         {rules.data && rules.data.length === 0 && (
           <p className="text-sm text-zinc-500">
             No recurring transactions yet. Add rent, salary, or a subscription

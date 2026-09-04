@@ -271,6 +271,10 @@ export default function BudgetsPage() {
         {budgets.isLoading && (
           <p className="text-sm text-zinc-500">Loading…</p>
         )}
+        {/* Without this the card just looks empty on a dropped connection:
+            isLoading is false, data is undefined, and the empty-state message
+            below needs data to exist before it renders. */}
+        {budgets.isError && <ErrorText error={budgets.error} />}
         {budgets.data && budgets.data.length === 0 && (
           <p className="text-sm text-zinc-500">
             No budgets yet — add one above to keep a category in check.

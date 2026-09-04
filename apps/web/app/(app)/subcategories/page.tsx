@@ -169,6 +169,10 @@ export default function SubcategoriesPage() {
       {subcategories.isLoading && (
         <p className="text-sm text-zinc-500">Loading…</p>
       )}
+      {/* Without this the list just looks empty on a dropped connection:
+          isLoading is false, data is undefined, and the empty-state message
+          below needs data to exist before it renders. */}
+      {subcategories.isError && <ErrorText error={subcategories.error} />}
       {subcategories.data?.length === 0 && (
         <p className="text-sm text-zinc-500">
           No subcategories yet — add one above.
