@@ -5,7 +5,12 @@ import { type ReactNode, useRef, useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { formatCents, parseAmountToCents, todayISO } from "@/lib/format";
+import {
+  formatCents,
+  formatDate,
+  parseAmountToCents,
+  todayISO,
+} from "@/lib/format";
 import { useStickyState } from "@/lib/sticky-state";
 import type {
   Friend,
@@ -312,7 +317,7 @@ export default function SplitPage() {
             noun="settlement"
             render={(s) => (
               <li key={s.id} className="flex flex-wrap items-center gap-x-2 py-1.5">
-                <span>{s.date.slice(0, 10)}</span>
+                <span>{formatDate(s.date)}</span>
                 <span className="font-medium">{nameOf(s.fromFriendId)}</span>
                 <span className="text-zinc-400">paid</span>
                 <span className="font-medium">{nameOf(s.toFriendId)}</span>
@@ -350,7 +355,7 @@ export default function SplitPage() {
             noun="shared expense"
             render={(e) => (
               <li key={e.id} className="flex flex-wrap items-center gap-x-2 py-1.5">
-                <span className="text-zinc-500">{e.date.slice(0, 10)}</span>
+                <span className="text-zinc-500">{formatDate(e.date)}</span>
                 <span className="font-medium">{e.description}</span>
                 <span className="text-xs text-zinc-400">
                   · {nameOf(e.payerFriendId)} paid · split{" "}

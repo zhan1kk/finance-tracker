@@ -67,7 +67,7 @@ function IncomePicker({
   });
 
   const label = (t: Transaction) =>
-    `${t.date.slice(0, 10)} · ${t.description || t.subcategory?.name || "income"} · ${formatCents(t.amount, currency)}`;
+    `${formatDate(t.date)} · ${t.description || t.subcategory?.name || "income"} · ${formatCents(t.amount, currency)}`;
 
   return (
     <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-800 dark:bg-zinc-800/40">

@@ -9,7 +9,12 @@ import { SubcategoryOptions } from "@/components/subcategory-options";
 import { api } from "@/lib/api";
 import { useDownload } from "@/lib/use-download";
 import { useAuth } from "@/lib/auth";
-import { formatCents, parseAmountToCents, todayISO } from "@/lib/format";
+import {
+  formatCents,
+  formatDate,
+  parseAmountToCents,
+  todayISO,
+} from "@/lib/format";
 import { periodOf, periodRange, shiftPeriod } from "@/lib/period";
 import { useStickyState } from "@/lib/sticky-state";
 import {
@@ -1028,7 +1033,7 @@ function UnlinkedReimbursements({
             >
               <div className="flex flex-wrap items-baseline gap-2 text-sm">
                 <span className="text-zinc-500 tabular-nums">
-                  {r.date.slice(0, 10)}
+                  {formatDate(r.date)}
                 </span>
                 <span>{r.description || r.subcategory?.name || "income"}</span>
                 <span className="text-zinc-400">
@@ -1096,7 +1101,7 @@ function ReimbursePicker({
   });
 
   const label = (e: Transaction) =>
-    `${e.date.slice(0, 10)} · ${
+    `${formatDate(e.date)} · ${
       e.description || e.subcategory?.name || "expense"
     } · ${formatCents(e.amount, currencyOf(e.accountId))}`;
 
@@ -1410,7 +1415,7 @@ function TransactionRow({
           onChange={onToggleSelect}
         />
       </td>
-      <td className="py-2 pr-3 whitespace-nowrap">{t.date.slice(0, 10)}</td>
+      <td className="py-2 pr-3 whitespace-nowrap">{formatDate(t.date)}</td>
       <td className="py-2 pr-3">
         {t.type === "TRANSFER" ? (
           <span className="text-zinc-500">Transfer</span>

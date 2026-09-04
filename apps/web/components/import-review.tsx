@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Button, Card, ErrorText, Select } from "@/components/ui";
 import { api } from "@/lib/api";
-import { formatCents } from "@/lib/format";
+import { formatCents, formatDate } from "@/lib/format";
 import { SubcategoryOptions } from "@/components/subcategory-options";
 import type {
   Account,
@@ -465,7 +465,7 @@ function Row({
         duplicate || skipped ? "opacity-50" : ""
       }`}
     >
-      <td className="py-2 pr-3 whitespace-nowrap">{row.date.slice(0, 10)}</td>
+      <td className="py-2 pr-3 whitespace-nowrap">{formatDate(row.date)}</td>
       <td className="py-2 pr-3">
         {row.description}
         {/* System note (skip/duplicate/repeat reason) — explains why a row is

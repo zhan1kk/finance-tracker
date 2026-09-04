@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Button, Card, ErrorText, Field, Input } from "@/components/ui";
 import { api } from "@/lib/api";
-import { todayISO } from "@/lib/format";
+import { formatDate, todayISO } from "@/lib/format";
 import type { FxPreferences, FxRates } from "@/lib/types";
 
 /** Trim a rate to 4 decimals for display without long floating tails. */
@@ -256,7 +256,7 @@ function CurrencyRates({
         )}
         {latest && (
           <span className="text-xs text-zinc-400">
-            as of {latest.date.slice(0, 10)}
+            as of {formatDate(latest.date)}
           </span>
         )}
         {autoSync && (
@@ -466,8 +466,8 @@ function RateHistory({
 
   const row = (r: { id: string; date: string; rate: number }) => (
     <li key={r.id} className="flex items-center gap-2">
-      <span className="w-24 text-zinc-500 tabular-nums">
-        {r.date.slice(0, 10)}
+      <span className="w-28 shrink-0 text-zinc-500 tabular-nums">
+        {formatDate(r.date)}
       </span>
       <span className="tabular-nums">
         1 {base} = {round(r.rate)} {currency}
@@ -475,7 +475,7 @@ function RateHistory({
       <button
         type="button"
         className="ml-auto text-xs text-zinc-400 hover:text-red-600"
-        onClick={() => onRemove(r.id, r.date.slice(0, 10))}
+        onClick={() => onRemove(r.id, formatDate(r.date))}
       >
         remove
       </button>

@@ -6,7 +6,12 @@ import { ConfirmPhrase } from "@/components/confirm-phrase";
 import { SubcategoryOptions } from "@/components/subcategory-options";
 import { Button, Card, ErrorText, Field, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
-import { formatCents, parseAmountToCents, todayISO } from "@/lib/format";
+import {
+  formatCents,
+  formatDate,
+  parseAmountToCents,
+  todayISO,
+} from "@/lib/format";
 import {
   type Account,
   RECURRING_CADENCES,
@@ -208,7 +213,7 @@ function RuleRow({
         </div>
       ) : (
         <div className="text-xs text-zinc-500">
-          {rule.active ? `next ${rule.nextRunAt.slice(0, 10)}` : "—"}
+          {rule.active ? `next ${formatDate(rule.nextRunAt)}` : "—"}
         </div>
       )}
 
