@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Card, Field, Select } from "@/components/ui";
+import { Card, ErrorText, Field, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { formatCents } from "@/lib/format";
 import { formatPeriod, shiftPeriod } from "@/lib/period";
@@ -234,7 +234,11 @@ export function BudgetCompare({
         </div>
       </div>
 
-      {rows.length === 0 ? (
+      {/* Before the empty state, which would otherwise report "no budgeted
+          spending" for a month whose budgets simply failed to arrive. */}
+      {a.isError || b.isError ? (
+        <ErrorText error={a.error ?? b.error} />
+      ) : rows.length === 0 ? (
         <p className="text-sm text-zinc-500">
           No budgeted spending in either month.
         </p>

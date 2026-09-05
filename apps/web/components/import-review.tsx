@@ -196,7 +196,13 @@ export function ImportReview({
 
   const data = batch.data;
   if (!data) {
-    return <Card>Loading import…</Card>;
+    // A failure has to be told apart from a slow load here: the review screen
+    // said "Loading import…" and then said it forever.
+    return (
+      <Card>
+        {batch.isError ? <ErrorText error={batch.error} /> : "Loading import…"}
+      </Card>
+    );
   }
 
   const currency = data.account.currency;

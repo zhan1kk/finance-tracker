@@ -153,6 +153,11 @@ export default function RulesPage() {
       />
 
       <Card>
+        {rules.isLoading && <p className="text-sm text-zinc-500">Loading…</p>}
+        {/* Without this the card just looks empty on a dropped connection:
+            the empty-state message below needs data to exist before it
+            renders. */}
+        {rules.isError && <ErrorText error={rules.error} />}
         {rules.data && all.length === 0 && (
           <p className="text-sm text-zinc-500">
             No rules yet. Add one above, or correct an imported transaction and a

@@ -10,7 +10,7 @@ import {
   type PacePoint,
   SpendingPaceChart,
 } from "@/components/charts";
-import { Button, Card, Select } from "@/components/ui";
+import { Button, Card, ErrorText, Select } from "@/components/ui";
 import { TYPE_ACCENT, TYPE_BADGE } from "@/lib/account-style";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -236,6 +236,23 @@ export default function OverviewPage() {
           ),
   }));
 
+  // Seven queries feed this page and each can fail on its own. One banner
+  // rather than seven: the section that failed is already blank, and what the
+  // reader needs is to know that blank means "did not load" rather than
+  // "nothing to show" — which on a dashboard of numbers is the more alarming
+  // of the two readings.
+  const failed = (
+    [
+      accounts,
+      anyTx,
+      budgets,
+      monthStats,
+      baselineStats,
+      netWorth,
+      reminders,
+    ] as { isError: boolean; error: unknown }[]
+  ).find((q) => q.isError);
+
   const noAccounts = accounts.data?.length === 0;
 
   const hasAccounts = (accounts.data?.length ?? 0) > 0;
@@ -268,6 +285,7 @@ export default function OverviewPage() {
 
   return (
     <main className="flex flex-col gap-6">
+      {failed && <ErrorText error={failed.error} />}
       {showSetup && (
         <Onboarding
           hasAccounts={hasAccounts}

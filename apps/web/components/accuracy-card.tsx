@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Card } from "@/components/ui";
+import { Card, ErrorText } from "@/components/ui";
 import { api } from "@/lib/api";
 import type { AccuracyStats, AccuracyTally } from "@/lib/types";
 
@@ -13,6 +13,17 @@ export function AccuracyCard() {
     queryKey: ["import-accuracy"],
     queryFn: () => api<AccuracyStats>("/imports/stats/accuracy"),
   });
+
+  // Checked before the empty state, which otherwise tells someone with a
+  // year of imports behind them to go and import something.
+  if (stats.isError) {
+    return (
+      <Card>
+        <h2 className="mb-1 font-medium">Categorization accuracy</h2>
+        <ErrorText error={stats.error} />
+      </Card>
+    );
+  }
 
   const data = stats.data;
   if (!data || data.overall.predicted === 0) {

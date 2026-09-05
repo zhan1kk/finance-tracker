@@ -566,6 +566,16 @@ function History({ onOpen }: { onOpen: (batchId: string) => void }) {
   // every time. The count in the heading is the part worth seeing at a glance.
   const [open, setOpen] = useState(false);
 
+  // Failure first: returning null for both cases made a dropped connection
+  // delete the whole section, so there was nothing left to explain itself.
+  if (batches.isError) {
+    return (
+      <Card>
+        <h2 className="mb-1 font-medium">Past imports</h2>
+        <ErrorText error={batches.error} />
+      </Card>
+    );
+  }
   if (!batches.data || batches.data.length === 0) {
     return null;
   }

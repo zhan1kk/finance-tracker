@@ -252,7 +252,9 @@ function CurrencyRates({
             1 {base} = <b>{round(rates.data.effectiveRate)}</b> {currency}
           </span>
         ) : (
-          <span className="text-sm text-zinc-400">loading…</span>
+          <span className="text-sm text-zinc-400">
+            {rates.isError ? "rate unavailable" : "loading…"}
+          </span>
         )}
         {latest && (
           <span className="text-xs text-zinc-400">
