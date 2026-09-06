@@ -157,6 +157,9 @@ function RuleRow({
   rule: RecurringRule;
   onChange: () => void;
 }) {
+  // Reported at the row rather than the page: which rule refused to pause is
+  // the whole of the information.
+  const [error, setError] = useState<unknown>(null);
   const setActive = useMutation({
     mutationFn: (active: boolean) =>
       api(`/recurring/${rule.id}`, {
@@ -164,10 +167,12 @@ function RuleRow({
         body: JSON.stringify({ active }),
       }),
     onSuccess: onChange,
+    onError: setError,
   });
   const remove = useMutation({
     mutationFn: () => api(`/recurring/${rule.id}`, { method: "DELETE" }),
     onSuccess: onChange,
+    onError: setError,
   });
 
   const currency = rule.account.currency;
@@ -237,6 +242,9 @@ function RuleRow({
         >
           ×
         </button>
+      </div>
+      <div className="w-full">
+        <ErrorText error={error} />
       </div>
     </li>
   );

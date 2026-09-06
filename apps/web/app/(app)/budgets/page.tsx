@@ -121,7 +121,13 @@ export default function BudgetsPage() {
   const deleteAll = useMutation({
     mutationFn: () => api(`/budgets`, { method: "DELETE" }),
     onSuccess: invalidate,
-    onError: setError,
+    // Close the dialog too: an error rendered on the page behind the modal is
+    // an error nobody can read, and the dialog looks merely stuck. Same fix
+    // the recurring page already carries.
+    onError: (e: unknown) => {
+      setError(e);
+      setConfirmingWipe(false);
+    },
   });
 
   const onCreate = (e: FormEvent<HTMLFormElement>) => {

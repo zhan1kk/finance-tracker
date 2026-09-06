@@ -99,6 +99,9 @@ export default function TransactionsPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [splitting, setSplitting] = useState<Transaction | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
+  // Deleting a row, or all of them, is the one thing here with no undo — so it
+  // is the last thing that should fail without saying so.
+  const [deleteError, setDeleteError] = useState<unknown>(null);
   const download = useDownload();
   // Wiping every transaction is the one action here with no way back, so it
   // asks for a typed word rather than a one-click confirm.
@@ -145,12 +148,19 @@ export default function TransactionsPage() {
   const remove = useMutation({
     mutationFn: (id: string) => api(`/transactions/${id}`, { method: "DELETE" }),
     onSuccess: invalidateAll,
+    onError: setDeleteError,
   });
 
   const removeAll = useMutation({
     mutationFn: () =>
       api<{ deleted: number }>("/transactions", { method: "DELETE" }),
     onSuccess: invalidateAll,
+    // Close the dialog too: an error rendered on the page behind the modal is
+    // an error nobody can read, and the dialog looks merely stuck.
+    onError: (e: unknown) => {
+      setDeleteError(e);
+      setConfirmingWipe(false);
+    },
   });
 
   const clearSelection = () => setSelected(new Set());
@@ -527,6 +537,7 @@ export default function TransactionsPage() {
             </tbody>
           </table>
         </div>
+        <ErrorText error={deleteError} />
 
         {lastPage > 1 && (
           <div className="mt-3">
