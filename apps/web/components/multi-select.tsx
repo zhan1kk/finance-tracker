@@ -112,6 +112,7 @@ export function MultiSelect({
           <div className="border-b border-zinc-100 p-2 dark:border-zinc-800">
             <input
               autoFocus
+              aria-label={searchPlaceholder}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={searchPlaceholder}

@@ -485,6 +485,7 @@ function Row({
         {editable && (
           <input
             defaultValue={row.userNote ?? ""}
+            aria-label={`Note for ${row.description || "this row"}`}
             placeholder="add a note…"
             maxLength={500}
             className="mt-0.5 block w-full max-w-56 rounded border border-transparent bg-transparent px-1 py-0.5 text-xs text-zinc-500 placeholder:text-zinc-300 hover:border-zinc-200 focus:border-zinc-400 focus:outline-none dark:placeholder:text-zinc-700 dark:hover:border-zinc-800 dark:focus:border-zinc-600"

@@ -366,7 +366,10 @@ export default function TransactionsPage() {
               placeholder="espresso…"
             />
           </Field>
-          <span className="ml-auto flex items-center gap-3 text-sm text-zinc-500">
+          {/* Wraps for the same reason the Pager below does: four labelled
+              controls in one row are wider than a phone, and flex items do not
+              shrink below their content. */}
+          <span className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-zinc-500">
             {/* Filters persist across navigation, so there has to be one
                 obvious way back to the unfiltered list. */}
             {anyFilterActive && (
@@ -849,7 +852,7 @@ function SplitDialog({
           ))}
         </div>
 
-        <div className="mt-3 flex items-center gap-3 text-sm">
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
           <button className="text-emerald-600 hover:underline" onClick={addPart}>
             + Add part
           </button>
