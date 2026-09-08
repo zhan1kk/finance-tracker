@@ -103,10 +103,17 @@ export class SubcategoryService {
     const duplicate = await this.prisma.subcategory.findUnique({
       where: { userId_name: { userId, name } },
     });
-    if (duplicate) {
-      throw new ConflictException(
-        `Subcategory with a name ${name} already exists`,
-      );
-    }
+    if (!duplicate) return;
+    // An archived category still holds its name — (userId, name) is unique in
+    // the database, so the name cannot be handed to a second row and the check
+    // cannot simply skip archived ones. What it can do is say so: archived
+    // categories are hidden from the list, so "already exists" on a name with
+    // nothing visible behind it is a dead end. Restoring is also the right
+    // move, since it keeps the history already filed under that name.
+    throw new ConflictException(
+      duplicate.archivedAt
+        ? `"${name}" already exists but is archived. Restore it from the archived list to use it again — its history is still attached.`
+        : `Subcategory with a name ${name} already exists`,
+    );
   }
 }

@@ -153,6 +153,11 @@ export class AccountService {
       );
     }
 
+    // Categorization rules naming this account as a transfer destination are
+    // deliberately not guarded here: they cascade. Unlike the references
+    // above, such a rule means nothing once the account is gone, and it is
+    // rebuilt from one corrected row on the next import — so blocking the
+    // delete over it would cost more than losing it does.
     await this.prisma.account.delete({ where: { id } });
   }
 

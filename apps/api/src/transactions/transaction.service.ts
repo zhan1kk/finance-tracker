@@ -372,6 +372,17 @@ export class TransactionService {
     return transaction;
   }
 
+  /**
+   * Deletes a transaction and reverses its effect on the account balance.
+   *
+   * A transaction that came from an import also leaves an ImportRow behind.
+   * The FK nulls that row's transactionId, but its status used to stay at
+   * COMMITTED forever, so the batch went on claiming a row it no longer had —
+   * and undo(), which only looks at rows still holding a transactionId, could
+   * never reach it to correct the record. SKIPPED is the honest status: the
+   * row is part of the statement and is not in the ledger, which is exactly
+   * what "did I import August fully?" needs to be told.
+   */
   async deleteTransaction(userId: string, id: string) {
     const transaction = await this.prisma.transaction.findFirst({
       where: { id, account: { userId } },
@@ -388,8 +399,16 @@ export class TransactionService {
       );
     }
 
+    // Ordered first on purpose: deleting the transaction nulls the row's
+    // transactionId through the FK, so a later update would match nothing.
+    const releaseImportRow = this.prisma.importRow.updateMany({
+      where: { transactionId: id },
+      data: { status: 'SKIPPED', transactionId: null },
+    });
+
     if (transaction.type === 'TRANSFER') {
       await this.prisma.$transaction([
+        releaseImportRow,
         this.prisma.transaction.delete({ where: { id } }),
         this.prisma.account.update({
           where: { id: transaction.accountId },
@@ -409,6 +428,7 @@ export class TransactionService {
 
     const delta = signedDelta(transaction.type, transaction.amount);
     await this.prisma.$transaction([
+      releaseImportRow,
       this.prisma.transaction.delete({ where: { id } }),
       this.prisma.account.update({
         where: { id: transaction.accountId },

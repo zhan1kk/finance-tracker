@@ -460,6 +460,25 @@ describe('API (e2e)', () => {
       });
     });
 
+    // Archived categories are hidden from the list, so a bare "already exists"
+    // points at nothing the user can see — a dead end with no way forward.
+    it('says so when the name it wants belongs to an archived category', async () => {
+      const { id } = await createSubcategory('Retired thing', 'Expenses');
+      await request(http)
+        .patch(`/subcategories/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ archived: true })
+        .expect(200);
+
+      const clash = await request(http)
+        .post('/subcategories')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'Retired thing', category: 'Expenses' })
+        .expect(409);
+      expect((clash.body as { message: string }).message).toMatch(/archived/i);
+      expect((clash.body as { message: string }).message).toMatch(/Restore/i);
+    });
+
     it('still lists an archived category, so history can display it', async () => {
       const { id } = await createSubcategory('Old thing', 'Expenses');
       await request(http)
@@ -2045,6 +2064,47 @@ describe('API (e2e)', () => {
           (r) => r.pattern === 'ikea',
         ),
       ).toHaveLength(0);
+    });
+
+    // 23 rows in the live database sat at COMMITTED with no transaction: the
+    // FK nulls the link on delete, but nothing reset the status, so the batch
+    // went on claiming rows that were no longer in the ledger — and undo(),
+    // which only looks at rows still holding a transactionId, could not reach
+    // them to put it right.
+    it('releases an import row when its transaction is deleted', async () => {
+      const batch = await doImport();
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      const committed = await request(http)
+        .get(`/imports/${batch.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const row = (
+        committed.body as {
+          rows: { id: string; status: string; transactionId: string | null }[];
+        }
+      ).rows.find((r) => r.status === 'COMMITTED' && r.transactionId);
+      expect(row).toBeDefined();
+
+      await request(http)
+        .delete(`/transactions/${row!.transactionId as string}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const after = await request(http)
+        .get(`/imports/${batch.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const same = (
+        after.body as {
+          rows: { id: string; status: string; transactionId: string | null }[];
+        }
+      ).rows.find((r) => r.id === row!.id);
+      expect(same?.transactionId).toBeNull();
+      expect(same?.status).toBe('SKIPPED');
     });
 
     it('records what ran the import and how long it took', async () => {
