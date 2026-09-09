@@ -53,6 +53,12 @@ type StagedRow = {
   /** Marked an internal move: commits, moves the balance, excluded from stats. */
   excludeFromStats: boolean;
   note: string | null;
+  /**
+   * A fee staged alongside the charge it was taken on. Lives only for the
+   * length of the import — nothing downstream needs it, but the rule pre-pass
+   * does. Not persisted.
+   */
+  isFee?: boolean;
 };
 
 /**
@@ -1299,6 +1305,7 @@ export class ImportService {
           counterAccountId: null,
           excludeFromStats: false,
           note: null,
+          isFee: true,
         });
       };
 
@@ -1478,6 +1485,18 @@ export class ImportService {
     for (const row of pending) {
       const hit = this.rules.match(rules, row.normalizedDescription, row.type);
       if (!hit) {
+        forProvider.push(row);
+        continue;
+      }
+      // A fee is money gone to the bank. It is never an internal move and it
+      // has no counter account — but it carries the charge's own description
+      // ("Fee · To Kamila Jusupova"), and patterns match on substring, so a
+      // transfer or internal rule learned from that charge matches the fee
+      // too. Committing that credits the counter account with money that
+      // never arrived, or drops the fee out of spending entirely, and a rule
+      // hit is marked READY so neither would pass the review screen. Hand the
+      // row to the categorizer instead: it is spending, and needs a category.
+      if (row.isFee && (hit.excludeFromStats || hit.counterAccountId)) {
         forProvider.push(row);
         continue;
       }

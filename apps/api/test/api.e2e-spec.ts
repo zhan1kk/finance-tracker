@@ -1817,6 +1817,51 @@ describe('API (e2e)', () => {
         ]);
       });
 
+      // A fee carries the charge's own description, and rule patterns match on
+      // substring, so a transfer rule learned from "To Kamila Jusupova" also
+      // matches "Fee · To Kamila Jusupova". Committing that as a transfer
+      // would credit the counter account with money that only ever went to
+      // the bank — and a rule hit is marked READY, so it would never stop at
+      // the review screen to be noticed.
+      it('never lets a transfer rule claim the fee taken on that transfer', async () => {
+        const other = (await createAccount(0)).id;
+        await request(http)
+          .post('/rules')
+          .set('Authorization', `Bearer ${token}`)
+          .send({ pattern: 'to kamila jusupova', counterAccountId: other })
+          .expect(201);
+
+        const res = await importAndWait(token, {
+          accountId,
+          filename: 'transfer-fee.csv',
+          csv: [
+            'Date,Amount,Description,Fee',
+            '2026-07-03,-500.00,To Kamila Jusupova,3.50',
+          ].join('\n'),
+          mapping: FEE_MAPPING,
+        });
+
+        const rows = (
+          res.body as {
+            batch: {
+              rows: (Row & { counterAccount: unknown; subcategory: unknown })[];
+            };
+          }
+        ).batch.rows;
+        const charge = rows.find((r) => r.description === 'To Kamila Jusupova');
+        const fee = rows.find(
+          (r) => r.description === 'Fee · To Kamila Jusupova',
+        );
+
+        // The charge is the transfer the rule was taught about.
+        expect(charge?.counterAccount).toBeTruthy();
+        // The fee is not, and did not quietly take the rule's word for it.
+        expect(fee).toBeDefined();
+        expect(fee?.counterAccount).toBeFalsy();
+        expect(fee?.amount).toBe(350);
+        expect(fee?.type).toBe('EXPENSE');
+      });
+
       // The case that is invisible without this: the whole cost is the fee, so
       // the charge itself is zero and the line was skipped outright.
       it('keeps the fee when the charge itself is zero', async () => {
