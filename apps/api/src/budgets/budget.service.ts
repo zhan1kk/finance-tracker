@@ -45,11 +45,24 @@ export class BudgetService {
       },
       orderBy: { createdAt: 'asc' },
     });
+    // Resolved once for the whole list. buildEntry used to fetch the user and
+    // the display rate itself, so a screen with ten budgets asked for both ten
+    // times over — and displayRate is not a cheap read, it can fetch a rate.
+    const display = await this.displayFor(userId);
     return Promise.all(
       budgets.map((budget) =>
-        this.buildEntry(userId, budget, label, start, end),
+        this.buildEntry(userId, budget, label, start, end, display),
       ),
     );
+  }
+
+  /** The reporting currency and its rate — one lookup, shared by a whole list. */
+  private async displayFor(userId: string) {
+    const { baseCurrency } = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { baseCurrency: true },
+    });
+    return this.fx.displayRate(userId, baseCurrency);
   }
 
   /** Sets (or replaces) the limit for one budget in one month. */
@@ -104,7 +117,14 @@ export class BudgetService {
       },
     });
     const { start, end } = periodBounds(label, monthStartDay);
-    return this.buildEntry(userId, budget, label, start, end);
+    return this.buildEntry(
+      userId,
+      budget,
+      label,
+      start,
+      end,
+      await this.displayFor(userId),
+    );
   }
 
   private async buildEntry(
@@ -117,6 +137,7 @@ export class BudgetService {
     period: string,
     start: Date,
     end: Date,
+    display: Awaited<ReturnType<FxService['displayRate']>>,
   ) {
     const override = budget.periods[0]?.limit ?? null;
     const storedLimit = override ?? budget.monthlyLimit;
@@ -125,11 +146,6 @@ export class BudgetService {
     // stored in the base currency and converted here rather than on the way in,
     // so the commitment itself never moves — only how it is shown. percent and
     // overBudget are ratios and come out the same either way.
-    const { baseCurrency } = await this.prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-      select: { baseCurrency: true },
-    });
-    const display = await this.fx.displayRate(userId, baseCurrency);
     const spentCents = await this.computeSpent(
       userId,
       budget,

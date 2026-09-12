@@ -159,7 +159,7 @@ export class FxService {
    * shown the currencies one person happened to need.
    */
   async listPreferences(userId: string) {
-    const [prefs, accountCurrencies, user] = await Promise.all([
+    const [prefs, accountCurrencies] = await Promise.all([
       this.prisma.currencyPreference.findMany({
         where: { userId },
         select: { currency: true, spreadPct: true, autoSync: true },
@@ -170,12 +170,7 @@ export class FxService {
         select: { currency: true },
         distinct: ['currency'],
       }),
-      this.prisma.user.findUniqueOrThrow({
-        where: { id: userId },
-        select: { baseCurrency: true },
-      }),
     ]);
-    void user;
 
     const byCurrency = new Map(prefs.map((p) => [p.currency, p]));
     // An account in a currency you have no preference row for still needs a
@@ -210,13 +205,13 @@ export class FxService {
         `"${currency}" is not a three-letter currency code (e.g. USD)`,
       );
     }
-    const { baseCurrency } = await this.prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-      select: { baseCurrency: true },
-    });
-    if (currency === baseCurrency) {
+    // BASE_CURRENCY, not the user's reporting preference: a rate means
+    // "foreign units per 1 EUR", which is what the ledger is anchored to.
+    // Against the preference, choosing USD for reports refused to track USD —
+    // the one currency it then most needed a rate for.
+    if (currency === BASE_CURRENCY) {
       throw new BadRequestException(
-        `${currency} is your base currency — it needs no rate`,
+        `${currency} is the currency everything is stored in — it needs no rate`,
       );
     }
     // Throws a clear 503 when the code is unknown to the rate source, which is
@@ -241,11 +236,11 @@ export class FxService {
    * cannot be had, it says so rather than inventing one.
    */
   async ensureRate(userId: string, currency: string): Promise<void> {
-    const { baseCurrency } = await this.prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-      select: { baseCurrency: true },
-    });
-    if (currency === baseCurrency) return;
+    // Same reason as addCurrency: measured against BASE_CURRENCY. Against the
+    // reporting preference, opening an account in the currency you report in
+    // skipped the rate fetch entirely, and its opening balance — frozen at
+    // creation — was converted at 1:1 or a stale seed and stayed wrong.
+    if (currency === BASE_CURRENCY) return;
     const existing = await this.prisma.exchangeRate.count({
       where: { userId, currency },
     });
@@ -381,18 +376,25 @@ export class FxService {
       where: { account: { is: { userId, currency } }, date: { gte: from } },
       select: { id: true, amount: true, date: true, amountBase: true },
     });
-    let recomputed = 0;
-    for (const txn of txns) {
-      const amountBase = convert(txn.date, txn.amount);
-      if (amountBase !== txn.amountBase) {
-        await this.prisma.transaction.update({
-          where: { id: txn.id },
-          data: { amountBase },
-        });
-        recomputed += 1;
-      }
+    // Batched rather than awaited one at a time: correcting a rate you have
+    // used for months is hundreds of round trips otherwise, in a request
+    // someone is waiting on — and a failure halfway leaves half the ledger
+    // converted at the old rate and half at the new, which is worse than
+    // either. One transaction is all-or-nothing.
+    const updates = txns
+      .map((txn) => ({ txn, amountBase: convert(txn.date, txn.amount) }))
+      .filter(({ txn, amountBase }) => amountBase !== txn.amountBase);
+    if (updates.length > 0) {
+      await this.prisma.$transaction(
+        updates.map(({ txn, amountBase }) =>
+          this.prisma.transaction.update({
+            where: { id: txn.id },
+            data: { amountBase },
+          }),
+        ),
+      );
     }
-    return recomputed;
+    return updates.length;
   }
 }
 
