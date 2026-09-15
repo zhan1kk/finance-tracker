@@ -2152,6 +2152,59 @@ describe('API (e2e)', () => {
       expect(same?.status).toBe('SKIPPED');
     });
 
+    // The single-delete fix was made without checking the other two delete
+    // paths, and they had the same defect — this covers all three so the next
+    // one cannot be missed either.
+    it.each([
+      [
+        'bulk delete',
+        (ids: string[]) =>
+          request(http)
+            .post('/transactions/bulk-delete')
+            .set('Authorization', `Bearer ${token}`)
+            .send({ ids })
+            .expect(201),
+      ],
+      [
+        'delete all',
+        () =>
+          request(http)
+            .delete('/transactions')
+            .set('Authorization', `Bearer ${token}`)
+            .expect(200),
+      ],
+    ])('releases an import row through %s too', async (_name, remove) => {
+      const batch = await doImport();
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      const rowsOf = async () =>
+        (
+          await request(http)
+            .get(`/imports/${batch.id}`)
+            .set('Authorization', `Bearer ${token}`)
+            .expect(200)
+        ).body as {
+          rows: { id: string; status: string; transactionId: string | null }[];
+        };
+
+      const committed = (await rowsOf()).rows.filter(
+        (r) => r.status === 'COMMITTED' && r.transactionId,
+      );
+      expect(committed.length).toBeGreaterThan(0);
+
+      await remove(committed.map((r) => r.transactionId as string));
+
+      const after = (await rowsOf()).rows.filter((r) =>
+        committed.some((c) => c.id === r.id),
+      );
+      // None still claim a transaction that no longer exists.
+      expect(after.every((r) => r.transactionId === null)).toBe(true);
+      expect(after.every((r) => r.status === 'SKIPPED')).toBe(true);
+    });
+
     it('records what ran the import and how long it took', async () => {
       const batch = await doImport();
       await request(http)

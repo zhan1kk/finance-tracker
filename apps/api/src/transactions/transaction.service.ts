@@ -611,6 +611,14 @@ export class TransactionService {
     }
 
     await this.prisma.$transaction([
+      // Same release deleteTransaction does, and for the same reason: the FK
+      // nulls the row's transactionId but leaves its status at COMMITTED, so
+      // the batch goes on claiming rows that are no longer in the ledger.
+      // Ordered first — the delete nulls the link this matches on.
+      this.prisma.importRow.updateMany({
+        where: { transactionId: { in: ids } },
+        data: { status: 'SKIPPED', transactionId: null },
+      }),
       this.prisma.transaction.deleteMany({
         where: { id: { in: ids }, account: { userId } },
       }),
@@ -628,11 +636,17 @@ export class TransactionService {
    * Deletes every transaction the user owns and resets each account to its
    * starting balance — which, once all transactions are gone, is exactly what
    * the balance must be. A clean slate before importing real statements.
-   * `amountBase` and reimbursement/recurring links vanish with the rows;
-   * ImportRow.transactionId is nulled by the schema's ON DELETE SET NULL.
+   * `amountBase` and reimbursement/recurring links vanish with the rows.
+   * ImportRow.transactionId is nulled by the schema's ON DELETE SET NULL, but
+   * the status is not — so it is released here, as the other delete paths do.
    */
   async deleteAllForUser(userId: string): Promise<{ deleted: number }> {
     return this.prisma.$transaction(async (tx) => {
+      // Every row holding a transaction is about to lose it: all of them go.
+      await tx.importRow.updateMany({
+        where: { batch: { userId }, transactionId: { not: null } },
+        data: { status: 'SKIPPED', transactionId: null },
+      });
       const { count } = await tx.transaction.deleteMany({
         where: { account: { userId } },
       });

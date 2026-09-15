@@ -20,3 +20,7 @@ PLAN.md
 thesis_related/
 # Thesis working notes — kept on disk, out of git
 docs/
+
+# Local MCP server config — contains absolute paths from one machine
+.mcp.json
+.vscode/mcp.json
