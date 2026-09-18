@@ -138,9 +138,20 @@ export class AccountService {
 
     // Recurring rules and import batches also reference the account (with no
     // transactions yet), which would otherwise fail as a raw FK error.
-    const [recurringCount, importCount] = await Promise.all([
+    const [recurringCount, importCount, pendingRowCount] = await Promise.all([
       this.prisma.recurringRule.count({ where: { accountId: id } }),
       this.prisma.importBatch.count({ where: { accountId: id } }),
+      // Rows in a batch still under review that were marked as transfers into
+      // this account. The FK is SetNull, so deleting the account would quietly
+      // strip the destination — and a row marked a transfer carries no
+      // subcategory, so it would commit as uncategorised income or spending
+      // rather than as the move it was marked to be.
+      this.prisma.importRow.count({
+        where: {
+          counterAccountId: id,
+          batch: { userId, status: 'PENDING_REVIEW' },
+        },
+      }),
     ]);
     if (recurringCount > 0) {
       throw new ConflictException(
@@ -150,6 +161,11 @@ export class AccountService {
     if (importCount > 0) {
       throw new ConflictException(
         `Cannot delete account: it has ${importCount} import batch(es). Delete them first.`,
+      );
+    }
+    if (pendingRowCount > 0) {
+      throw new ConflictException(
+        `Cannot delete account: ${pendingRowCount} row(s) waiting in an import review are marked as transfers into it. Finish or discard that review first.`,
       );
     }
 

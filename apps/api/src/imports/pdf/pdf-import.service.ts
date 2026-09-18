@@ -77,25 +77,32 @@ export class PdfImportService {
 
     // Hand off to the CSV pipeline with a fixed mapping — the extractor already
     // emits ISO dates and signed, dot-decimal amounts.
-    return this.imports.createImport(userId, {
-      accountId: input.accountId,
-      filename: input.filename,
-      csv: this.toCsv(rows),
-      // Reading the PDF is always local; this only picks who categorizes the
-      // rows it produced.
-      categorizer: input.categorizer,
-      categorizerModel: input.categorizerModel,
-      extractMs,
-      mapping: {
-        dateColumn: 'Date',
-        amountColumn: 'Amount',
-        descriptionColumn: 'Description',
-        dateFormat: 'ISO',
-        decimalSeparator: '.',
-        negativeIsExpense: true,
-        hasHeader: true,
+    return this.imports.createImport(
+      userId,
+      {
+        accountId: input.accountId,
+        filename: input.filename,
+        csv: this.toCsv(rows),
+        // Reading the PDF is always local; this only picks who categorizes the
+        // rows it produced.
+        categorizer: input.categorizer,
+        categorizerModel: input.categorizerModel,
+        extractMs,
+        // Describes the CSV this service just generated, not any statement
+        // the user has — so it is used to parse and then forgotten, rather
+        // than saved as the account's remembered layout.
+        mapping: {
+          dateColumn: 'Date',
+          amountColumn: 'Amount',
+          descriptionColumn: 'Description',
+          dateFormat: 'ISO',
+          decimalSeparator: '.',
+          negativeIsExpense: true,
+          hasHeader: true,
+        },
       },
-    });
+      { rememberMapping: false },
+    );
   }
 
   private async extractText(pdfBase64: string): Promise<string> {

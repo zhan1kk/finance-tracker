@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { BASE_CURRENCY } from '../fx/fx';
 import { PrismaService } from '../prisma.service';
 import type { CreateFriendDTO } from './dtos/create-friend.dto';
 import type { CreateSettlementDTO } from './dtos/create-settlement.dto';
@@ -80,7 +81,6 @@ export class SplitService {
   }
 
   async createExpense(userId: string, dto: CreateSharedExpenseDTO) {
-    const baseCurrency = await this.baseCurrency(userId);
     await this.assertFriends(userId, [
       dto.payerFriendId,
       ...dto.participants.map((p) => p.friendId),
@@ -97,7 +97,13 @@ export class SplitService {
         userId,
         description: dto.description.trim(),
         amountCents: dto.amountCents,
-        currency: baseCurrency,
+        // BASE_CURRENCY, not the reporting preference: this is a stored
+        // amount, and every stored amount in the app is anchored to the
+        // ledger. Stamping the preference meant the label on a row recorded
+        // which currency you happened to be *reading* in that week, while
+        // balances() adds amountCents straight up without ever reading it —
+        // so changing the preference silently re-denominated old rows.
+        currency: BASE_CURRENCY,
         date: new Date(dto.date),
         payerFriendId: dto.payerFriendId ?? null,
         splitMethod: dto.splitMethod,
@@ -138,14 +144,14 @@ export class SplitService {
       throw new BadRequestException('A settlement needs two different people');
     }
     await this.assertFriends(userId, [dto.fromFriendId, dto.toFriendId]);
-    const baseCurrency = await this.baseCurrency(userId);
     return this.prisma.settlement.create({
       data: {
         userId,
         fromFriendId: dto.fromFriendId ?? null,
         toFriendId: dto.toFriendId ?? null,
         amountCents: dto.amountCents,
-        currency: baseCurrency,
+        // Same anchor as createExpense.
+        currency: BASE_CURRENCY,
         date: dto.date ? new Date(dto.date) : new Date(),
         note: dto.note?.trim() || null,
       },
@@ -172,11 +178,7 @@ export class SplitService {
    * non-zero ones — those involving You first.
    */
   async balances(userId: string) {
-    const [user, friends, expenses, settlements] = await Promise.all([
-      this.prisma.user.findUniqueOrThrow({
-        where: { id: userId },
-        select: { baseCurrency: true },
-      }),
+    const [friends, expenses, settlements] = await Promise.all([
       this.prisma.friend.findMany({
         where: { userId },
         select: { id: true, name: true },
@@ -259,18 +261,12 @@ export class SplitService {
       return xYou - yYou || y.amountCents - x.amountCents;
     });
 
-    return { currency: user.baseCurrency, balances };
+    // Labelled with what the summed cents actually are, not with the
+    // preference: balances() adds amountCents directly, never converting.
+    return { currency: BASE_CURRENCY, balances };
   }
 
   // ---- helpers ----
-
-  private async baseCurrency(userId: string): Promise<string> {
-    const { baseCurrency } = await this.prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-      select: { baseCurrency: true },
-    });
-    return baseCurrency;
-  }
 
   /** Validates that every non-null friend id belongs to the user. */
   private async assertFriends(userId: string, ids: (string | undefined)[]) {

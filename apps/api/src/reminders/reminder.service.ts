@@ -93,30 +93,49 @@ export class ReminderService {
         },
       });
 
+      // One query for the whole set, not one per reminder. reconcile runs on
+      // every list(), so a bill each for rent, phone, gym and the rest was
+      // that many sequential round trips before the page could render.
+      //
+      // The floor is the earliest due date among them: anything older than
+      // that cannot settle any of these reminders, and each reminder still
+      // applies its own date below. Payments come back newest-first, so the
+      // first row matching a reminder is its latest payment.
+      const earliest = Math.min(
+        ...reminders.map((r) => (r.dueDate as Date).getTime()),
+      );
+      const payments = await this.prisma.transaction.findMany({
+        where: {
+          account: { is: { userId } },
+          type: 'EXPENSE',
+          excludeFromStats: false,
+          subcategoryId: {
+            in: [...new Set(reminders.map((r) => r.subcategoryId as string))],
+          },
+          date: { gte: startOfUtcDay(new Date(earliest)) },
+        },
+        orderBy: { date: 'desc' },
+        select: { date: true, subcategoryId: true, accountId: true },
+      });
+
       for (const r of reminders) {
         const dueDate = r.dueDate as Date;
-        // The latest matching payment on/after the current due date. Its date
-        // being ≥ dueDate means the due period was actually paid.
-        const latest = await this.prisma.transaction.findFirst({
-          where: {
-            account: { is: { userId } },
-            type: 'EXPENSE',
-            excludeFromStats: false,
-            subcategoryId: r.subcategoryId,
+        // The latest matching payment on/after this reminder's own due date.
+        // Compared from the start of that day, not the instant: a due date
+        // inherits the time of day from the statement line it was read out of,
+        // and a payment entered by hand sits at midnight, which made your own
+        // entry on the due date look too early.
+        const from = startOfUtcDay(dueDate).getTime();
+        const latest = payments.find(
+          (p) =>
+            p.subcategoryId === r.subcategoryId &&
             // Scoped to one account when the reminder names one. Two people
             // sharing a category — each paying their own gym membership from
             // their own card — are identical by category, so without this
             // either payment settles both reminders.
-            ...(r.accountId ? { accountId: r.accountId } : {}),
-            // From the start of the due date's day, not the instant: a due date
-            // inherits the time of day from the statement line it was read out
-            // of, and a payment entered by hand sits at midnight. Comparing
-            // instants made your own entry on the due date look too early.
-            date: { gte: startOfUtcDay(dueDate) },
-          },
-          orderBy: { date: 'desc' },
-          select: { date: true },
-        });
+            (r.accountId === null || p.accountId === r.accountId) &&
+            p.date.getTime() >= from,
+        );
         if (!latest) continue;
 
         let next = dueDate;

@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import type { PrismaService } from '../prisma.service';
+import { DEFAULT_RATES } from './fx';
 import { FxService } from './fx.service';
 
 /**
@@ -22,6 +23,17 @@ describe('fx base-currency checks', () => {
   } as unknown as PrismaService;
 
   const fx = new FxService(prisma);
+
+  // No real request: addCurrency reaches the rate source, and a test that
+  // depends on the network passes or fails for reasons that have nothing to
+  // do with the check it is making.
+  beforeEach(() => {
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ eur: { usd: 1.1582 } }),
+    } as Response);
+  });
+  afterEach(() => jest.restoreAllMocks());
 
   it('still fetches a rate for the currency reports are shown in', async () => {
     await fx.ensureRate('u1', 'USD');
@@ -47,5 +59,62 @@ describe('fx base-currency checks', () => {
     // means the check let it through.
     const err = await fx.addCurrency('u1', 'USD').catch((e: unknown) => e);
     expect(String((err as Error).message)).not.toMatch(/needs no rate/);
+  });
+});
+
+/**
+ * The seeds are a floor for when the network is unavailable, not a reason not
+ * to ask. Skipping the fetch whenever a seed existed left the two most-used
+ * currencies as the two that never got a real rate — USD sat on 1.08 against
+ * an actual 1.1582, so every dollar amount was stored about 7% wrong.
+ */
+describe('ensureRate rate source', () => {
+  const setup = (fetchResult: Promise<Response>) => {
+    const written: { currency: string; rate: number }[] = [];
+    const prisma = {
+      exchangeRate: {
+        count: jest.fn(() => Promise.resolve(0)),
+        findMany: jest.fn(() => Promise.resolve([])),
+        upsert: jest.fn(
+          (args: { create: { currency: string; rate: number } }) => {
+            written.push(args.create);
+            return Promise.resolve(args.create);
+          },
+        ),
+      },
+      currencyPreference: {
+        upsert: jest.fn(() => Promise.resolve({})),
+        findUnique: jest.fn(() => Promise.resolve(null)),
+      },
+      transaction: { findMany: jest.fn(() => Promise.resolve([])) },
+    } as unknown as PrismaService;
+    jest.spyOn(global, 'fetch').mockReturnValue(fetchResult);
+    return { fx: new FxService(prisma), written };
+  };
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('prefers a fetched rate over the built-in seed', async () => {
+    const { fx, written } = setup(
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ eur: { usd: 1.1582 } }),
+      } as Response),
+    );
+
+    await fx.ensureRate('u1', 'USD');
+
+    // 1.08 is the seed. Writing it here would mean the fetch was skipped.
+    expect(written).toHaveLength(1);
+    expect(written[0].rate).toBeCloseTo(1.1582, 4);
+  });
+
+  it('falls back to the seed only when the fetch fails', async () => {
+    const { fx, written } = setup(Promise.reject(new Error('offline')));
+
+    await fx.ensureRate('u1', 'USD');
+
+    expect(written).toHaveLength(1);
+    expect(written[0].rate).toBe(DEFAULT_RATES.USD);
   });
 });

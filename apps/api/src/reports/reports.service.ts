@@ -20,9 +20,17 @@ export class ReportsService {
 
   /**
    * Net worth (sum of all account balances) at the end of each of the last
-   * `months` calendar months. Transfers cancel out across accounts, so a month's
-   * change is simply that month's income minus expense; the running total is
-   * anchored to the sum of account starting balances.
+   * `months` calendar months. The running total is anchored to the sum of
+   * account starting balances.
+   *
+   * A transfer between two counted accounts cancels out, and that used to be
+   * assumed of every transfer. It only holds while both ends are counted: a
+   * move from a counted account into one flagged out of net worth really does
+   * reduce counted wealth, and one coming back really does add to it. Treating
+   * those as zero left the line flat while the account balances it claims to
+   * total moved — a disagreement that never healed, because net worth is
+   * re-derived from the same flows every time. Each leg is now counted on its
+   * own merits.
    */
   async netWorth(userId: string, months: number): Promise<NetWorthPoint[]> {
     const { monthStartDay, baseCurrency } =
@@ -72,6 +80,10 @@ export class ReportsService {
             ELSE ROUND(t."amountBase" * ${display.rate}) END)`;
 
     // Grouped by financial month, matching the dashboard's periods.
+    // Income and expense count only on the account that holds them. A transfer
+    // is the difference between what the counted set received and what it gave
+    // up, which is zero exactly when both ends are inside it — and a transfer
+    // with no counter account is money that simply left.
     const rows = await this.prisma.$queryRaw<
       { month: string; delta: bigint }[]
     >`
@@ -81,12 +93,20 @@ export class ReportsService {
           'YYYY-MM'
         ) AS month,
         SUM(CASE t."type"
-          WHEN 'INCOME' THEN ${txAmount}
-          WHEN 'EXPENSE' THEN -${txAmount}
-          ELSE 0 END)::bigint AS delta
+          WHEN 'INCOME' THEN
+            (CASE WHEN a."countInNetWorth" THEN ${txAmount} ELSE 0 END)
+          WHEN 'EXPENSE' THEN
+            (CASE WHEN a."countInNetWorth" THEN -${txAmount} ELSE 0 END)
+          ELSE
+            (CASE WHEN c."countInNetWorth" THEN ${txAmount} ELSE 0 END)
+            - (CASE WHEN a."countInNetWorth" THEN ${txAmount} ELSE 0 END)
+          END)::bigint AS delta
       FROM "Transaction" t
       JOIN "Account" a ON a."id" = t."accountId"
-      WHERE a."userId" = ${userId} AND a."countInNetWorth" = true
+      LEFT JOIN "Account" c
+        ON c."id" = t."counterAccountId" AND c."userId" = ${userId}
+      WHERE a."userId" = ${userId}
+        AND (a."countInNetWorth" = true OR c."countInNetWorth" = true)
       GROUP BY 1
     `;
     const deltaByMonth = new Map(rows.map((r) => [r.month, Number(r.delta)]));

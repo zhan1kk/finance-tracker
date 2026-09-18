@@ -75,13 +75,22 @@ export class SubcategoryService {
   async deleteSubcategory(userId: string, id: string) {
     await this.getSubcategoryById(userId, id);
 
-    const transactionCount = await this.prisma.transaction.count({
-      where: { subcategoryId: id },
-    });
+    const [transactionCount, recurringCount] = await Promise.all([
+      this.prisma.transaction.count({ where: { subcategoryId: id } }),
+      // Required relation, so the database refuses the delete outright. With
+      // no exception filter in front of it that surfaced as a bare 500 rather
+      // than something telling you which rule is in the way.
+      this.prisma.recurringRule.count({ where: { subcategoryId: id } }),
+    ]);
 
     if (transactionCount > 0) {
       throw new ConflictException(
         `Cannot delete subcategory: it has ${transactionCount} transaction(s). Delete them first.`,
+      );
+    }
+    if (recurringCount > 0) {
+      throw new ConflictException(
+        `Cannot delete subcategory: ${recurringCount} recurring transaction(s) post into it. Delete those rules first.`,
       );
     }
 

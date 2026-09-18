@@ -3583,6 +3583,130 @@ describe('API (e2e)', () => {
       });
     });
 
+    // A transfer only cancels out while both ends are counted. Moving money to
+    // an account flagged out of net worth is the counted set genuinely losing
+    // it — and treating that as zero left the line disagreeing with the very
+    // balances it claims to add up.
+    it('counts a transfer that leaves the net-worth set, and one returning', async () => {
+      const counted = (await createAccount(100_000)).id;
+      const pocket = await request(http)
+        .post('/accounts')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          name: `Pocket ${Date.now()}`,
+          type: 'cash',
+          currency: 'EUR',
+          initialBalance: 0,
+          countInNetWorth: false,
+        })
+        .expect(201);
+      const excluded = (pocket.body as { id: string }).id;
+
+      const netWorth = async () => {
+        const res = await request(http)
+          .get('/reports/net-worth?months=1')
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200);
+        const series = res.body as { netWorthCents: number }[];
+        return series[series.length - 1].netWorthCents;
+      };
+
+      const before = await netWorth();
+
+      // Out of the counted set: net worth falls by the full amount.
+      await request(http)
+        .post('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'TRANSFER',
+          date: today,
+          amount: 30_000,
+          accountId: counted,
+          counterAccountId: excluded,
+        })
+        .expect(201);
+      expect(await netWorth()).toBe(before - 30_000);
+
+      // Part of it comes back: net worth rises again by that much.
+      await request(http)
+        .post('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'TRANSFER',
+          date: today,
+          amount: 10_000,
+          accountId: excluded,
+          counterAccountId: counted,
+        })
+        .expect(201);
+      expect(await netWorth()).toBe(before - 20_000);
+
+      // And a move wholly inside the counted set still cancels out.
+      const other = (await createAccount(0)).id;
+      await request(http)
+        .post('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'TRANSFER',
+          date: today,
+          amount: 5_000,
+          accountId: counted,
+          counterAccountId: other,
+        })
+        .expect(201);
+      expect(await netWorth()).toBe(before - 20_000);
+    });
+
+    // The rule computeSpent implements — an account already in the display
+    // currency contributes its own amount, only the rest converts — also lives
+    // in transaction-stats and reports. Nothing held the three together, and
+    // they have disagreed before: the budget card once read $223.06 for the
+    // month the spending card called $215.82.
+    it('agrees with the spending stats about the same month', async () => {
+      const foreign = (
+        await createAccount(0, token, { currency: 'KZT', name: 'Tenge' })
+      ).id;
+
+      await createTxn({
+        type: 'EXPENSE',
+        amount: 4_000,
+        subcategoryId: groceriesId,
+      });
+      await request(http)
+        .post('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'EXPENSE',
+          date: today,
+          amount: 500_000,
+          accountId: foreign,
+          subcategoryId: groceriesId,
+        })
+        .expect(201);
+
+      await createBudget({ subcategoryId: groceriesId, monthlyLimit: 100_000 });
+
+      const [budgets, stats] = await Promise.all([
+        listBudgets(),
+        request(http)
+          .get('/transactions/stats')
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200),
+      ]);
+      const mine = budgets.find((b) => b.subcategory?.id === groceriesId);
+      const category = (
+        stats.body as {
+          byCategory: { subcategoryId: string; amount: number }[];
+        }
+      ).byCategory.find((c) => c.subcategoryId === groceriesId);
+
+      expect(mine).toBeDefined();
+      expect(category).toBeDefined();
+      // Both are the same spending, summed the same way, so they agree to
+      // the cent — whatever the rate happens to be.
+      expect(mine?.spentCents).toBe(category?.amount);
+    });
+
     it('reports net worth over time', async () => {
       await createTxn({
         type: 'INCOME',

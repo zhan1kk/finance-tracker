@@ -166,9 +166,19 @@ export class ImportService {
     return { headers: parsed.headers, sample: parsed.records.slice(0, 5) };
   }
 
-  async createImport(userId: string, dto: CreateImportDTO) {
+  /**
+   * `options.rememberMapping` is false for callers whose mapping describes
+   * nothing the user chose — the PDF importer hands in a fixed one because it
+   * generates the CSV itself, and saving that as the account's format replaced
+   * whatever real statement layout was there.
+   */
+  async createImport(
+    userId: string,
+    dto: CreateImportDTO,
+    options: { rememberMapping?: boolean } = {},
+  ) {
     await this.assertOwnAccount(userId, dto.accountId);
-    const mapping = await this.resolveMapping(userId, dto);
+    const mapping = await this.resolveMapping(userId, dto, options);
 
     const parsed = this.csv.parse(dto.csv, mapping.hasHeader);
     for (const col of [
@@ -1555,8 +1565,14 @@ export class ImportService {
   private async resolveMapping(
     userId: string,
     dto: CreateImportDTO,
+    { rememberMapping = true }: { rememberMapping?: boolean } = {},
   ): Promise<ResolvedMapping> {
     if (dto.mapping) {
+      // Saving is what makes a mapping the account's remembered format, so a
+      // caller that made the mapping up must not trigger it.
+      if (!rememberMapping) {
+        return dto.mapping as ResolvedMapping;
+      }
       const saved = await this.mapping.upsert(
         userId,
         dto.accountId,
