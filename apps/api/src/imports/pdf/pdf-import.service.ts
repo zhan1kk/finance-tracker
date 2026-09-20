@@ -6,6 +6,11 @@ import type { CategorizerId } from '../categorization/categorizer.factory';
 import { PrismaService } from '../../prisma.service';
 import { ImportService } from '../import.service';
 import {
+  ANTHROPIC_CHUNK_CHARS,
+  ANTHROPIC_CHUNK_TRANSACTIONS,
+  AnthropicPdfExtractor,
+} from './anthropic-extractor';
+import {
   buildPdfExtractionPrompt,
   coerceExtractedTransactions,
   type ExtractedTransaction,
@@ -141,34 +146,58 @@ export class PdfImportService {
     text: string,
     currency?: string,
   ): Promise<ExtractedTransaction[]> {
+    const claude = this.anthropicExtractor();
     const baseUrl =
       optionalSetting(this.config, 'OLLAMA_BASE_URL') ??
       'http://localhost:11434';
     // A leaner model can be set for extraction jobs via OLLAMA_EXTRACTION_MODEL
     // (see the reminder extractor); falls back to OLLAMA_MODEL.
     const model =
+      claude?.model ??
       optionalSetting(this.config, 'OLLAMA_EXTRACTION_MODEL') ??
       optionalSetting(this.config, 'OLLAMA_MODEL') ??
       'llama3.1';
 
-    const { header, chunks } = splitStatementText(text);
+    const { header, chunks } = splitStatementText(
+      text,
+      claude
+        ? {
+            maxTransactions: ANTHROPIC_CHUNK_TRANSACTIONS,
+            maxChars: ANTHROPIC_CHUNK_CHARS,
+          }
+        : {},
+    );
     // Logged before the first call, because when this stage fails it fails
     // slowly: knowing the shape of the text up front is the difference between
-    // reading one line of log and guessing at what the PDF looked like.
+    // reading one line of log and guessing at what the PDF looked like. Which
+    // reader ran is named for the same reason the categorizer names its
+    // provider at boot — a statement's text leaving the machine is not
+    // something to infer afterwards from a model name.
     this.logger.log(
-      `PDF extraction: ${text.length} chars, ${text.split('\n').length} lines, ${chunks.length} chunk(s), model "${model}"`,
+      `PDF extraction: ${text.length} chars, ${text.split('\n').length} lines, ${chunks.length} chunk(s), ${
+        claude
+          ? `Claude (${model}) — statement text leaves this machine`
+          : `local Ollama (${model}) — nothing leaves this machine`
+      }`,
     );
     const rows: ExtractedTransaction[] = [];
     for (const [i, chunk] of chunks.entries()) {
       const part = header ? `${header}\n\n${chunk}` : chunk;
       try {
-        rows.push(...(await this.extractChunk(part, baseUrl, model, currency)));
+        rows.push(
+          ...(claude
+            ? await claude.extractChunk(part, currency)
+            : await this.extractChunk(part, baseUrl, model, currency)),
+        );
       } catch (err) {
         // Naming the part that failed matters: "it timed out" on its own gives
         // no clue whether the model is unreachable or merely too slow for this
         // machine, which are opposite fixes.
-        const detail =
-          err instanceof Error && err.name === 'AbortError'
+        const detail = claude
+          ? `Claude could not read the PDF (part ${i + 1} of ${chunks.length}, model "${model}"): ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          : err instanceof Error && err.name === 'AbortError'
             ? `Ollama took too long to read the PDF (timed out on part ${i + 1} of ${chunks.length}, model "${model}"). A smaller OLLAMA_EXTRACTION_MODEL would read it faster.`
             : err instanceof BadRequestException
               ? err.message
@@ -185,6 +214,43 @@ export class PdfImportService {
       );
     }
     return rows;
+  }
+
+  /**
+   * The hosted reader, or null to read locally.
+   *
+   * PDF_EXTRACTOR names it outright; with nothing set it follows the presence
+   * of an API key, the same inference CategorizerFactory makes. Deliberately
+   * its own setting rather than reusing CATEGORIZER: extraction sends the whole
+   * statement while categorization sends a description and an amount, so
+   * "read it locally, categorize with Claude" is a combination worth allowing.
+   */
+  private anthropicExtractor(): AnthropicPdfExtractor | null {
+    const key = optionalSetting(this.config, 'ANTHROPIC_API_KEY');
+    const configured = (
+      optionalSetting(this.config, 'PDF_EXTRACTOR') ?? ''
+    ).toLowerCase();
+
+    if (configured === 'ollama') return null;
+    if (configured === 'anthropic' && !key) {
+      throw new BadRequestException(
+        'PDF_EXTRACTOR is "anthropic" but this server has no ANTHROPIC_API_KEY',
+      );
+    }
+    if (configured && configured !== 'anthropic') {
+      this.logger.warn(
+        `Unrecognized PDF_EXTRACTOR="${configured}" — reading PDFs locally`,
+      );
+      return null;
+    }
+    if (!key) return null;
+
+    return new AnthropicPdfExtractor(
+      key,
+      optionalSetting(this.config, 'ANTHROPIC_EXTRACTION_MODEL') ??
+        optionalSetting(this.config, 'ANTHROPIC_MODEL') ??
+        'claude-sonnet-5',
+    );
   }
 
   /** One /api/chat call for one slice of the statement. */

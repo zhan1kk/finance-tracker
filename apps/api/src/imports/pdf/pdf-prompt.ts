@@ -162,10 +162,18 @@ function splitOnSize(text: string, budget: number): string[] {
  * identical charges on one day are real, so the merged result cannot be
  * de-duplicated afterwards to clean up a sloppy split.
  */
-export function splitStatementText(text: string): {
+export function splitStatementText(
+  text: string,
+  limits: { maxTransactions?: number; maxChars?: number } = {},
+): {
   header: string;
   chunks: string[];
 } {
+  // Both defaults are sized for a local model on CPU. A hosted model has no
+  // such ceiling, and the header is re-sent with every chunk, so splitting
+  // finely there is pure waste — it passes its own, much larger limits.
+  const maxTransactions = limits.maxTransactions ?? MAX_TRANSACTIONS_PER_CHUNK;
+  const maxChars = limits.maxChars ?? CHUNK_CHARS;
   // Where a statement has line structure, a date opening a line is a
   // transaction and a date buried in a line is prose. Text that arrives as one
   // run (pdf.js sets no line breaks for a table) has no line starts to prefer,
@@ -202,8 +210,7 @@ export function splitStatementText(text: string): {
     const entry = text.slice(bounds[i], bounds[i + 1]);
     if (
       current.length > 0 &&
-      (count >= MAX_TRANSACTIONS_PER_CHUNK ||
-        current.length + entry.length > CHUNK_CHARS)
+      (count >= maxTransactions || current.length + entry.length > maxChars)
     ) {
       chunks.push(current);
       current = '';

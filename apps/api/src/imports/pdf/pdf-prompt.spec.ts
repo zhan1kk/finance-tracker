@@ -69,6 +69,25 @@ describe('splitStatementText', () => {
   const entries = (chunk: string) =>
     chunk.match(/\d{2}\.08\.2026/g)?.length ?? 0;
 
+  // The local reader's five-per-chunk default exists to keep a CPU model inside
+  // its timeout. Claude has no such limit and re-pays for the header on every
+  // chunk, so it asks for bigger ones; if this parameter stopped being honoured
+  // a hosted import would silently go back to paying for 8 headers instead of 1.
+  it('honours a caller-supplied chunk size', () => {
+    const text = Array.from({ length: 20 }, (_, i) => txn(i + 1)).join('\n');
+
+    const local = splitStatementText(text);
+    expect(local.chunks.length).toBe(4);
+    expect(Math.max(...local.chunks.map(entries))).toBe(5);
+
+    const hosted = splitStatementText(text, {
+      maxTransactions: 40,
+      maxChars: 24_000,
+    });
+    expect(hosted.chunks.length).toBe(1);
+    expect(entries(hosted.chunks[0])).toBe(20);
+  });
+
   it('keeps the pre-table header out of the chunks and repeats it to callers', () => {
     const { header, chunks } = splitStatementText(
       [
