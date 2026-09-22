@@ -219,31 +219,39 @@ export class PdfImportService {
   /**
    * The hosted reader, or null to read locally.
    *
-   * PDF_EXTRACTOR names it outright; with nothing set it follows the presence
-   * of an API key, the same inference CategorizerFactory makes. Deliberately
-   * its own setting rather than reusing CATEGORIZER: extraction sends the whole
-   * statement while categorization sends a description and an amount, so
-   * "read it locally, categorize with Claude" is a combination worth allowing.
+   * Opt-in by name, not inferred. CategorizerFactory infers Claude from a key
+   * being present, and that is right for it — that is how it has always
+   * chosen. Extraction has always run locally, so the same inference here
+   * meant a deploy that changed nothing else would move every future statement
+   * off this machine, silently, because a key happens to be set for
+   * categorization. A statement's full text is a much bigger thing to send
+   * than a description and an amount, and the quiet version of that decision
+   * has already cost this project once.
+   *
+   * Its own setting rather than reusing CATEGORIZER for the same reason: "read
+   * locally, categorize with Claude" is a combination worth being able to ask
+   * for, and it is the one running in production.
    */
   private anthropicExtractor(): AnthropicPdfExtractor | null {
-    const key = optionalSetting(this.config, 'ANTHROPIC_API_KEY');
     const configured = (
       optionalSetting(this.config, 'PDF_EXTRACTOR') ?? ''
     ).toLowerCase();
 
-    if (configured === 'ollama') return null;
-    if (configured === 'anthropic' && !key) {
+    if (configured !== 'anthropic') {
+      if (configured && configured !== 'ollama') {
+        this.logger.warn(
+          `Unrecognized PDF_EXTRACTOR="${configured}" — reading PDFs locally`,
+        );
+      }
+      return null;
+    }
+
+    const key = optionalSetting(this.config, 'ANTHROPIC_API_KEY');
+    if (!key) {
       throw new BadRequestException(
         'PDF_EXTRACTOR is "anthropic" but this server has no ANTHROPIC_API_KEY',
       );
     }
-    if (configured && configured !== 'anthropic') {
-      this.logger.warn(
-        `Unrecognized PDF_EXTRACTOR="${configured}" — reading PDFs locally`,
-      );
-      return null;
-    }
-    if (!key) return null;
 
     return new AnthropicPdfExtractor(
       key,
