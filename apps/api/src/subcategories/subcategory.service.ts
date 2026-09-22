@@ -75,13 +75,31 @@ export class SubcategoryService {
   async deleteSubcategory(userId: string, id: string) {
     await this.getSubcategoryById(userId, id);
 
-    const [transactionCount, recurringCount] = await Promise.all([
-      this.prisma.transaction.count({ where: { subcategoryId: id } }),
-      // Required relation, so the database refuses the delete outright. With
-      // no exception filter in front of it that surfaced as a bare 500 rather
-      // than something telling you which rule is in the way.
-      this.prisma.recurringRule.count({ where: { subcategoryId: id } }),
-    ]);
+    const [transactionCount, recurringCount, pendingRowCount] =
+      await Promise.all([
+        this.prisma.transaction.count({ where: { subcategoryId: id } }),
+        // Required relation, so the database refuses the delete outright. With
+        // no exception filter in front of it that surfaced as a bare 500 rather
+        // than something telling you which rule is in the way.
+        this.prisma.recurringRule.count({ where: { subcategoryId: id } }),
+        // ImportRow.subcategoryId is ON DELETE SET NULL, and a row with no
+        // category fails the commit's `committable` filter — so deleting a
+        // category chosen on a row still under review dropped that row's money
+        // silently: no transaction, no error, batch still COMMITTED. The
+        // account guard below learned this on 18 September; this is the same
+        // check for the other half of the pair.
+        //
+        // predictedSubcategoryId is deliberately not counted. It is nulled the
+        // same way, but losing a suggestion costs a line of display, not a row
+        // — and guarding it would block deletes over rows nobody chose this
+        // category for.
+        this.prisma.importRow.count({
+          where: {
+            subcategoryId: id,
+            batch: { userId, status: 'PENDING_REVIEW' },
+          },
+        }),
+      ]);
 
     if (transactionCount > 0) {
       throw new ConflictException(
@@ -91,6 +109,11 @@ export class SubcategoryService {
     if (recurringCount > 0) {
       throw new ConflictException(
         `Cannot delete subcategory: ${recurringCount} recurring transaction(s) post into it. Delete those rules first.`,
+      );
+    }
+    if (pendingRowCount > 0) {
+      throw new ConflictException(
+        `Cannot delete subcategory: ${pendingRowCount} row(s) waiting in an import review are filed under it. Finish or discard that review first.`,
       );
     }
 

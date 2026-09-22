@@ -138,21 +138,29 @@ export class AccountService {
 
     // Recurring rules and import batches also reference the account (with no
     // transactions yet), which would otherwise fail as a raw FK error.
-    const [recurringCount, importCount, pendingRowCount] = await Promise.all([
-      this.prisma.recurringRule.count({ where: { accountId: id } }),
-      this.prisma.importBatch.count({ where: { accountId: id } }),
-      // Rows in a batch still under review that were marked as transfers into
-      // this account. The FK is SetNull, so deleting the account would quietly
-      // strip the destination — and a row marked a transfer carries no
-      // subcategory, so it would commit as uncategorised income or spending
-      // rather than as the move it was marked to be.
-      this.prisma.importRow.count({
-        where: {
-          counterAccountId: id,
-          batch: { userId, status: 'PENDING_REVIEW' },
-        },
-      }),
-    ]);
+    const [recurringCount, importCount, pendingRowCount, reminderCount] =
+      await Promise.all([
+        this.prisma.recurringRule.count({ where: { accountId: id } }),
+        this.prisma.importBatch.count({ where: { accountId: id } }),
+        // Rows in a batch still under review that were marked as transfers into
+        // this account. The FK is SetNull, so deleting the account would quietly
+        // strip the destination — and a row marked a transfer carries no
+        // subcategory, so it would commit as uncategorised income or spending
+        // rather than as the move it was marked to be.
+        this.prisma.importRow.count({
+          where: {
+            counterAccountId: id,
+            batch: { userId, status: 'PENDING_REVIEW' },
+          },
+        }),
+        // Reminder.accountId is SetNull too. A reminder is scoped to an account
+        // precisely to tell two same-category reminders apart — two gym
+        // memberships, two phone bills — so silently unscoping one puts it back
+        // to settling against whichever payment it sees first. Blocked rather
+        // than cascaded: unlike a categorization rule, the reminder is still
+        // wanted after the account goes, just not scoped this way.
+        this.prisma.reminder.count({ where: { userId, accountId: id } }),
+      ]);
     if (recurringCount > 0) {
       throw new ConflictException(
         `Cannot delete account: it has ${recurringCount} recurring rule(s). Delete them first.`,
@@ -166,6 +174,11 @@ export class AccountService {
     if (pendingRowCount > 0) {
       throw new ConflictException(
         `Cannot delete account: ${pendingRowCount} row(s) waiting in an import review are marked as transfers into it. Finish or discard that review first.`,
+      );
+    }
+    if (reminderCount > 0) {
+      throw new ConflictException(
+        `Cannot delete account: ${reminderCount} reminder(s) are scoped to it. Point them at another account or delete them first.`,
       );
     }
 

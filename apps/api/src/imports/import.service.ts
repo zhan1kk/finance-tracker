@@ -216,7 +216,7 @@ export class ImportService {
     // Timed on its own, excluding parsing and PDF extraction, so a model
     // comparison is not muddied by how long a file took to read.
     const categorizeStart = Date.now();
-    await this.categorize(userId, staged, threshold, provider);
+    await this.categorize(userId, dto.accountId, staged, threshold, provider);
     const categorizeMs = Date.now() - categorizeStart;
 
     const batch = await this.prisma.importBatch.create({
@@ -1460,6 +1460,7 @@ export class ImportService {
 
   private async categorize(
     userId: string,
+    accountId: string,
     staged: StagedRow[],
     threshold: number,
     provider: CategorizationProvider,
@@ -1491,6 +1492,31 @@ export class ImportService {
         excludeFromStats: true,
       },
     });
+    // A rule stores a counter account but no currency, and matches on the
+    // description alone, so one learned on a euro account fires on a tenge
+    // statement just as happily. The ledger has no cross-currency transfer —
+    // assertTransferTarget refuses one on the manual path — and committing one
+    // here would write this statement's amount straight into an account
+    // denominated in something else, at face value. Resolved in one query up
+    // front so the check costs nothing per row.
+    const transferTargetIds = [
+      ...new Set(
+        rules
+          .map((r) => r.counterAccountId)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
+    const currencyById = new Map<string, string>();
+    if (transferTargetIds.length > 0) {
+      for (const account of await this.prisma.account.findMany({
+        where: { userId, id: { in: [...transferTargetIds, accountId] } },
+        select: { id: true, currency: true },
+      })) {
+        currencyById.set(account.id, account.currency);
+      }
+    }
+    const ownCurrency = currencyById.get(accountId);
+
     const forProvider: StagedRow[] = [];
     for (const row of pending) {
       const hit = this.rules.match(rules, row.normalizedDescription, row.type);
@@ -1517,6 +1543,17 @@ export class ImportService {
         row.subcategoryId = null;
         row.counterAccountId = null;
       } else if (hit.counterAccountId) {
+        // An unreadable currency on either side counts as a mismatch: the rule
+        // cannot be shown to be safe, and the row is a real transaction that
+        // still needs a home. Handed to the categorizer like the fee above —
+        // it is spending until something proves it is a transfer.
+        if (
+          ownCurrency === undefined ||
+          currencyById.get(hit.counterAccountId) !== ownCurrency
+        ) {
+          forProvider.push(row);
+          continue;
+        }
         // Movements between own accounts are not spending; they never reach the
         // categorizer and carry no subcategory.
         row.counterAccountId = hit.counterAccountId;

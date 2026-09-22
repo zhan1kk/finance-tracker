@@ -1975,6 +1975,58 @@ describe('API (e2e)', () => {
       return found.id;
     };
 
+    /**
+     * A transfer rule stores a description pattern and a counter account, and
+     * nothing else — no currency, no source account. So one taught on a euro
+     * account matches a tenge statement on description alone, and committing
+     * that wrote the statement's own number into the other account at face
+     * value: 540 KZT arriving as 540 EUR. The manual path has refused a
+     * cross-currency transfer since the beginning; the rule path never asked.
+     *
+     * Both directions are pinned here, because a guard that blocks everything
+     * would pass a test that only checks the bad case.
+     */
+    it('applies a transfer rule only when both accounts share a currency', async () => {
+      const sameCurrency = (
+        await createAccount(0, token, { name: 'EUR Savings' })
+      ).id;
+      const otherCurrency = (
+        await createAccount(0, token, { name: 'Kaspi', currency: 'KZT' })
+      ).id;
+
+      await request(http)
+        .post('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ pattern: 'to savings', counterAccountId: sameCurrency })
+        .expect(201);
+      await request(http)
+        .post('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ pattern: 'to kaspi', counterAccountId: otherCurrency })
+        .expect(201);
+
+      const batch = await doImport(
+        [
+          'Date,Amount,Description',
+          '2026-07-05,-100.00,Move to savings',
+          '2026-07-06,-200.00,Move to kaspi',
+        ].join('\n'),
+      );
+
+      const rows = batch.rows as unknown as {
+        description: string;
+        counterAccount: { id: string } | null;
+      }[];
+      const toSavings = rows.find((r) => r.description.includes('savings'));
+      const toKaspi = rows.find((r) => r.description.includes('kaspi'));
+
+      // Same currency: the rule does its job.
+      expect(toSavings?.counterAccount?.id).toBe(sameCurrency);
+      // Different currency: no transfer is posted. The row is still a real
+      // charge, so it goes to the categorizer rather than being dropped.
+      expect(toKaspi?.counterAccount).toBeNull();
+    });
+
     // Two charges from one merchant on one day, honestly belonging to different
     // categories (IKEA curtains vs IKEA meatballs). Recategorising the second
     // must not repoint the learned "ikea" rule for every future import.
@@ -3260,6 +3312,130 @@ describe('API (e2e)', () => {
         .set('Authorization', `Bearer ${token}`)
         .expect(409);
     });
+
+    // The account half of this pair has been guarded since 18 September; the
+    // subcategory half was written at the same time and never covered, so a
+    // delete that hit the required relation came back as a bare 500.
+    it('blocks deleting a subcategory that still has a recurring rule', async () => {
+      await createRule({
+        type: 'EXPENSE',
+        amount: 1_000,
+        subcategoryId: rentId,
+        cadence: 'MONTHLY',
+        startDate: '2099-01-01',
+      });
+      const res = await request(http)
+        .delete(`/subcategories/${rentId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(409);
+      expect((res.body as { message: string }).message).toContain(
+        'recurring transaction(s)',
+      );
+    });
+  });
+
+  /**
+   * Every reference below is ON DELETE SET NULL, so the database accepts the
+   * delete and quietly strips the link instead of refusing. Each of these
+   * guards exists because that silence cost something real, and each is
+   * pinned here because the guards were written one at a time and the
+   * un-mirrored half is exactly what went missing every time.
+   */
+  describe('delete guards against silent unlinking', () => {
+    type StagedRow = { id: string };
+    type StagedBatch = { id: string; rows: StagedRow[] };
+    let accountId: string;
+
+    beforeEach(async () => {
+      accountId = (await createAccount(100_000)).id;
+    });
+
+    it('blocks deleting an account a reminder is scoped to', async () => {
+      await request(http)
+        .post('/reminders')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          label: 'Gym membership',
+          accountId,
+          dueDate: '2099-01-01',
+          amountCents: 3_000,
+        })
+        .expect(201);
+
+      // Without the guard this returns 204 and the reminder silently loses its
+      // scope — which is the whole mechanism keeping two same-category
+      // reminders from settling against each other's payments.
+      const res = await request(http)
+        .delete(`/accounts/${accountId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(409);
+      expect((res.body as { message: string }).message).toContain('reminder');
+    });
+
+    it('blocks deleting an account a row under review transfers into', async () => {
+      const destination = (await createAccount(0, token, { name: 'Savings' }))
+        .id;
+      const batch = await importAndWait(token, {
+        accountId,
+        filename: 'statement.csv',
+        csv: 'Date,Amount,Description\n2026-09-01,-50.00,Move to savings',
+        mapping: {
+          dateColumn: 'Date',
+          amountColumn: 'Amount',
+          descriptionColumn: 'Description',
+          hasHeader: true,
+        },
+      });
+      expect(batch.status).toBe(201);
+      const staged = (batch.body as { batch: StagedBatch }).batch;
+
+      // Mark the row a transfer, then leave the batch in review.
+      await request(http)
+        .patch(`/imports/${staged.id}/rows/${staged.rows[0].id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ counterAccountId: destination })
+        .expect(200);
+
+      await request(http)
+        .delete(`/accounts/${destination}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(409);
+    });
+
+    it('blocks deleting a subcategory a row under review is filed under', async () => {
+      const subcategoryId = (await createSubcategory('Hardware', 'Expenses'))
+        .id;
+      const batch = await importAndWait(token, {
+        accountId,
+        filename: 'statement.csv',
+        csv: 'Date,Amount,Description\n2026-09-01,-20.00,Obi Baumarkt',
+        mapping: {
+          dateColumn: 'Date',
+          amountColumn: 'Amount',
+          descriptionColumn: 'Description',
+          hasHeader: true,
+        },
+      });
+      expect(batch.status).toBe(201);
+      const staged = (batch.body as { batch: StagedBatch }).batch;
+
+      await request(http)
+        .patch(`/imports/${staged.id}/rows/${staged.rows[0].id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId })
+        .expect(200);
+
+      // The FK nulls the row's category, the commit's `committable` filter then
+      // skips it, and the batch reports COMMITTED with that row's money simply
+      // absent — no transaction and no error anywhere.
+      const res = await request(http)
+        .delete(`/subcategories/${subcategoryId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(409);
+      expect((res.body as { message: string }).message).toContain(
+        'import review',
+      );
+    });
   });
 
   describe('budgets & reports', () => {
@@ -4134,6 +4310,57 @@ describe('API (e2e)', () => {
         }[];
       };
     };
+
+    /**
+     * Split rows used to be stamped with User.baseCurrency, which is only a
+     * display preference — so the label recorded which currency you happened
+     * to be reading in that week, while balances() summed the stored cents
+     * without ever consulting it. Changing the preference silently
+     * re-denominated every historical split. The stored cents are ledger
+     * amounts, so the label has to be the ledger's currency and nothing else.
+     */
+    it('reports split balances in the ledger currency, not the display one', async () => {
+      const alex = await addFriend('Alex');
+      await request(http)
+        .post('/split/expenses')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          description: 'Taxi',
+          amountCents: 2000,
+          date: '2026-08-01',
+          splitMethod: 'equal',
+          participants: [{}, { friendId: alex }],
+        })
+        .expect(201);
+
+      const before = await request(http)
+        .get('/split/balances')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect((before.body as { currency: string }).currency).toBe('EUR');
+
+      // Read everything in tenge from now on. The amounts already recorded did
+      // not move, so neither may the currency they are reported in.
+      await request(http)
+        .patch('/auth/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ baseCurrency: 'KZT' })
+        .expect(200);
+
+      const after = await request(http)
+        .get('/split/balances')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const body = after.body as {
+        currency: string;
+        balances: { amountCents: number }[];
+      };
+      expect(body.currency).toBe('EUR');
+      expect(body.balances[0].amountCents).toBe(
+        (before.body as { balances: { amountCents: number }[] }).balances[0]
+          .amountCents,
+      );
+    });
 
     it('nets shared expenses and settlements into who-owes-whom', async () => {
       const alex = await addFriend('Alex');

@@ -88,8 +88,8 @@ export class PdfImportService {
         accountId: input.accountId,
         filename: input.filename,
         csv: this.toCsv(rows),
-        // Reading the PDF is always local; this only picks who categorizes the
-        // rows it produced.
+        // Who reads the PDF is PDF_EXTRACTOR's business; this only picks who
+        // categorizes the rows that reading produced.
         categorizer: input.categorizer,
         categorizerModel: input.categorizerModel,
         extractMs,
