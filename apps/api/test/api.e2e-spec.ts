@@ -82,13 +82,18 @@ describe('API (e2e)', () => {
    * Asserts a status and, when it differs, puts the server's own response in the
    * failure message.
    *
-   * This suite has a known intermittent failure — roughly one run in six, a
-   * different test each time, always an unexpected status on a request that
-   * should have succeeded. Its cause is still unidentified, and a bare
-   * "expected 201, got 401" hides the one clue that would separate the
-   * candidates ("Missing access token" means the token never arrived;
-   * "Invalid or expired access token" means it was rejected). Keep this until
-   * the flake is understood.
+   * This was written to catch an intermittent failure that is now fixed: see
+   * the `app.listen(0)` note above. Supertest was being handed an unbound
+   * server, so it opened and closed an ephemeral port per request and those
+   * cycles raced — requests never reached the router, and came back as an empty
+   * 200/404/hang-up on routes that cannot produce one. fe83fd5 (20 August)
+   * found it with these diagnostics and fixed it, measuring 16 consecutive
+   * clean runs against a ~40% failure rate minutes earlier; another 8 clean
+   * runs on 22 September.
+   *
+   * Kept anyway, because an empty body on an impossible status is exactly the
+   * shape of failure a bare `.expect(201)` hides, and this is the only thing
+   * that would say so again.
    */
   const expectStatus = (res: request.Response, status: number) => {
     if (res.status !== status) {
@@ -131,7 +136,9 @@ describe('API (e2e)', () => {
         ...extra,
       });
     if (res.status !== 201) {
-      // Diagnostic for an intermittent failure: surface the real body/URL.
+      // Same purpose as expectStatus above, for the same fixed flake: an
+      // unexpected status here is worth its raw body and headers, not a bare
+      // number.
       console.error(
         `createAccount got ${res.status}; text=${JSON.stringify(res.text)}; headers=${JSON.stringify(res.headers)}`,
       );
