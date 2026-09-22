@@ -42,6 +42,12 @@ services:
       # Must be passed explicitly: without it the provider factory falls back to
       # Anthropic whenever ANTHROPIC_API_KEY happens to be set.
       CATEGORIZER: ${CATEGORIZER:-}
+      # Same trap, same rule: PDF_EXTRACTOR left out of this block is blank
+      # inside the container no matter what .env says, and a blank value infers
+      # Anthropic from the key. Setting it to "ollama" would then be a change
+      # that appears to take and does not.
+      PDF_EXTRACTOR: ${PDF_EXTRACTOR:-}
+      ANTHROPIC_EXTRACTION_MODEL: ${ANTHROPIC_EXTRACTION_MODEL:-}
       DEFAULT_CATEGORIZATION_THRESHOLD: ${DEFAULT_CATEGORIZATION_THRESHOLD:-}
       OLLAMA_BASE_URL: http://ollama:11434
       # Default model sized for an 8GB host; override per-env as needed.
