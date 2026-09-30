@@ -3409,6 +3409,31 @@ describe('API (e2e)', () => {
         .expect(409);
     });
 
+    // Fourth instance of the pair: Reminder.subcategoryId is SetNull too, and
+    // reconcile() only matches reminders whose subcategoryId is not null — so a
+    // nulled one stops settling against payments permanently, and the same
+    // filter gating dedupe means a rescan can add a duplicate for the same bill.
+    it('blocks deleting a subcategory a reminder watches', async () => {
+      const subcategoryId = (await createSubcategory('Gym dues', 'Bills')).id;
+      await request(http)
+        .post('/reminders')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          label: 'Gym',
+          subcategoryId,
+          dueDate: '2099-01-01',
+          amountCents: 3_000,
+          cadence: 'monthly',
+        })
+        .expect(201);
+
+      const res = await request(http)
+        .delete(`/subcategories/${subcategoryId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(409);
+      expect((res.body as { message: string }).message).toContain('reminder');
+    });
+
     it('blocks deleting a subcategory a row under review is filed under', async () => {
       const subcategoryId = (await createSubcategory('Hardware', 'Expenses'))
         .id;

@@ -1668,13 +1668,18 @@ function QuickAdd({
     create.mutate(body, {
       onSuccess: () => {
         // Remember the date and clear the form only once it actually saved.
+        // These two belong here for the same reason, and used to sit after the
+        // mutate call: a failed save cleared "internal" and the reimbursement
+        // link while leaving the rest of the form filled in, so retrying
+        // silently posted an internal move as ordinary spending under whatever
+        // category the select happened to be showing.
         window.localStorage.setItem(LAST_DATE_KEY, date);
+        setInternal(false);
+        setParentId("");
         form_.reset();
         typeRef.current?.focus();
       },
     });
-    setInternal(false);
-    setParentId("");
   };
 
   return (

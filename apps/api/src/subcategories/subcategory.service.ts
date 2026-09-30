@@ -75,7 +75,7 @@ export class SubcategoryService {
   async deleteSubcategory(userId: string, id: string) {
     await this.getSubcategoryById(userId, id);
 
-    const [transactionCount, recurringCount, pendingRowCount] =
+    const [transactionCount, recurringCount, pendingRowCount, reminderCount] =
       await Promise.all([
         this.prisma.transaction.count({ where: { subcategoryId: id } }),
         // Required relation, so the database refuses the delete outright. With
@@ -99,6 +99,17 @@ export class SubcategoryService {
             batch: { userId, status: 'PENDING_REVIEW' },
           },
         }),
+        // Reminder.subcategoryId is SetNull as well, and reconcile() only looks
+        // at reminders `where subcategoryId: { not: null }` — so nulling it does
+        // not just loosen the match, it drops the reminder out of matching for
+        // good. The bill stops settling itself against payments and sits open
+        // forever, and because the same filter gates dedupe in
+        // detectAndCreateReminders, a later scan can add a second reminder for
+        // the same bill.
+        //
+        // Fourth time this pair has come up: accounts got both of these guards
+        // before subcategories did, each time.
+        this.prisma.reminder.count({ where: { userId, subcategoryId: id } }),
       ]);
 
     if (transactionCount > 0) {
@@ -114,6 +125,11 @@ export class SubcategoryService {
     if (pendingRowCount > 0) {
       throw new ConflictException(
         `Cannot delete subcategory: ${pendingRowCount} row(s) waiting in an import review are filed under it. Finish or discard that review first.`,
+      );
+    }
+    if (reminderCount > 0) {
+      throw new ConflictException(
+        `Cannot delete subcategory: ${reminderCount} reminder(s) watch it. Point them at another category or delete them first.`,
       );
     }
 
