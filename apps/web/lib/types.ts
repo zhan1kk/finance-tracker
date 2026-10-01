@@ -173,6 +173,19 @@ export type TransactionList = {
   pageSize: number;
 };
 
+/**
+ * How many results the two transaction-search pickers ask for — the expense an
+ * income reimburses, and the income that paid a reminder back.
+ *
+ * Was 12 in both, which defeated the point of searching by text: a frequent
+ * merchant has far more than a dozen charges, so "amazon" reached only back to
+ * late August and then simply stopped, looking like the end of the list rather
+ * than the end of the page. Both pickers now also say when more matched than
+ * they are showing, because a capped list and a complete one look identical
+ * otherwise. 100 is the API's own maximum for pageSize.
+ */
+export const SEARCH_PAGE_SIZE = 50;
+
 /** Per-month totals in cents; expense is net of reimbursements received that month. */
 export type MonthlyStat = {
   month: string;

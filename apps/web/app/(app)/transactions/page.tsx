@@ -19,6 +19,7 @@ import { periodOf, periodRange, shiftPeriod } from "@/lib/period";
 import { useStickyState } from "@/lib/sticky-state";
 import {
   TRANSACTION_CATEGORIES,
+  SEARCH_PAGE_SIZE,
   type Account,
   type Subcategory,
   type TelegramSettings,
@@ -1102,7 +1103,7 @@ function ReimbursePicker({
     queryKey: ["reimburse-search", debounced],
     queryFn: () =>
       api<TransactionList>(
-        `/transactions?type=EXPENSE&pageSize=12&search=${encodeURIComponent(debounced)}`,
+        `/transactions?type=EXPENSE&pageSize=${SEARCH_PAGE_SIZE}&search=${encodeURIComponent(debounced)}`,
       ),
     enabled: debounced !== "",
   });
@@ -1145,7 +1146,14 @@ function ReimbursePicker({
         className="w-full text-xs"
       />
       {debounced && (
-        <div className="mt-1 max-h-40 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-800">
+        <div className="mt-1 max-h-64 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-800">
+          {/* Without this a failed search renders as an empty box, which reads
+              as "no such expense" — the one answer it cannot give. */}
+          {results.isError && (
+            <div className="px-2 py-1">
+              <ErrorText error={results.error} />
+            </div>
+          )}
           {results.data?.items.map((e) => (
             <button
               type="button"
@@ -1159,6 +1167,12 @@ function ReimbursePicker({
           {results.data?.items.length === 0 && (
             <p className="px-2 py-1 text-xs text-zinc-400">
               no matching expense
+            </p>
+          )}
+          {results.data && results.data.total > results.data.items.length && (
+            <p className="border-t border-zinc-200 px-2 py-1 text-xs text-zinc-400 dark:border-zinc-800">
+              showing the {results.data.items.length} most recent of{" "}
+              {results.data.total} — add a word to narrow it
             </p>
           )}
         </div>

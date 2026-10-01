@@ -9,14 +9,15 @@ import { useAuth } from "@/lib/auth";
 import { formatCents, formatDate, parseAmountToCents } from "@/lib/format";
 import { runJob } from "@/lib/poll-job";
 import { SubcategoryOptions } from "@/components/subcategory-options";
-import type {
-  Account,
-  RecurringCadence,
-  RecurringRule,
-  Reminder,
-  Subcategory,
-  Transaction,
-  TransactionList,
+import {
+  SEARCH_PAGE_SIZE,
+  type Account,
+  type RecurringCadence,
+  type RecurringRule,
+  type Reminder,
+  type Subcategory,
+  type Transaction,
+  type TransactionList,
 } from "@/lib/types";
 
 const CADENCES = ["weekly", "monthly", "quarterly", "yearly", "one-off"];
@@ -60,7 +61,7 @@ function IncomePicker({
     queryKey: ["reminder-income-search", debounced],
     queryFn: () =>
       api<TransactionList>(
-        `/transactions?type=INCOME&pageSize=12${
+        `/transactions?type=INCOME&pageSize=${SEARCH_PAGE_SIZE}${
           debounced ? `&search=${encodeURIComponent(debounced)}` : ""
         }`,
       ),
@@ -83,7 +84,14 @@ function IncomePicker({
         className="w-full text-sm"
         autoFocus
       />
-      <div className="mt-1 max-h-40 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-800">
+      <div className="mt-1 max-h-64 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-800">
+        {/* An empty box on a failed search reads as "no such income", which is
+            the one thing it cannot actually tell you. */}
+        {results.isError && (
+          <div className="px-2 py-1">
+            <ErrorText error={results.error} />
+          </div>
+        )}
         {results.data?.items.map((t) => (
           <button
             key={t.id}
@@ -97,6 +105,12 @@ function IncomePicker({
         ))}
         {results.data?.items.length === 0 && (
           <p className="px-2 py-1 text-xs text-zinc-400">no matching income</p>
+        )}
+        {results.data && results.data.total > results.data.items.length && (
+          <p className="border-t border-zinc-200 px-2 py-1 text-xs text-zinc-400 dark:border-zinc-800">
+            showing the {results.data.items.length} most recent of{" "}
+            {results.data.total} — add a word to narrow it
+          </p>
         )}
       </div>
       <button
