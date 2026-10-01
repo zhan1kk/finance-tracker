@@ -182,8 +182,21 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     bot.on('callback_query:data', async (ctx) => {
       const data = ctx.callbackQuery.data;
       const chatId = ctx.callbackQuery.message?.chat.id;
+      // Every branch below used to return silently, success and failure alike,
+      // so "the Paid button does nothing" and "the press never arrived" left
+      // exactly the same trace: none. The database showed one nudge settling
+      // correctly and three untouched, with no way to tell which presses
+      // reached here. One line per press, naming the action rather than the id.
+      this.logger.log(`Button press: ${data.split(':')[0]}`);
       if (chatId === undefined) {
-        await ctx.answerCallbackQuery();
+        // Telegram omits the originating message when it is too old to act on.
+        // Nothing can be edited in place, so say so in the toast instead of
+        // leaving the tap looking ignored.
+        await ctx.answerCallbackQuery({
+          text: 'This nudge is too old to use — open the app instead.',
+          show_alert: true,
+        });
+        this.logger.warn(`Button press on a message too old to edit: ${data}`);
         return;
       }
       if (data.startsWith('undo:')) {
@@ -193,8 +206,8 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
           String(chatId),
           data.slice('undo:'.length),
         );
-        await ctx.answerCallbackQuery();
-        await ctx.editMessageText(text);
+        await ctx.answerCallbackQuery({ text });
+        await this.editOrLog(ctx, text);
         return;
       }
       if (data.startsWith('note:') || data.startsWith('amt:')) {
@@ -212,8 +225,13 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
           String(chatId),
           data.slice('rdone:'.length),
         );
-        await ctx.answerCallbackQuery();
-        await ctx.editMessageText(text);
+        // The reminder has already moved by the time we get here. The toast
+        // carries the confirmation rather than the edited message, because an
+        // edit that Telegram refuses would otherwise swallow it whole: the
+        // reminder settles, the nudge still reads "due today", and the natural
+        // response is to press it again.
+        await ctx.answerCallbackQuery({ text });
+        await this.editOrLog(ctx, text);
         return;
       }
       if (data.startsWith('acct:')) {
@@ -221,8 +239,8 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
           String(chatId),
           data.slice('acct:'.length),
         );
-        await ctx.answerCallbackQuery();
-        await ctx.editMessageText(text);
+        await ctx.answerCallbackQuery({ text });
+        await this.editOrLog(ctx, text);
         return;
       }
 
@@ -328,6 +346,31 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     } catch (err: unknown) {
       this.logger.warn(`Could not message chat ${chatId}: ${String(err)}`);
       return false;
+    }
+  }
+
+  /**
+   * Rewrites the pressed message in place, and settles for having logged it if
+   * Telegram refuses.
+   *
+   * An edit can fail for reasons that have nothing to do with the action
+   * succeeding — most often a message too old to edit, which a nudge becomes
+   * after a couple of days of being re-sent. The action is already committed by
+   * the time this runs, so letting the failure propagate would turn a completed
+   * settlement into something that merely looks broken. Callers put the
+   * confirmation in the callback toast first; this is the nicer rendering on
+   * top of it, not the delivery mechanism.
+   */
+  private async editOrLog(
+    ctx: { editMessageText: (text: string) => Promise<unknown> },
+    text: string,
+  ): Promise<void> {
+    try {
+      await ctx.editMessageText(text);
+    } catch (err: unknown) {
+      this.logger.warn(
+        `Action completed but its message could not be edited: ${String(err)}`,
+      );
     }
   }
 
