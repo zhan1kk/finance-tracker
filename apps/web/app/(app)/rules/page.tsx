@@ -103,6 +103,19 @@ export default function RulesPage() {
   // Capped like the import history and rate lists; searching or sorting still
   // works on all of them, since the cap is applied after both.
   const visible = showAll ? shown : shown.slice(0, INITIAL_RULES);
+  // The count beside the search box read "161 rules" while the table under it
+  // rendered 25, sorted A–Z, so everything past "d" was simply absent with the
+  // page insisting all of them were there. The "Show all" button below said so,
+  // in grey, under twenty-five rows. Stating what is actually on screen is the
+  // part that was missing.
+  const capped = visible.length < shown.length;
+  const countLabel = query
+    ? capped
+      ? `showing ${visible.length} of ${shown.length} matches`
+      : `${shown.length} of ${all.length}`
+    : capped
+      ? `showing ${visible.length} of ${all.length}`
+      : `${all.length} rules`;
 
   return (
     <main className="flex flex-col gap-6">
@@ -183,9 +196,7 @@ export default function RulesPage() {
               <option value="pattern">A–Z</option>
               <option value="hits">Most used</option>
             </Select>
-            <span className="text-sm text-zinc-500">
-              {query ? `${shown.length} of ${all.length}` : `${all.length} rules`}
-            </span>
+            <span className="text-sm text-zinc-500">{countLabel}</span>
           </div>
         )}
 
