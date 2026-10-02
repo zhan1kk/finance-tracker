@@ -53,17 +53,12 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     );
   }
 
-  // The transactions table is the widest thing in the app — select, date,
-  // description, category, account, amount, running balance and row actions —
-  // and the one page read on a desktop monitor rather than skimmed. 80rem
-  // there against 64rem everywhere else, a quarter more. The rest of the app is
-  // reading-width prose and cards, which only get harder to scan stretched out.
-  const shellWidth = pathname.startsWith("/transactions")
-    ? "max-w-7xl"
-    : "max-w-5xl";
-
+  // 80rem for every page, not only the wide tables. Widening transactions on
+  // its own made the shell change width on every navigation, which reads as the
+  // layout breaking rather than as one page taking the room it needs — a
+  // consistent frame is worth more than per-page fit.
   return (
-    <div className={`mx-auto p-4 ${shellWidth}`}>
+    <div className="mx-auto max-w-7xl p-4">
       <header className="mb-6 flex flex-col gap-3">
         <div className="flex items-center gap-3">
           <span className="text-lg font-semibold">Finance Tracker</span>
