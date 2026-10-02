@@ -2133,7 +2133,7 @@ describe('API (e2e)', () => {
     });
 
     // Same merchant, two categories, one batch. Nothing can say which is the
-    // rule, so the upsert must not silently keep whichever row came last.
+    // rule, so learning must not silently keep whichever row came last.
     it('learns nothing when one merchant is corrected two different ways', async () => {
       const groceries = await subId('Groceries');
       const shopping = await subId('Shopping');

@@ -346,15 +346,29 @@ export class RulesService {
   }
 
   /**
-   * Learns a rule from a human correction (upsert by normalized pattern +
-   * direction), run inside the commit transaction. Deliberately leaves
-   * hitCount alone: that counts how often the rule has categorized a committed
-   * transaction, and creating a rule is not using it. Pattern is the row's
-   * normalized merchant; keying on the row's direction lets the same merchant
-   * carry different meanings by sign (Amazon charge → shopping, Amazon credit
-   * → refund) without the corrections overwriting each other.
+   * Learns a rule from a human correction — one it does not already have, and
+   * never a rewrite of one it does. Run inside the commit transaction.
+   *
+   * This used to upsert, so every correction repointed the matching rule at
+   * whatever was categorized most recently. For a merchant that genuinely means
+   * several things that is wrong on its face: an Amazon order is a book one week
+   * and dog diapers the next, and neither correction is a better rule than the
+   * other — it is one more transaction. 49 of 161 rules had been moved this way,
+   * which reads from the Rules page as rules changing on their own.
+   *
+   * It also made the import review lie. That screen lists what the commit
+   * taught and offers to forget each one; an upsert returns the rule whether it
+   * created or updated it, so a repointed rule appeared as newly learned and
+   * "forget" deleted a rule that predated the import entirely.
+   *
+   * Correcting a rule is now done on the Rules page, where it is visible and
+   * deliberate. Deliberately leaves hitCount alone: that counts how often the
+   * rule has categorized a committed transaction, and creating one is not using
+   * it. Pattern is the row's normalized merchant; keying on the row's direction
+   * lets the same merchant carry different meanings by sign (Amazon charge →
+   * shopping, Amazon credit → refund).
    */
-  learnFromCorrection(
+  async learnFromCorrection(
     tx: Prisma.TransactionClient,
     userId: string,
     pattern: string,
@@ -362,7 +376,7 @@ export class RulesService {
     rowType: TransactionType,
   ) {
     const normalized = normalizePattern(pattern);
-    if (normalized === '') return Promise.resolve(null);
+    if (normalized === '') return null;
     const subcategoryId = target.subcategoryId ?? null;
     const counterAccountId = target.counterAccountId ?? null;
     const excludeFromStats = target.excludeFromStats ?? false;
@@ -370,9 +384,17 @@ export class RulesService {
     // "Receipt from your account" is always an inflow, "Transfer to your
     // account" an outflow, so each side learns its own pattern.
     const type: TransactionType = counterAccountId ? 'TRANSFER' : rowType;
-    return tx.categorizationRule.upsert({
+    // Left alone if one already exists for this pattern and direction, and
+    // reported as nothing learned, so the review screen's "forget" only ever
+    // offers rules this commit actually created.
+    const existing = await tx.categorizationRule.findUnique({
       where: { userId_pattern_type: { userId, pattern: normalized, type } },
-      create: {
+      select: { id: true },
+    });
+    if (existing) return null;
+
+    return tx.categorizationRule.create({
+      data: {
         userId,
         pattern: normalized,
         type,
@@ -380,11 +402,6 @@ export class RulesService {
         counterAccountId,
         excludeFromStats,
         source: 'MANUAL',
-      },
-      update: {
-        subcategoryId,
-        counterAccountId,
-        excludeFromStats,
       },
     });
   }

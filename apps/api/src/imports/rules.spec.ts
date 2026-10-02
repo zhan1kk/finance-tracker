@@ -194,3 +194,83 @@ describe('patternMatches', () => {
     ).toBe(false);
   });
 });
+
+/**
+ * learnFromCorrection creates a rule it does not have and never rewrites one it
+ * does. Asserted here rather than end-to-end on purpose: the commit path also
+ * carries an `overrulesSameRule` guard that already refuses to learn when the
+ * matched rule's pattern equals the row's description, so an API-level test
+ * passes whether this holds or not — which makes it no test at all.
+ *
+ * What this pins is the invariant itself, so the guarantee does not depend on
+ * that one pattern comparison continuing to be exactly right.
+ */
+describe('RulesService.learnFromCorrection', () => {
+  const fakeTx = (existing: { id: string } | null) => {
+    const create = jest.fn().mockResolvedValue({ id: 'created' });
+    const findUnique = jest.fn().mockResolvedValue(existing);
+    return {
+      tx: { categorizationRule: { create, findUnique } },
+      create,
+      findUnique,
+    };
+  };
+
+  it('creates a rule when none exists for that pattern and direction', async () => {
+    const { tx, create } = fakeTx(null);
+    const service = new RulesService(null as never);
+
+    const result = await service.learnFromCorrection(
+      tx as never,
+      'user-1',
+      'Amazon',
+      { subcategoryId: 'sub-shopping' },
+      'EXPENSE',
+    );
+
+    expect(result).toEqual({ id: 'created' });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0][0]).toMatchObject({
+      data: {
+        pattern: 'amazon',
+        type: 'EXPENSE',
+        subcategoryId: 'sub-shopping',
+      },
+    });
+  });
+
+  it('leaves an existing rule untouched and reports nothing learned', async () => {
+    const { tx, create } = fakeTx({ id: 'rule-already-there' });
+    const service = new RulesService(null as never);
+
+    const result = await service.learnFromCorrection(
+      tx as never,
+      'user-1',
+      'Amazon',
+      { subcategoryId: 'sub-entertainment' },
+      'EXPENSE',
+    );
+
+    // Null, not the existing rule: the import review offers to "forget" what it
+    // reports here, and forgetting a rule that predates the import deletes it.
+    expect(result).toBeNull();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('learns nothing from a description that normalizes to nothing', async () => {
+    const { tx, findUnique, create } = fakeTx(null);
+    const service = new RulesService(null as never);
+
+    expect(
+      await service.learnFromCorrection(
+        tx as never,
+        'user-1',
+        '   ',
+        { subcategoryId: 'sub-shopping' },
+        'EXPENSE',
+      ),
+    ).toBeNull();
+    expect(findUnique).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+});
