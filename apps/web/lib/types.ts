@@ -55,6 +55,8 @@ export type SharedExpense = {
   payerFriendId: string | null;
   splitMethod: string;
   shares: SharedExpenseShare[];
+  /** null = not in a group. */
+  groupId: string | null;
 };
 
 export type Settlement = {
@@ -65,18 +67,39 @@ export type Settlement = {
   currency: string;
   date: string;
   note: string | null;
+  /** null = not in a group. */
+  groupId: string | null;
+};
+
+export type SplitBalance = {
+  fromId: string | null;
+  fromName: string;
+  toId: string | null;
+  toName: string;
+  amountCents: number;
+};
+
+/** A group with what the split page shows about it. */
+export type SplitGroup = {
+  id: string;
+  name: string;
+  createdAt: string;
+  members: { id: string; name: string }[];
+  expenseCount: number;
+  settlementCount: number;
+  lastActivity: string | null;
+  currency: string;
+  balances: SplitBalance[];
+  owedToYouCents: number;
+  youOweCents: number;
+  /** Has expenses and every balance in it is zero. */
+  settled: boolean;
 };
 
 export type SplitBalances = {
   currency: string;
   /** Each: `fromName` owes `toName` `amountCents`. */
-  balances: {
-    fromId: string | null;
-    fromName: string;
-    toId: string | null;
-    toName: string;
-    amountCents: number;
-  }[];
+  balances: SplitBalance[];
 };
 
 export type Account = {

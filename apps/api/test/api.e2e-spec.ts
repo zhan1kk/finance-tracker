@@ -4705,5 +4705,208 @@ describe('API (e2e)', () => {
         .set('Authorization', `Bearer ${token}`)
         .expect(409);
     });
+
+    // A finished trip can be put away whole: once its balances net to zero
+    // the group folds out of the overview, while everything stays openable.
+    describe('groups', () => {
+      type Group = {
+        id: string;
+        name: string;
+        members: { id: string; name: string }[];
+        settled: boolean;
+        owedToYouCents: number;
+        youOweCents: number;
+        expenseCount: number;
+      };
+
+      const createGroup = async (name: string, memberIds: string[] = []) => {
+        const res = await request(http)
+          .post('/split/groups')
+          .set('Authorization', `Bearer ${token}`)
+          .send({ name, memberIds })
+          .expect(201);
+        return res.body as Group;
+      };
+      const getGroup = async (id: string, asToken = token, expected = 200) => {
+        const res = await request(http)
+          .get(`/split/groups/${id}`)
+          .set('Authorization', `Bearer ${asToken}`)
+          .expect(expected);
+        return res.body as Group;
+      };
+      const addExpense = async (body: Record<string, unknown>) => {
+        const res = await request(http)
+          .post('/split/expenses')
+          .set('Authorization', `Bearer ${token}`)
+          .send({
+            description: 'Dinner',
+            amountCents: 6_000,
+            date: '2026-10-10',
+            splitMethod: 'equal',
+            ...body,
+          })
+          .expect(201);
+        return res.body as { id: string; groupId: string | null };
+      };
+      const scoped = async (path: string, group: string) => {
+        const res = await request(http)
+          .get(`/split/${path}?group=${group}`)
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200);
+        return res.body as unknown;
+      };
+
+      it('keeps a group’s balances to itself, while the overall total counts it', async () => {
+        const anna = await addFriend('Anna');
+        const ben = await addFriend('Ben');
+        const trip = await createGroup('Berlin trip');
+
+        await addExpense({
+          groupId: trip.id,
+          participants: [{}, { friendId: anna }],
+        });
+        await addExpense({ participants: [{}, { friendId: ben }] });
+
+        const inTrip = (await scoped('balances', trip.id)) as {
+          balances: { fromName: string; amountCents: number }[];
+        };
+        expect(inTrip.balances).toEqual([
+          expect.objectContaining({ fromName: 'Anna', amountCents: 3_000 }),
+        ]);
+        const outside = (await scoped('balances', 'none')) as {
+          balances: { fromName: string }[];
+        };
+        expect(outside.balances.map((b) => b.fromName)).toEqual(['Ben']);
+        expect((await balances()).balances).toHaveLength(2);
+
+        // Anna joined the group by being in its expense.
+        const g = await getGroup(trip.id);
+        expect(g.members.map((m) => m.name)).toEqual(['Anna']);
+        expect(g).toMatchObject({ owedToYouCents: 3_000, settled: false });
+      });
+
+      it('counts as settled once the debts in it are paid, and reopens on a new expense', async () => {
+        const anna = await addFriend('Anna');
+        const trip = await createGroup('Lisbon');
+        await addExpense({
+          groupId: trip.id,
+          participants: [{}, { friendId: anna }],
+        });
+        expect((await getGroup(trip.id)).settled).toBe(false);
+
+        await request(http)
+          .post('/split/settlements')
+          .set('Authorization', `Bearer ${token}`)
+          .send({ fromFriendId: anna, amountCents: 3_000, groupId: trip.id })
+          .expect(201);
+        expect((await getGroup(trip.id)).settled).toBe(true);
+
+        await addExpense({
+          groupId: trip.id,
+          participants: [{}, { friendId: anna }],
+        });
+        expect((await getGroup(trip.id)).settled).toBe(false);
+      });
+
+      it('is not settled while it has nothing in it yet', async () => {
+        const trip = await createGroup('Planned');
+        expect(await getGroup(trip.id)).toMatchObject({
+          settled: false,
+          expenseCount: 0,
+        });
+      });
+
+      it('takes an existing expense in, and lets it out again', async () => {
+        const anna = await addFriend('Anna');
+        const trip = await createGroup('Rome');
+        const dinner = await addExpense({
+          participants: [{}, { friendId: anna }],
+        });
+
+        await request(http)
+          .patch(`/split/expenses/${dinner.id}`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({ groupId: trip.id })
+          .expect(200);
+        expect(await scoped('expenses', trip.id)).toHaveLength(1);
+        expect(await scoped('expenses', 'none')).toHaveLength(0);
+        expect((await getGroup(trip.id)).members.map((m) => m.id)).toEqual([
+          anna,
+        ]);
+
+        await request(http)
+          .patch(`/split/expenses/${dinner.id}`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({ groupId: null })
+          .expect(200);
+        expect(await scoped('expenses', 'none')).toHaveLength(1);
+      });
+
+      it('cannot be deleted with money in it, only once empty', async () => {
+        const anna = await addFriend('Anna');
+        const trip = await createGroup('Paris');
+        const dinner = await addExpense({
+          groupId: trip.id,
+          participants: [{}, { friendId: anna }],
+        });
+
+        await request(http)
+          .delete(`/split/groups/${trip.id}`)
+          .set('Authorization', `Bearer ${token}`)
+          .expect(409);
+        // Still there, and so is the expense.
+        expect(await scoped('expenses', trip.id)).toHaveLength(1);
+
+        await request(http)
+          .delete(`/split/expenses/${dinner.id}`)
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200);
+        await request(http)
+          .delete(`/split/groups/${trip.id}`)
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200);
+      });
+
+      it('will not drop a member who still appears in its expenses', async () => {
+        const anna = await addFriend('Anna');
+        const ben = await addFriend('Ben');
+        const trip = await createGroup('Vienna', [ben]);
+        await addExpense({
+          groupId: trip.id,
+          participants: [{}, { friendId: anna }],
+        });
+
+        await request(http)
+          .delete(`/split/groups/${trip.id}/members/${anna}`)
+          .set('Authorization', `Bearer ${token}`)
+          .expect(409);
+        // Ben never spent anything in it, so he can go.
+        const after = await request(http)
+          .delete(`/split/groups/${trip.id}/members/${ben}`)
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200);
+        expect((after.body as Group).members.map((m) => m.name)).toEqual([
+          'Anna',
+        ]);
+      });
+
+      it("is invisible to another user, and can't be spent into by them", async () => {
+        const trip = await createGroup('Mine');
+        const otherToken = await registerUser('split-other@example.com');
+        await getGroup(trip.id, otherToken, 404);
+        await request(http)
+          .post('/split/expenses')
+          .set('Authorization', `Bearer ${otherToken}`)
+          .send({
+            description: 'Sneaky',
+            amountCents: 100,
+            date: '2026-10-10',
+            splitMethod: 'equal',
+            participants: [{}],
+            groupId: trip.id,
+          })
+          .expect(404);
+      });
+    });
   });
 });

@@ -10,15 +10,22 @@ import { PrismaService } from '../prisma.service';
 import type { CreateFriendDTO } from './dtos/create-friend.dto';
 import type { CreateSettlementDTO } from './dtos/create-settlement.dto';
 import type { CreateSharedExpenseDTO } from './dtos/create-shared-expense.dto';
-
-/** The key used for the user themselves in the debt graph (null friend id). */
-const YOU = 'you';
+import {
+  computeBalances,
+  scopeWhere,
+  type SplitScope,
+  YOU,
+} from './split-balances';
+import { SplitGroupsService } from './split-groups.service';
 
 type Participant = { friendId?: string; amountCents?: number };
 
 @Injectable()
 export class SplitService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly groups: SplitGroupsService,
+  ) {}
 
   // ---- friends ----
 
@@ -72,9 +79,10 @@ export class SplitService {
 
   // ---- shared expenses ----
 
-  listExpenses(userId: string) {
+  async listExpenses(userId: string, scope: SplitScope = { kind: 'all' }) {
+    if (scope.kind === 'group') await this.groups.assertGroup(userId, scope.id);
     return this.prisma.sharedExpense.findMany({
-      where: { userId },
+      where: { userId, ...scopeWhere(scope) },
       include: { shares: true },
       orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
     });
@@ -86,35 +94,71 @@ export class SplitService {
       ...dto.participants.map((p) => p.friendId),
     ]);
 
+    if (dto.groupId) await this.groups.assertGroup(userId, dto.groupId);
+
     const shares = computeShares(
       dto.splitMethod,
       dto.amountCents,
       dto.participants,
     );
 
-    return this.prisma.sharedExpense.create({
-      data: {
-        userId,
-        description: dto.description.trim(),
-        amountCents: dto.amountCents,
-        // BASE_CURRENCY, not the reporting preference: this is a stored
-        // amount, and every stored amount in the app is anchored to the
-        // ledger. Stamping the preference meant the label on a row recorded
-        // which currency you happened to be *reading* in that week, while
-        // balances() adds amountCents straight up without ever reading it —
-        // so changing the preference silently re-denominated old rows.
-        currency: BASE_CURRENCY,
-        date: new Date(dto.date),
-        payerFriendId: dto.payerFriendId ?? null,
-        splitMethod: dto.splitMethod,
-        shares: {
-          create: shares.map((s) => ({
-            friendId: s.friendId,
-            amountCents: s.amountCents,
-          })),
+    return this.prisma.$transaction(async (tx) => {
+      if (dto.groupId) {
+        await this.groups.ensureMembers(tx, dto.groupId, [
+          dto.payerFriendId ?? null,
+          ...shares.map((s) => s.friendId),
+        ]);
+      }
+      return tx.sharedExpense.create({
+        data: {
+          userId,
+          description: dto.description.trim(),
+          amountCents: dto.amountCents,
+          // BASE_CURRENCY, not the reporting preference: this is a stored
+          // amount, and every stored amount in the app is anchored to the
+          // ledger. Stamping the preference meant the label on a row recorded
+          // which currency you happened to be *reading* in that week, while
+          // balances() adds amountCents straight up without ever reading it —
+          // so changing the preference silently re-denominated old rows.
+          currency: BASE_CURRENCY,
+          date: new Date(dto.date),
+          payerFriendId: dto.payerFriendId ?? null,
+          splitMethod: dto.splitMethod,
+          groupId: dto.groupId ?? null,
+          shares: {
+            create: shares.map((s) => ({
+              friendId: s.friendId,
+              amountCents: s.amountCents,
+            })),
+          },
         },
-      },
-      include: { shares: true },
+        include: { shares: true },
+      });
+    });
+  }
+
+  /** Into a group, or out of every group with null. */
+  async moveExpense(userId: string, id: string, groupId: string | null) {
+    const expense = await this.prisma.sharedExpense.findFirst({
+      where: { id, userId },
+      include: { shares: { select: { friendId: true } } },
+    });
+    if (!expense) {
+      throw new NotFoundException(`Shared expense with id ${id} was not found`);
+    }
+    if (groupId) await this.groups.assertGroup(userId, groupId);
+    return this.prisma.$transaction(async (tx) => {
+      if (groupId) {
+        await this.groups.ensureMembers(tx, groupId, [
+          expense.payerFriendId,
+          ...expense.shares.map((s) => s.friendId),
+        ]);
+      }
+      return tx.sharedExpense.update({
+        where: { id },
+        data: { groupId },
+        include: { shares: true },
+      });
     });
   }
 
@@ -132,9 +176,10 @@ export class SplitService {
 
   // ---- settlements ----
 
-  listSettlements(userId: string) {
+  async listSettlements(userId: string, scope: SplitScope = { kind: 'all' }) {
+    if (scope.kind === 'group') await this.groups.assertGroup(userId, scope.id);
     return this.prisma.settlement.findMany({
-      where: { userId },
+      where: { userId, ...scopeWhere(scope) },
       orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
     });
   }
@@ -144,17 +189,47 @@ export class SplitService {
       throw new BadRequestException('A settlement needs two different people');
     }
     await this.assertFriends(userId, [dto.fromFriendId, dto.toFriendId]);
-    return this.prisma.settlement.create({
-      data: {
-        userId,
-        fromFriendId: dto.fromFriendId ?? null,
-        toFriendId: dto.toFriendId ?? null,
-        amountCents: dto.amountCents,
-        // Same anchor as createExpense.
-        currency: BASE_CURRENCY,
-        date: dto.date ? new Date(dto.date) : new Date(),
-        note: dto.note?.trim() || null,
-      },
+    if (dto.groupId) await this.groups.assertGroup(userId, dto.groupId);
+    return this.prisma.$transaction(async (tx) => {
+      if (dto.groupId) {
+        await this.groups.ensureMembers(tx, dto.groupId, [
+          dto.fromFriendId ?? null,
+          dto.toFriendId ?? null,
+        ]);
+      }
+      return tx.settlement.create({
+        data: {
+          userId,
+          fromFriendId: dto.fromFriendId ?? null,
+          toFriendId: dto.toFriendId ?? null,
+          amountCents: dto.amountCents,
+          // Same anchor as createExpense.
+          currency: BASE_CURRENCY,
+          date: dto.date ? new Date(dto.date) : new Date(),
+          note: dto.note?.trim() || null,
+          groupId: dto.groupId ?? null,
+        },
+      });
+    });
+  }
+
+  /** Into a group, or out of every group with null. */
+  async moveSettlement(userId: string, id: string, groupId: string | null) {
+    const settlement = await this.prisma.settlement.findFirst({
+      where: { id, userId },
+    });
+    if (!settlement) {
+      throw new NotFoundException(`Settlement with id ${id} was not found`);
+    }
+    if (groupId) await this.groups.assertGroup(userId, groupId);
+    return this.prisma.$transaction(async (tx) => {
+      if (groupId) {
+        await this.groups.ensureMembers(tx, groupId, [
+          settlement.fromFriendId,
+          settlement.toFriendId,
+        ]);
+      }
+      return tx.settlement.update({ where: { id }, data: { groupId } });
     });
   }
 
@@ -172,98 +247,37 @@ export class SplitService {
   // ---- balances ----
 
   /**
-   * Net "who owes whom" across everyone. Each expense adds a debt from each
-   * participant (other than the payer) to the payer; each settlement pays a debt
-   * down. Nets each unordered pair to a single direction, and lists only the
-   * non-zero ones — those involving You first.
+   * Net "who owes whom" in a scope: everything, what is not in a group, or one
+   * group. The netting itself is computeBalances, shared with the group
+   * summaries so a group's "settled" always agrees with its balances.
    */
-  async balances(userId: string) {
+  async balances(userId: string, scope: SplitScope = { kind: 'all' }) {
+    if (scope.kind === 'group') await this.groups.assertGroup(userId, scope.id);
+    const where = { userId, ...scopeWhere(scope) };
     const [friends, expenses, settlements] = await Promise.all([
       this.prisma.friend.findMany({
         where: { userId },
         select: { id: true, name: true },
       }),
       this.prisma.sharedExpense.findMany({
-        where: { userId },
+        where,
         select: {
           payerFriendId: true,
           shares: { select: { friendId: true, amountCents: true } },
         },
       }),
       this.prisma.settlement.findMany({
-        where: { userId },
+        where,
         select: { fromFriendId: true, toFriendId: true, amountCents: true },
       }),
     ]);
 
-    // owe.get(`${from}|${to}`) = how much `from` owes `to`.
-    const owe = new Map<string, number>();
-    const add = (from: string, to: string, amount: number) => {
-      if (from === to || amount === 0) return;
-      const key = `${from}|${to}`;
-      owe.set(key, (owe.get(key) ?? 0) + amount);
-    };
-    for (const e of expenses) {
-      const payer = e.payerFriendId ?? YOU;
-      for (const s of e.shares) {
-        const party = s.friendId ?? YOU;
-        if (party !== payer) add(party, payer, s.amountCents);
-      }
-    }
-    for (const st of settlements) {
-      add(st.fromFriendId ?? YOU, st.toFriendId ?? YOU, -st.amountCents);
-    }
-
-    const nameOf = new Map(friends.map((f) => [f.id, f.name]));
-    const label = (key: string) =>
-      key === YOU ? 'You' : (nameOf.get(key) ?? '(removed)');
-    const idOf = (key: string) => (key === YOU ? null : key);
-
-    const parties = [YOU, ...friends.map((f) => f.id)];
-    const seen = new Set<string>();
-    const balances: {
-      fromId: string | null;
-      fromName: string;
-      toId: string | null;
-      toName: string;
-      amountCents: number;
-    }[] = [];
-    for (const a of parties) {
-      for (const b of parties) {
-        if (a === b) continue;
-        const pair = [a, b].sort().join('|');
-        if (seen.has(pair)) continue;
-        seen.add(pair);
-        const net = (owe.get(`${a}|${b}`) ?? 0) - (owe.get(`${b}|${a}`) ?? 0);
-        if (net > 0) {
-          balances.push({
-            fromId: idOf(a),
-            fromName: label(a),
-            toId: idOf(b),
-            toName: label(b),
-            amountCents: net,
-          });
-        } else if (net < 0) {
-          balances.push({
-            fromId: idOf(b),
-            fromName: label(b),
-            toId: idOf(a),
-            toName: label(a),
-            amountCents: -net,
-          });
-        }
-      }
-    }
-    // Balances involving You first, then largest amounts.
-    balances.sort((x, y) => {
-      const xYou = x.fromId === null || x.toId === null ? 0 : 1;
-      const yYou = y.fromId === null || y.toId === null ? 0 : 1;
-      return xYou - yYou || y.amountCents - x.amountCents;
-    });
-
     // Labelled with what the summed cents actually are, not with the
-    // preference: balances() adds amountCents directly, never converting.
-    return { currency: BASE_CURRENCY, balances };
+    // preference: the netting adds amountCents directly, never converting.
+    return {
+      currency: BASE_CURRENCY,
+      balances: computeBalances(friends, expenses, settlements),
+    };
   }
 
   // ---- helpers ----

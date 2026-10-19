@@ -31,4 +31,9 @@ export class CreateSettlementDTO {
   @IsString()
   @MaxLength(200)
   public readonly note?: string;
+
+  /** The group it settles a debt in; absent = not in a group. */
+  @IsOptional()
+  @IsUUID()
+  public readonly groupId?: string;
 }

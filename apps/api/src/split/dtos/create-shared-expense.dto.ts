@@ -52,4 +52,9 @@ export class CreateSharedExpenseDTO {
   @ValidateNested({ each: true })
   @Type(() => ParticipantDTO)
   public readonly participants!: ParticipantDTO[];
+
+  /** The group it belongs to; absent = not in a group. */
+  @IsOptional()
+  @IsUUID()
+  public readonly groupId?: string;
 }

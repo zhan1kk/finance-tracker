@@ -75,6 +75,7 @@ model User {
   friends             Friend[]
   sharedExpenses      SharedExpense[]
   settlements         Settlement[]
+  splitGroups         SplitGroup[]
 }
 
 /// A person the user splits costs with — a name only, not a real app user.
@@ -87,8 +88,43 @@ model Friend {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  groups SplitGroupMember[]
+
   @@unique([userId, name])
   @@index([userId])
+}
+
+/// A set of people and the costs shared among them — a trip, a flat, a dinner
+/// club. Expenses and settlements can belong to one, so a finished trip can be
+/// put away whole: a group whose balances are all zero is folded out of the
+/// split page's overview, and stays openable from there.
+model SplitGroup {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  members     SplitGroupMember[]
+  expenses    SharedExpense[]
+  settlements Settlement[]
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+/// Who is in a group. Anyone who appears in one of its expenses or settlements
+/// is added automatically; members can also be added before anything is spent.
+model SplitGroupMember {
+  groupId String
+  group   SplitGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  friendId String
+  friend   Friend @relation(fields: [friendId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, friendId])
+  @@index([friendId])
 }
 
 /// A cost someone paid that is shared among several people. `payerFriendId` and
@@ -109,9 +145,15 @@ model SharedExpense {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  /// Null = not in a group. Restrict, not the optional-relation default of
+  /// SetNull: deleting a group must never quietly move its money elsewhere.
+  groupId String?
+  group   SplitGroup? @relation(fields: [groupId], references: [id], onDelete: Restrict)
+
   shares SharedExpenseShare[]
 
   @@index([userId])
+  @@index([groupId])
 }
 
 /// One participant's slice of a SharedExpense. `friendId` null = You.
@@ -141,7 +183,12 @@ model Settlement {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  /// Null = not in a group. Restrict for the same reason as SharedExpense.
+  groupId String?
+  group   SplitGroup? @relation(fields: [groupId], references: [id], onDelete: Restrict)
+
   @@index([userId])
+  @@index([groupId])
 }
 
 /// A user-set conversion rate from a foreign `currency` to the user's base
