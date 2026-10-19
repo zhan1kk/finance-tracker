@@ -1,5 +1,4 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { Logger } from '@nestjs/common';
 import {
   buildPdfExtractionPrompt,
   coerceExtractedTransactions,
@@ -33,10 +32,10 @@ const MAX_TOKENS = 8192;
  *
  * Unlike categorization, a failure here is fatal to the import rather than
  * something that falls back to manual review: there are no rows yet to review.
- * Errors propagate so the caller can report which part of the statement failed.
+ * Errors propagate so the caller can report which part of the statement failed,
+ * and that includes a reply that came back incomplete.
  */
 export class AnthropicPdfExtractor {
-  private readonly logger = new Logger(AnthropicPdfExtractor.name);
   private readonly client: Anthropic;
 
   constructor(
@@ -67,18 +66,24 @@ export class AnthropicPdfExtractor {
       ],
     });
 
+    // Both of these fail the import, the way a cut-off local reply does. A
+    // truncated reply is partial JSON: some transactions in this part are
+    // simply gone, and nothing downstream can tell that from a statement that
+    // really had fewer rows. Keeping what did come back would look like a
+    // complete statement, and there is no review step that would show the gap.
     if (message.stop_reason === 'max_tokens') {
-      // A truncated reply is partial JSON: some transactions in this chunk are
-      // simply gone, and nothing downstream can tell that from a statement that
-      // really had fewer rows. Louder than the categorizer's equivalent warning
-      // because there is no review step that would surface the gap.
-      this.logger.warn(
-        `PDF extraction reply truncated at ${MAX_TOKENS} tokens — rows in this part of the statement were lost. Lower ANTHROPIC_CHUNK_TRANSACTIONS.`,
+      throw new Error(
+        `the reply was cut off at ${MAX_TOKENS} tokens, so some rows in this part would be missing. Lower ANTHROPIC_CHUNK_TRANSACTIONS.`,
       );
     }
-
+    // The tool is forced, so even a part with no transactions comes back as a
+    // call with an empty list. No call at all means the part went unread.
     const block = message.content.find((b) => b.type === 'tool_use');
-    if (!block || block.type !== 'tool_use') return [];
+    if (!block || block.type !== 'tool_use') {
+      throw new Error(
+        `the reply had no transactions in it (stop reason: ${message.stop_reason ?? 'none'})`,
+      );
+    }
 
     const { transactions } = block.input as { transactions?: unknown };
     return coerceExtractedTransactions(transactions);
