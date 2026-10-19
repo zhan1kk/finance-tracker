@@ -476,8 +476,18 @@ function BudgetRow({
             </Button>
           )}
           <button
-            aria-label="Delete budget (all months)"
-            title="Delete this budget entirely (every month)"
+            // A one-off budget only ever had one month; "every month" said it
+            // took more with it than it does.
+            aria-label={
+              budget.oneOffPeriod != null
+                ? `Delete the one-off budget for ${name}`
+                : `Delete the budget for ${name} (all months)`
+            }
+            title={
+              budget.oneOffPeriod != null
+                ? "Delete this one-off budget"
+                : "Delete this budget entirely (every month)"
+            }
             className="text-zinc-400 hover:text-red-600"
             onClick={onDelete}
           >

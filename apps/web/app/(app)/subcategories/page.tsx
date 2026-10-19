@@ -249,7 +249,7 @@ export default function SubcategoriesPage() {
                   onClick={() => {
                     if (
                       window.confirm(
-                        `Delete "${subcategory.name}"?\n\nAny import rules that assign it are deleted too. To just change the wording, click the name and rename it instead — that keeps its transactions and rules.`,
+                        `Delete "${subcategory.name}"?\n\nAny import rules that assign it, and any budget set for it, are deleted too. To just change the wording, click the name and rename it instead — that keeps its transactions, rules and budget.`,
                       )
                     ) {
                       setError(null);

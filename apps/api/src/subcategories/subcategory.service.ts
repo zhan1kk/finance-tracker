@@ -137,6 +137,12 @@ export class SubcategoryService {
       );
     }
 
+    // Budgets set for it go too, through Budget.subcategory's ON DELETE
+    // CASCADE, and that is deliberate (decided 19 October): a budget for a
+    // category that no longer exists measures nothing. A category with any
+    // transaction is refused above, so what goes is only the limit typed in —
+    // and the delete confirmation says so.
+    //
     // Take the rules that pointed here down with it. The FK is ON DELETE SET
     // NULL, so they would otherwise survive with an empty target — and a rule
     // that names a pattern but no target still matched rows on import, claimed
