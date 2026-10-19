@@ -9,7 +9,7 @@ import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
 import type { TransactionCategory } from '../subcategories/types/subcategory.types';
 import { openIousReadFrom } from '../reminders/source-cleanup';
-import { effectOnAccount, signedDelta } from './money';
+import { allocateProportionally, effectOnAccount, signedDelta } from './money';
 import { checkOutlier, type OutlierVerdict } from './outlier';
 import type {
   BulkUpdateInput,
@@ -490,25 +490,29 @@ export class TransactionService {
     }
 
     const type = original.type as TransactionType;
-    // amountBase is linear in amount at a fixed date/rate, so re-converting each
-    // part keeps the base total equal to the original's.
-    const baseFor = (amount: number) =>
-      this.fx.convert(userId, original.account.currency, original.date, amount);
+    // Divided, not re-converted. Rounding each part separately does not add up
+    // to the rounded whole — two halves of $1.50 at 1.08 convert to 69 + 69
+    // against the original's 139 — so a split on a foreign-currency account
+    // lost or invented a cent in every total built on amountBase. Sharing out
+    // the original's own amountBase keeps the sum exact. (The comment that
+    // stood here claimed the conversion was linear; Math.round is not.)
+    const [headBase, ...restBases] = allocateProportionally(
+      original.amountBase,
+      parts.map((p) => p.amount),
+    );
 
     const [head, ...rest] = parts;
-    const restCreates = await Promise.all(
-      rest.map(async (part) => ({
-        amountBase: await baseFor(part.amount),
-        part,
-      })),
-    );
+    const restCreates = rest.map((part, i) => ({
+      amountBase: restBases[i],
+      part,
+    }));
 
     const results = await this.prisma.$transaction([
       this.prisma.transaction.update({
         where: { id },
         data: {
           amount: head.amount,
-          amountBase: await baseFor(head.amount),
+          amountBase: headBase,
           subcategoryId: head.subcategoryId ?? null,
           description: head.description ?? original.description,
           excludeFromStats: head.excludeFromStats ?? false,

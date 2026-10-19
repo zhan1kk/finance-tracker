@@ -873,6 +873,45 @@ describe('API (e2e)', () => {
         .send({ currency: 'USD' })
         .expect(409);
     });
+    // Each part used to be converted on its own, and rounding does not add up:
+    // two halves of a 15.00-tenge charge at 540.37 convert to 1 + 1 cent,
+    // against the whole's 3. Splits now share out the original's own amount.
+    it('keeps the base-currency total when splitting a foreign-currency charge', async () => {
+      const tenge = (
+        await createAccount(0, token, { currency: 'KZT', name: 'Tenge' })
+      ).id;
+      await request(http)
+        .post('/fx/rates')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ currency: 'KZT', date: '2026-09-01', rate: 540.37 })
+        .expect(201);
+      const charge = await request(http)
+        .post('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'EXPENSE',
+          date: '2026-09-02',
+          amount: 1_500,
+          accountId: tenge,
+          subcategoryId: expenseId,
+        })
+        .expect(201);
+      const original = charge.body as { id: string; amountBase: number };
+      expect(original.amountBase).toBe(3);
+
+      const split = await request(http)
+        .post(`/transactions/${original.id}/split`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          parts: [
+            { amount: 750, subcategoryId: expenseId },
+            { amount: 750, subcategoryId: expenseId },
+          ],
+        })
+        .expect(201);
+      const parts = split.body as { amountBase: number }[];
+      expect(parts.reduce((a, p) => a + p.amountBase, 0)).toBe(3);
+    });
   });
 
   describe('transfers', () => {
