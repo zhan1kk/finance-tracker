@@ -1382,7 +1382,12 @@ export class ImportService {
   private async dedupe(accountId: string, staged: StagedRow[]) {
     const existing = await this.prisma.transaction.findMany({
       where: {
-        accountId,
+        // A transfer is stored on the account it left, so one that arrived
+        // here sits on the other account with this one as its counter. Scoped
+        // to accountId alone, re-importing this statement showed that transfer
+        // as a new row to review — commit then skipped it as already
+        // imported, which is right, but only after asking for work on it.
+        ...onThisAccount(accountId),
         dedupeHash: { in: staged.map((r) => r.dedupeHash) },
       },
       select: { dedupeHash: true },
@@ -1430,7 +1435,7 @@ export class ImportService {
     const times = candidates.map((row) => row.date.getTime());
     const existing = await this.prisma.transaction.findMany({
       where: {
-        accountId,
+        ...onThisAccount(accountId),
         amount: { in: [...new Set(candidates.map((row) => row.amount))] },
         // Widened by a day at each end so the calendar-day comparison below is
         // never cut off by a timestamped row sitting near a boundary.
@@ -1439,7 +1444,13 @@ export class ImportService {
           lte: new Date(Math.max(...times) + DAY_MS),
         },
       },
-      select: { date: true, amount: true, type: true, description: true },
+      select: {
+        date: true,
+        amount: true,
+        type: true,
+        accountId: true,
+        description: true,
+      },
     });
     if (existing.length === 0) return;
 
@@ -1451,7 +1462,7 @@ export class ImportService {
     const byKey = new Map<string, string>();
     for (const txn of existing) {
       byKey.set(
-        key(txn.date, txn.type, txn.amount),
+        key(txn.date, directionOn(txn, accountId), txn.amount),
         txn.description?.trim() || 'no description',
       );
     }
@@ -1662,4 +1673,29 @@ export class ImportService {
       );
     }
   }
+}
+
+/**
+ * Every transaction that moved money on an account: its own rows, and the
+ * transfers that arrived from another one (stored on the sending account, with
+ * this one as the counter account).
+ */
+function onThisAccount(accountId: string): Prisma.TransactionWhereInput {
+  return {
+    OR: [{ accountId }, { type: 'TRANSFER', counterAccountId: accountId }],
+  };
+}
+
+/**
+ * Which way a transaction moved money on this account, in the terms a
+ * statement row has: a transfer is an EXPENSE where it left and an INCOME
+ * where it arrived. Statement rows are only ever INCOME or EXPENSE, so
+ * comparing a stored TRANSFER by its own type never matched either side.
+ */
+function directionOn(
+  txn: { type: TransactionType; accountId: string },
+  accountId: string,
+): TransactionType {
+  if (txn.type !== 'TRANSFER') return txn.type;
+  return txn.accountId === accountId ? 'EXPENSE' : 'INCOME';
 }

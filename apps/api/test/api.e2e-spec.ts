@@ -1776,6 +1776,51 @@ describe('API (e2e)', () => {
         ).toBeNull();
       });
 
+      // A transfer is stored on the account it left. Both checks looked only
+      // at rows stored on the statement's own account, so money that arrived
+      // from another account was invisible to them.
+      describe('of a transfer that arrived from another account', () => {
+        it('notes one entered by hand', async () => {
+          const savings = (await createAccount(50_000)).id;
+          await request(http)
+            .post('/transactions')
+            .set('Authorization', `Bearer ${token}`)
+            .send({
+              type: 'TRANSFER',
+              date: '2026-08-12',
+              amount: 5_000,
+              accountId: savings,
+              counterAccountId: accountId,
+            })
+            .expect(201);
+
+          const rows = rowsOf(await importOne('From savings', '50.00'));
+          expect(rows[0].note).toContain('Possible duplicate');
+          // Not money going out the same day.
+          const out = rowsOf(await importOne('To savings', '-50.00'));
+          expect(out[0].note).toBeNull();
+        });
+
+        it('marks a re-imported one a duplicate', async () => {
+          const savings = (await createAccount(50_000)).id;
+          const first = (await importOne('From savings', '50.00')).body as {
+            batch: { id: string; rows: { id: string }[] };
+          };
+          await request(http)
+            .patch(`/imports/${first.batch.id}/rows/${first.batch.rows[0].id}`)
+            .set('Authorization', `Bearer ${token}`)
+            .send({ counterAccountId: savings })
+            .expect(200);
+          await request(http)
+            .post(`/imports/${first.batch.id}/commit`)
+            .set('Authorization', `Bearer ${token}`)
+            .expect(201);
+
+          const again = rowsOf(await importOne('From savings', '50.00'));
+          expect(again[0].status).toBe('DUPLICATE');
+        });
+      });
+
       // Same wording is caught by the fingerprint, which excludes it outright;
       // the weaker note would be redundant and must not overwrite that.
       it('leaves an exact re-import as a plain duplicate', async () => {
@@ -4477,7 +4522,9 @@ describe('API (e2e)', () => {
             hasHeader: true,
           },
         });
-        const batch = staged.body as { id: string; rows: { id: string }[] };
+        const { batch } = staged.body as {
+          batch: { id: string; rows: { id: string }[] };
+        };
         await request(http)
           .patch(`/imports/${batch.id}/rows/${batch.rows[0].id}`)
           .set('Authorization', `Bearer ${token}`)
