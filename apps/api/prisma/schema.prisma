@@ -210,7 +210,6 @@ model ExchangeRate {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, currency, date])
-  @@index([userId, currency, date])
 }
 
 /// A foreign currency the user tracks, with the exchange fee ("spread") their
