@@ -2,6 +2,7 @@ import { OLLAMA_KEEP_ALIVE } from '../../common/ollama';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { optionalSetting } from '../../common/env';
+import { explainAnthropicError } from '../categorization/anthropic.provider';
 import type { CategorizerId } from '../categorization/categorizer.factory';
 import { PrismaService } from '../../prisma.service';
 import { ImportService } from '../import.service';
@@ -194,9 +195,9 @@ export class PdfImportService {
         // no clue whether the model is unreachable or merely too slow for this
         // machine, which are opposite fixes.
         const detail = claude
-          ? `Claude could not read the PDF (part ${i + 1} of ${chunks.length}, model "${model}"): ${
-              err instanceof Error ? err.message : String(err)
-            }`
+          ? `Claude could not read the PDF (part ${i + 1} of ${chunks.length}, model "${model}"): ${explainAnthropicError(
+              err,
+            )}`
           : err instanceof Error && err.name === 'AbortError'
             ? `Ollama took too long to read the PDF (timed out on part ${i + 1} of ${chunks.length}, model "${model}"). A smaller OLLAMA_EXTRACTION_MODEL would read it faster.`
             : err instanceof BadRequestException

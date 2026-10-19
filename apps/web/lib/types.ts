@@ -327,6 +327,8 @@ export type ImportBatch = {
   status: ImportBatchStatus;
   threshold: number;
   provider: string;
+  /** Why the categorizer failed on some rows; null when it ran on all of them. */
+  categorizeError: string | null;
   createdAt: string;
   committedAt: string | null;
   accountId: string;

@@ -416,6 +416,10 @@ model ImportBatch {
   extractMs   Int?
   /// Milliseconds spent categorizing, excluding parsing and extraction.
   categorizeMs Int?
+  /// Why the provider failed on some rows ("Claude did not categorize 12 of 12
+  /// rows: the API key was rejected."). Null when it ran on every row it was
+  /// given. Without it a failed call reads as a model that looked and abstained.
+  categorizeError String?
   createdAt   DateTime          @default(now())
   committedAt DateTime?
 

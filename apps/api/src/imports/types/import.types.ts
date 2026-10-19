@@ -20,6 +20,10 @@ export type CategorizationPrediction = {
   subcategoryId: string | null;
   /** 0..1 */
   confidence: number;
+  /** Why the model never looked at this row: the call failed, so the row went
+   *  to review untouched. Absent when the model ran, even if it abstained —
+   *  an abstention is an answer, a failed call is not. */
+  error?: string;
 };
 
 /**

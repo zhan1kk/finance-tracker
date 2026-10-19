@@ -217,7 +217,13 @@ export class ImportService {
     // Timed on its own, excluding parsing and PDF extraction, so a model
     // comparison is not muddied by how long a file took to read.
     const categorizeStart = Date.now();
-    await this.categorize(userId, dto.accountId, staged, threshold, provider);
+    const categorizeError = await this.categorize(
+      userId,
+      dto.accountId,
+      staged,
+      threshold,
+      provider,
+    );
     const categorizeMs = Date.now() - categorizeStart;
 
     const batch = await this.prisma.importBatch.create({
@@ -229,6 +235,7 @@ export class ImportService {
         provider: provider.name,
         model: provider.modelName ?? null,
         categorizeMs,
+        categorizeError,
         extractMs: dto.extractMs ?? null,
         rows: {
           create: staged.map((row) => ({
@@ -1480,17 +1487,21 @@ export class ImportService {
     }
   }
 
+  /**
+   * Rules first, then the provider for what they leave. Returns why the
+   * provider failed on some rows, or null when it ran on all of them.
+   */
   private async categorize(
     userId: string,
     accountId: string,
     staged: StagedRow[],
     threshold: number,
     provider: CategorizationProvider,
-  ) {
+  ): Promise<string | null> {
     // Only duplicates (rows already in the ledger) skip categorization; an
     // in-file repeat is a real charge and gets auto-categorized like any other.
     const pending = staged.filter((r) => r.status !== 'DUPLICATE');
-    if (pending.length === 0) return;
+    if (pending.length === 0) return null;
 
     // Retired categories are not candidates. This is the only place the
     // categorizer's list is built, and the two-stage prompt derives its parent
@@ -1619,6 +1630,17 @@ export class ImportService {
         row.status = 'NEEDS_REVIEW';
       }
     }
+
+    // A provider that fails hands back empty predictions, which look just like
+    // a model that looked and was unsure. Said out loud on the batch, or the
+    // review screen claims "categorized by anthropic" over rows no model read.
+    const failed = predictions.filter((p) => p.error);
+    if (failed.length === 0) return null;
+    const reasons = [...new Set(failed.map((p) => p.error))].join('; ');
+    const who = PROVIDER_LABELS[provider.name] ?? provider.name;
+    return `${who} did not categorize ${failed.length} of ${forProvider.length} row${
+      forProvider.length === 1 ? '' : 's'
+    }: ${reasons}.`;
   }
 
   private async resolveMapping(
@@ -1680,6 +1702,12 @@ export class ImportService {
     }
   }
 }
+
+/** How a provider is named to a person reading the review screen. */
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: 'Claude',
+  ollama: 'The local model',
+};
 
 /**
  * Every transaction that moved money on an account: its own rows, and the

@@ -213,11 +213,13 @@ export class OllamaCategorizationProvider implements CategorizationProvider {
     subcategories: SubcategoryLite[],
     allowedIds: Set<string>,
   ): Promise<CategorizationPrediction[]> {
-    const fallback = chunk.map((c) => ({
-      rowId: c.rowId,
-      subcategoryId: null,
-      confidence: 0,
-    }));
+    const fallback = (error: string): CategorizationPrediction[] =>
+      chunk.map((c) => ({
+        rowId: c.rowId,
+        subcategoryId: null,
+        confidence: 0,
+        error,
+      }));
 
     // Same aliasing as the Anthropic provider: small local models are even
     // easier to derail with 64-char ids to copy verbatim, and shorter replies
@@ -259,13 +261,17 @@ export class OllamaCategorizationProvider implements CategorizationProvider {
 
       if (!res.ok) {
         this.logger.error(`Ollama categorization failed: HTTP ${res.status}`);
-        return fallback;
+        return fallback(
+          `Ollama answered HTTP ${res.status}. Is the model "${this.model}" pulled?`,
+        );
       }
 
       // Non-streaming /api/chat returns { message: { content: "<json string>" } }.
       const data = (await res.json()) as { message?: { content?: unknown } };
       const content = data.message?.content;
-      if (typeof content !== 'string') return fallback;
+      if (typeof content !== 'string') {
+        return fallback("the local model's reply had no categories in it");
+      }
 
       const items = (JSON.parse(content) as { items?: unknown }).items;
       // Predictions come back in aliased-chunk order; restore the real row ids.
@@ -279,7 +285,15 @@ export class OllamaCategorizationProvider implements CategorizationProvider {
       this.logger.error(
         `Ollama categorization failed: ${err instanceof Error ? err.message : String(err)}`,
       );
-      return fallback;
+      return fallback(
+        err instanceof Error && err.name === 'AbortError'
+          ? 'the local model took too long'
+          : err instanceof SyntaxError
+            ? "the local model's reply was not valid JSON"
+            : err instanceof TypeError && err.message === 'fetch failed'
+              ? `this server could not reach Ollama at ${this.baseUrl}`
+              : `the local model failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     } finally {
       clearTimeout(timer);
     }

@@ -4,6 +4,8 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.setup';
+import { CategorizerFactory } from '../src/imports/categorization/categorizer.factory';
+import type { CategorizationProvider } from '../src/imports/types/import.types';
 import { PrismaService } from '../src/prisma.service';
 import { TelegramService } from '../src/telegram/telegram.service';
 
@@ -2905,6 +2907,52 @@ describe('API (e2e)', () => {
         source: 'RULE',
         excludeFromStats: true,
       });
+    });
+
+    // A failed Claude call hands back empty predictions, which look just like
+    // a model that read every row and was unsure of all of them. The review
+    // screen said "categorized by anthropic" over rows no model had read.
+    it('says on the batch when the categorizer failed', async () => {
+      const failing: CategorizationProvider = {
+        name: 'anthropic',
+        modelName: 'claude-test',
+        categorize: (inputs) =>
+          Promise.resolve(
+            inputs.map((i) => ({
+              rowId: i.rowId,
+              subcategoryId: null,
+              confidence: 0,
+              error: 'the API key was rejected',
+            })),
+          ),
+      };
+      const create = jest
+        .spyOn(app.get(CategorizerFactory), 'create')
+        .mockReturnValue(failing);
+      try {
+        const res = await importAndWait(token, {
+          accountId,
+          filename: 'statement.csv',
+          csv: CSV,
+          mapping: MAPPING,
+          categorizer: 'anthropic',
+        });
+        expect(res.status).toBe(201);
+        const { batch } = res.body as { batch: Batch };
+        expect(batch.categorizeError).toBe(
+          'Claude did not categorize 3 of 3 rows: the API key was rejected.',
+        );
+        expect(batch.rows.map((r) => r.status)).toEqual([
+          'NEEDS_REVIEW',
+          'NEEDS_REVIEW',
+          'NEEDS_REVIEW',
+        ]);
+      } finally {
+        create.mockRestore();
+      }
+
+      // A run that worked says nothing, even with rows left for review.
+      expect((await doImport()).categorizeError).toBeNull();
     });
 
     it('commits only resolved rows, creates transactions and moves the balance', async () => {
