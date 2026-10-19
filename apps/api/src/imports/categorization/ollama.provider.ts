@@ -68,16 +68,27 @@ export class OllamaCategorizationProvider implements CategorizationProvider {
     // Sequential on purpose (unlike the Anthropic provider): a local Ollama
     // serves one generation at a time by default, so parallel chunks would just
     // queue against each other and race the per-request timeout.
+    //
+    // One direction per chunk. Which parents a row may be offered depends on
+    // whether it is money in or out, and a chunk is asked once for all of its
+    // rows — so a chunk mixing the two offered every row the first row's list,
+    // and an income behind an expense could only be filed under spending.
+    // Callers match predictions by rowId, so the regrouping is invisible to them.
     const results: CategorizationPrediction[] = [];
-    for (let i = 0; i < inputs.length; i += CHUNK_SIZE) {
-      const chunk = inputs.slice(i, i + CHUNK_SIZE);
-      results.push(
-        ...(await this.categorizeChunkTwoStage(
-          chunk,
-          subcategories,
-          allowedIds,
-        )),
-      );
+    const byDirection = [
+      inputs.filter((r) => r.type !== 'INCOME'),
+      inputs.filter((r) => r.type === 'INCOME'),
+    ];
+    for (const rows of byDirection) {
+      for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+        results.push(
+          ...(await this.categorizeChunkTwoStage(
+            rows.slice(i, i + CHUNK_SIZE),
+            subcategories,
+            allowedIds,
+          )),
+        );
+      }
     }
     return results;
   }
@@ -171,19 +182,21 @@ export class OllamaCategorizationProvider implements CategorizationProvider {
       const content = data.message?.content;
       if (typeof content !== 'string') return chosen;
       const items = (JSON.parse(content) as { items?: unknown }).items;
-      if (!Array.isArray(items)) return chosen;
-      items.forEach((raw, i) => {
-        const item = raw as Record<string, unknown>;
-        const alias =
-          typeof item?.subcategoryId === 'string' ? item.subcategoryId : null;
-        const index = alias ? Number(alias.replace(/^p/, '')) : NaN;
-        const parent = parents[index - 1];
-        // Same positional fallback as the subcategory stage: the model is
-        // unreliable at echoing an id, so when nothing matches but the counts
-        // line up, order is the only thing left to trust.
-        const row = chunk[i];
-        if (parent && row) chosen.set(row.rowId, parent);
+      // Read with the subcategory stage's own matching rule: by the ids the
+      // model echoes, and by position only when it returned one item per row.
+      // Matching by position alone moved every row after a skipped one onto
+      // its neighbour's parent. Parents are named "p1".."pN"; a bare "1" is
+      // read too, as it always was.
+      const parentFor = new Map<string, string>();
+      parents.forEach((parent, i) => {
+        parentFor.set(`p${i + 1}`, parent);
+        parentFor.set(String(i + 1), parent);
       });
+      coercePredictions(items, aliased, new Set(parents), parentFor).forEach(
+        (p, i) => {
+          if (p.subcategoryId) chosen.set(chunk[i].rowId, p.subcategoryId);
+        },
+      );
       return chosen;
     } catch (err) {
       this.logger.error(

@@ -123,4 +123,75 @@ describe('OllamaCategorizationProvider', () => {
       { rowId: 'r1', subcategoryId: null, confidence: 0 },
     ]);
   });
+
+  /** A reply whose items are given as-is: the model's own (mis)behaviour. */
+  const replyWith = (items: unknown[]) =>
+    ({
+      ok: true,
+      json: () =>
+        Promise.resolve({ message: { content: JSON.stringify({ items }) } }),
+    }) as unknown as Response;
+
+  // A chunk was asked once for all of its rows, with the parent list of its
+  // first row — so an income behind an expense was only offered spending.
+  it('never offers an income row the spending categories', async () => {
+    const fetch = jest.spyOn(global, 'fetch').mockResolvedValue(replyWith([]));
+    const both: SubcategoryLite[] = [
+      ...subs,
+      { id: 'b', name: 'Salary', category: 'Income' },
+    ];
+    await provider.categorize(
+      [input('r1'), { ...input('r2'), type: 'INCOME', description: 'ACME' }],
+      both,
+    );
+
+    const prompts = fetch.mock.calls.map(
+      (c) =>
+        (
+          JSON.parse(c[1]?.body as string) as {
+            messages: { content: string }[];
+          }
+        ).messages[1].content,
+    );
+    const incomeAsk = prompts.find((p) => p.includes('INCOME'));
+    expect(incomeAsk).toContain('Income');
+    expect(incomeAsk).not.toContain('Expenses');
+    expect(incomeAsk).not.toContain('EXPENSE');
+  });
+
+  // Matching by position alone moved every row after a skipped one onto its
+  // neighbour's parent. With no ids to go on and a reply one item short,
+  // nothing can be lined up safely, so all three go to review.
+  it('lines nothing up when the parent reply skips a row and gives no ids', async () => {
+    const fetch = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(
+        replyWith([{ subcategoryId: 'p1' }, { subcategoryId: 'p1' }]),
+      )
+      .mockResolvedValue(replyWith([]));
+
+    const result = await provider.categorize(
+      [input('r1'), input('r2'), input('r3')],
+      subs,
+    );
+    expect(result.every((p) => p.subcategoryId === null)).toBe(true);
+    // No parent was trusted, so no subcategory question was asked.
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('still lines up a parent reply by position when it has one item per row', async () => {
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(
+        replyWith([{ subcategoryId: 'p1' }, { subcategoryId: '1' }]),
+      )
+      .mockResolvedValueOnce(
+        replyWith([
+          { rowId: '1', subcategoryId: 'c1', confidence: 0.8 },
+          { rowId: '2', subcategoryId: 'c1', confidence: 0.8 },
+        ]),
+      );
+    const result = await provider.categorize([input('r1'), input('r2')], subs);
+    expect(result.map((p) => p.subcategoryId)).toEqual(['a', 'a']);
+  });
 });
