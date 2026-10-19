@@ -21,6 +21,7 @@ import type { CreateImportDTO } from './dtos/create-import.dto';
 import { MappingService } from './mapping.service';
 import { numericSetting } from '../common/env';
 import { dedupeHash, normalizeMerchant } from './normalization';
+import { openIousReadFrom } from '../reminders/source-cleanup';
 import { parseAmount, parseDate } from './parsing';
 import { RulesService } from './rules.service';
 
@@ -959,6 +960,10 @@ export class ImportService {
           },
         }),
       ),
+      // Before the delete below, which nulls the link this matches on.
+      this.prisma.reminder.deleteMany({
+        where: openIousReadFrom({ id: { in: transactionIds } }),
+      }),
       this.prisma.transaction.deleteMany({
         where: { id: { in: transactionIds } },
       }),

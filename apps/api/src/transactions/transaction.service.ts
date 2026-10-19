@@ -8,6 +8,7 @@ import { type Account, Prisma } from '@prisma/client';
 import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
 import type { TransactionCategory } from '../subcategories/types/subcategory.types';
+import { openIousReadFrom } from '../reminders/source-cleanup';
 import { effectOnAccount, signedDelta } from './money';
 import { checkOutlier, type OutlierVerdict } from './outlier';
 import type {
@@ -22,6 +23,8 @@ import type {
 const TRANSACTION_INCLUDE = {
   subcategory: true,
   reimbursements: true,
+  // So a delete can say up front that it takes an IOU reminder with it.
+  reminder: { select: { id: true, label: true, kind: true, done: true } },
 } as const;
 
 /** Links in one income category before it is treated as a refund category. */
@@ -405,10 +408,15 @@ export class TransactionService {
       where: { transactionId: id },
       data: { status: 'SKIPPED', transactionId: null },
     });
+    // Same ordering, same reason: the reminder is matched by its source link.
+    const dropOpenIous = this.prisma.reminder.deleteMany({
+      where: openIousReadFrom({ id }),
+    });
 
     if (transaction.type === 'TRANSFER') {
       await this.prisma.$transaction([
         releaseImportRow,
+        dropOpenIous,
         this.prisma.transaction.delete({ where: { id } }),
         this.prisma.account.update({
           where: { id: transaction.accountId },
@@ -429,6 +437,7 @@ export class TransactionService {
     const delta = signedDelta(transaction.type, transaction.amount);
     await this.prisma.$transaction([
       releaseImportRow,
+      dropOpenIous,
       this.prisma.transaction.delete({ where: { id } }),
       this.prisma.account.update({
         where: { id: transaction.accountId },
@@ -619,6 +628,9 @@ export class TransactionService {
         where: { transactionId: { in: ids } },
         data: { status: 'SKIPPED', transactionId: null },
       }),
+      this.prisma.reminder.deleteMany({
+        where: openIousReadFrom({ id: { in: ids }, account: { userId } }),
+      }),
       this.prisma.transaction.deleteMany({
         where: { id: { in: ids }, account: { userId } },
       }),
@@ -646,6 +658,9 @@ export class TransactionService {
       await tx.importRow.updateMany({
         where: { batch: { userId }, transactionId: { not: null } },
         data: { status: 'SKIPPED', transactionId: null },
+      });
+      await tx.reminder.deleteMany({
+        where: openIousReadFrom({ account: { userId } }),
       });
       const { count } = await tx.transaction.deleteMany({
         where: { account: { userId } },

@@ -82,6 +82,16 @@ function reviveFilters(saved: unknown): Filters | null {
   };
 }
 
+/**
+ * The open IOU reminder read from this transaction, if any. Deleting the
+ * transaction deletes that reminder too (it cannot be settled without the
+ * expense), so the confirmation names it.
+ */
+function openIou(t: Transaction) {
+  const r = t.reminder;
+  return r && !r.done && (r.kind === "ask" || r.kind === "pay") ? r : null;
+}
+
 export default function TransactionsPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -437,11 +447,16 @@ export default function TransactionsPage() {
               })
             }
             onDelete={() => {
+              const ious = selectedItems.filter((t) => openIou(t) !== null);
               if (
                 window.confirm(
                   `Delete ${selectedItems.length} transaction${
                     selectedItems.length === 1 ? "" : "s"
-                  }? Balances are reversed. This cannot be undone.`,
+                  }? Balances are reversed. This cannot be undone.${
+                    ious.length === 0
+                      ? ""
+                      : `\n\n${ious.length === 1 ? "An open IOU reminder was" : `${ious.length} open IOU reminders were`} read from ${ious.length === 1 ? "one of them and is" : "them and are"} deleted too.`
+                  }`,
                 )
               ) {
                 bulkDelete.mutate(selectedItems.map((t) => t.id));
@@ -500,7 +515,14 @@ export default function TransactionsPage() {
                   onSplit={() => setSplitting(t)}
                   onChange={invalidateAll}
                   onDelete={() => {
-                    if (window.confirm("Delete this transaction?")) {
+                    const iou = openIou(t);
+                    if (
+                      window.confirm(
+                        iou
+                          ? `Delete this transaction?\n\nThe reminder "${iou.label}" was read from it and is deleted too.`
+                          : "Delete this transaction?",
+                      )
+                    ) {
                       remove.mutate(t.id);
                     }
                   }}
@@ -568,7 +590,7 @@ export default function TransactionsPage() {
           title="Delete every transaction?"
           body={`This removes all ${total} transaction${
             total === 1 ? "" : "s"
-          } across every account, and each account falls back to its starting balance. Imports, budgets and reminders stay, but the history they describe is gone. There is no undo.`}
+          } across every account, and each account falls back to its starting balance. Imports, budgets and reminders stay, but the history they describe is gone — except open IOU reminders read from a transaction, which go with it. There is no undo.`}
           confirmLabel="Delete everything"
           busy={removeAll.isPending}
           onCancel={() => setConfirmingWipe(false)}

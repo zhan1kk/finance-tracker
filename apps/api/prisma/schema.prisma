@@ -646,6 +646,10 @@ model Reminder {
   kind        String    @default("payment")
   /// Dismissed / handled.
   done        Boolean   @default(false)
+  /// Set when the user deleted it. The row stays, with done set too, because
+  /// it is what stops a scan from reading the same transaction into the same
+  /// reminder again (one reminder per source transaction). Hidden everywhere.
+  deletedAt   DateTime?
   /// Date of the last Telegram nudge, so a day's job never pings twice.
   lastPingedOn DateTime?
   createdAt   DateTime  @default(now())

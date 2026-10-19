@@ -69,7 +69,17 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     }
 
     const bot = new Bot(token);
+    this.register(bot);
+    this.bot = bot;
+    this.startPolling(bot);
+  }
 
+  /**
+   * Wires every command and button onto a bot. Separate from onModuleInit so a
+   * test can hand in a bot whose API calls it records instead of sending —
+   * which is the only way to check what a button press actually answers.
+   */
+  register(bot: Bot) {
     bot.command(['start', 'help'], async (ctx) => {
       await ctx.reply(HELP_TEXT);
     });
@@ -234,6 +244,62 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         await this.editOrLog(ctx, text);
         return;
       }
+      if (data.startsWith('rdel:')) {
+        // Two taps, like every delete in the web app. The question replaces the
+        // nudge's buttons in place; its text stays, so it is clear which
+        // reminder is meant.
+        const id = data.slice('rdel:'.length);
+        const label = await this.telegram.reminderLabel(String(chatId), id);
+        if (label === null) {
+          await ctx.answerCallbackQuery({
+            text: 'That reminder is gone already.',
+          });
+          return;
+        }
+        try {
+          await ctx.editMessageReplyMarkup({
+            reply_markup: new InlineKeyboard()
+              .text('🗑 Yes, delete it', `rdelok:${id}`)
+              .text('Keep it', `rdelno:${id}`),
+          });
+          await ctx.answerCallbackQuery({ text: `Delete "${label}"?` });
+        } catch (err: unknown) {
+          // Answered only after the edit: a press can be answered once, and
+          // without the question showing, the tap must not look ignored.
+          this.logger.warn(
+            `Could not show delete confirmation: ${String(err)}`,
+          );
+          await ctx.answerCallbackQuery({
+            text: 'Could not ask here — delete it in the app instead.',
+            show_alert: true,
+          });
+        }
+        return;
+      }
+      if (data.startsWith('rdelok:')) {
+        const text = await this.telegram.deleteReminder(
+          String(chatId),
+          data.slice('rdelok:'.length),
+        );
+        // Same order as Paid: the toast is the confirmation, the edit (which
+        // also drops the buttons) is the nicer rendering on top.
+        await ctx.answerCallbackQuery({ text });
+        await this.editOrLog(ctx, text);
+        return;
+      }
+      if (data.startsWith('rdelno:')) {
+        await ctx.answerCallbackQuery({ text: 'Kept.' });
+        try {
+          await ctx.editMessageReplyMarkup({
+            reply_markup: nudgeKeyboard(data.slice('rdelno:'.length)),
+          });
+        } catch (err: unknown) {
+          this.logger.warn(
+            `Could not restore the nudge buttons: ${String(err)}`,
+          );
+        }
+        return;
+      }
       if (data.startsWith('acct:')) {
         const text = await this.telegram.setDefaultAccount(
           String(chatId),
@@ -255,9 +321,6 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     bot.catch((err) => {
       this.logger.error(`Bot handler error: ${String(err.error)}`);
     });
-
-    this.bot = bot;
-    this.startPolling(bot);
   }
 
   /**
@@ -378,6 +441,23 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     this.stopping = true;
     await this.bot?.stop();
   }
+}
+
+/** The buttons on a reminder nudge: sent by the daily ping, restored on Cancel. */
+export function nudgeButtons(
+  reminderId: string,
+): { label: string; data: string }[] {
+  return [
+    { label: '✓ Paid', data: `rdone:${reminderId}` },
+    { label: '🗑 Delete', data: `rdel:${reminderId}` },
+  ];
+}
+
+function nudgeKeyboard(reminderId: string): InlineKeyboard {
+  return nudgeButtons(reminderId).reduce(
+    (kb, b) => kb.text(b.label, b.data),
+    new InlineKeyboard(),
+  );
 }
 
 /** Turns a reply's button grid into a grammY inline keyboard. */

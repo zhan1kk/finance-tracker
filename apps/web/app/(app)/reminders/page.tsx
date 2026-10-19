@@ -42,12 +42,18 @@ function cadenceLabel(cadence: RecurringCadence, interval: number): string {
 function IncomePicker({
   currency,
   pending,
+  canLink,
   onPick,
+  onWithoutLink,
   onCancel,
 }: {
   currency: string;
   pending: boolean;
+  /** False when there is no expense to reimburse — only "mark it" is offered. */
+  canLink: boolean;
   onPick: (transactionId: string) => void;
+  /** Settles it without linking an income: cash, or money not in the ledger. */
+  onWithoutLink: () => void;
   onCancel: () => void;
 }) {
   const [search, setSearch] = useState("");
@@ -65,7 +71,40 @@ function IncomePicker({
           debounced ? `&search=${encodeURIComponent(debounced)}` : ""
         }`,
       ),
+    enabled: canLink,
   });
+
+  const withoutLink = (
+    <button
+      type="button"
+      disabled={pending}
+      className="text-xs text-zinc-600 underline hover:text-zinc-900 disabled:opacity-50 dark:text-zinc-300 dark:hover:text-zinc-100"
+      onClick={onWithoutLink}
+    >
+      {canLink ? "It came another way — just mark it received" : "Mark it received"}
+    </button>
+  );
+
+  if (!canLink) {
+    return (
+      <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-800 dark:bg-zinc-800/40">
+        <p className="mb-1 text-xs text-zinc-500">
+          There is no expense to link the repayment to, so this only records that
+          you were paid back.
+        </p>
+        <div className="flex items-center gap-3">
+          {withoutLink}
+          <button
+            type="button"
+            className="text-xs text-zinc-500 hover:underline"
+            onClick={onCancel}
+          >
+            cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const label = (t: Transaction) =>
     `${formatDate(t.date)} · ${t.description || t.subcategory?.name || "income"} · ${formatCents(t.amount, currency)}`;
@@ -113,13 +152,16 @@ function IncomePicker({
           </p>
         )}
       </div>
-      <button
-        type="button"
-        className="mt-1 text-xs text-zinc-500 hover:underline"
-        onClick={onCancel}
-      >
-        cancel
-      </button>
+      <div className="mt-1 flex items-center gap-3">
+        {withoutLink}
+        <button
+          type="button"
+          className="text-xs text-zinc-500 hover:underline"
+          onClick={onCancel}
+        >
+          cancel
+        </button>
+      </div>
     </div>
   );
 }
@@ -326,16 +368,14 @@ export default function RemindersPage() {
     const isInstallment = r.installmentsTotal != null;
     const installmentRemaining =
       isInstallment && (r.installmentsPaid ?? 0) < (r.installmentsTotal ?? 0);
-    // A plain recurring payment (cadence + a due date, no fixed plan) can be
-    // rolled forward a period when paid, instead of only being dismissed.
-    const canAdvanceRecurring =
-      !isInstallment &&
-      r.kind === "payment" &&
-      !!r.cadence &&
-      r.cadence !== "one-off" &&
-      !!r.dueDate;
+    // Paid records a payment: a plan or a recurring bill rolls forward and
+    // stays open, anything else is marked done and kept, as the record of it.
+    // An "Ask …" is settled by Received instead — the money comes the other
+    // way. Installments already complete have nothing left to pay.
     const showMarkPaid =
-      !r.done && (installmentRemaining || canAdvanceRecurring);
+      !r.done &&
+      r.kind !== "ask" &&
+      (!isInstallment || installmentRemaining);
     // A due date already in the past on an open reminder = a payment that fell
     // due but hasn't been recorded yet (e.g. the statement isn't imported).
     const overdue = !r.done && !!r.dueDate && new Date(r.dueDate) < startOfToday;
@@ -394,10 +434,9 @@ export default function RemindersPage() {
       )}
       {r.note && <span className="text-xs text-zinc-400">— {r.note}</span>}
       <span className="ml-auto flex items-center gap-1">
-        {/* A friend owes them ("Ask …" read from an expense): settle it by
-            linking the income that paid it back. */}
+        {/* A friend owes them: settle it by linking the income that paid it
+            back, or, when there is no expense to link it to, just record it. */}
         {!r.done &&
-          r.sourceTransaction?.type === "EXPENSE" &&
           r.kind === "ask" && (
             <Button
               variant="ghost"
@@ -420,24 +459,27 @@ export default function RemindersPage() {
             Mark paid
           </Button>
         )}
-        <Button
-          variant="ghost"
-          onClick={() => {
-            setListError(null);
-            setDone.mutate({ id: r.id, done: !r.done });
-          }}
-        >
-          {r.done ? "Reopen" : "Done"}
-        </Button>
+        {/* Only for undoing a Paid or Received pressed by mistake. Dismissing
+            one you no longer want is Delete. */}
+        {r.done && (
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setListError(null);
+              setDone.mutate({ id: r.id, done: false });
+            }}
+          >
+            Reopen
+          </Button>
+        )}
         <button
-          aria-label="Delete reminder"
+          aria-label={`Delete reminder ${r.label}`}
+          title="Delete reminder"
           className="px-1 text-zinc-400 hover:text-red-600"
           onClick={() => {
-            // Deleting frees the source transaction to raise this reminder
-            // again on the next scan; "Done" is the way to settle it for good.
             if (
               !window.confirm(
-                `Delete the reminder "${r.label}"? A later scan may recreate it — use Done to settle it instead.`,
+                `Delete the reminder "${r.label}"?\n\nIt stops nudging you, and a later scan will not bring it back.`,
               )
             )
               return;
@@ -452,9 +494,20 @@ export default function RemindersPage() {
         <div className="w-full">
           <IncomePicker
             currency={r.currency ?? baseCurrency}
-            pending={linkPayment.isPending}
+            pending={linkPayment.isPending || setDone.isPending}
+            // Linking needs the expense the reminder was read from. Without
+            // one (a reminder typed in, or one whose expense was deleted
+            // before such reminders were cleaned up with it) there is nothing
+            // to reimburse, only the fact of being paid back to record.
+            canLink={r.sourceTransaction?.type === "EXPENSE"}
             onPick={(transactionId) =>
               linkPayment.mutate({ id: r.id, transactionId })
+            }
+            onWithoutLink={() =>
+              setDone.mutate(
+                { id: r.id, done: true },
+                { onSuccess: () => setSettling(null) },
+              )
             }
             onCancel={() => setSettling(null)}
           />
@@ -688,7 +741,7 @@ export default function RemindersPage() {
         {done.length > 0 && (
           <details className="mt-4">
             <summary className="cursor-pointer text-sm text-zinc-500">
-              Dismissed ({done.length})
+              Paid and settled ({done.length})
             </summary>
             <ul className="mt-2 flex flex-col">{done.map(row)}</ul>
           </details>

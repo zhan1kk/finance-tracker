@@ -18,7 +18,7 @@ import {
   type ReminderCandidate,
 } from './reminder-prompt';
 import { detectRecurringBills } from './recurring-detect';
-import { advanceDate, planSettlement } from './settle';
+import { advanceDate, planDeletion, planSettlement } from './settle';
 import { startOfUtcDay } from '../common/date';
 
 const REMINDER_INCLUDE = {
@@ -55,7 +55,7 @@ export class ReminderService {
     // payment was imported or typed in by hand makes no difference.
     await this.reconcile(userId);
     return this.prisma.reminder.findMany({
-      where: { userId },
+      where: { userId, deletedAt: null },
       orderBy: [{ done: 'asc' }, { dueDate: 'asc' }, { createdAt: 'asc' }],
       include: REMINDER_INCLUDE,
     });
@@ -229,26 +229,22 @@ export class ReminderService {
    * payment is in. For a plain recurring bill (a cadence + a due date, no fixed
    * plan): rolls the due date forward one period and keeps the reminder open, so
    * it nags again next cycle instead of being dismissed forever. Anything else
-   * (a one-off with no cadence) has nothing to advance — dismiss it with Done.
+   * (a one-off with no cadence) is simply paid: it is marked done and kept, so
+   * it stays on the list as a record of the payment — the same thing the
+   * Telegram nudge's Paid button has always done with one.
    */
   async markPaid(userId: string, id: string) {
     const reminder = await this.prisma.reminder.findFirst({
-      where: { id, userId },
+      where: { id, userId, deletedAt: null },
     });
     if (!reminder) {
       throw new NotFoundException(`Reminder with id ${id} was not found`);
     }
 
     const plan = planSettlement(reminder);
-    if (plan.kind === 'nothing-to-advance') {
-      throw new BadRequestException(
-        'This reminder has nothing to advance — use Done to dismiss it.',
-      );
-    }
-
     return this.prisma.reminder.update({
       where: { id },
-      data: plan.data,
+      data: plan.kind === 'nothing-to-advance' ? { done: true } : plan.data,
       include: REMINDER_INCLUDE,
     });
   }
@@ -261,7 +257,7 @@ export class ReminderService {
    */
   async linkPayment(userId: string, id: string, incomeTransactionId: string) {
     const reminder = await this.prisma.reminder.findFirst({
-      where: { id, userId },
+      where: { id, userId, deletedAt: null },
       select: { id: true, sourceTransactionId: true },
     });
     if (!reminder) {
@@ -580,19 +576,25 @@ export class ReminderService {
     });
   }
 
+  /** Deletes a reminder for good, as far as the user can tell — see planDeletion. */
   async remove(userId: string, id: string) {
-    await this.assertOwn(userId, id);
-    await this.prisma.reminder.delete({ where: { id } });
+    const plan = planDeletion(await this.assertOwn(userId, id), new Date());
+    if (plan.kind === 'remove') {
+      await this.prisma.reminder.delete({ where: { id } });
+    } else {
+      await this.prisma.reminder.update({ where: { id }, data: plan.data });
+    }
   }
 
   private async assertOwn(userId: string, id: string) {
     const found = await this.prisma.reminder.findFirst({
-      where: { id, userId },
-      select: { id: true },
+      where: { id, userId, deletedAt: null },
+      select: { id: true, sourceTransactionId: true },
     });
     if (!found) {
       throw new NotFoundException(`Reminder with id ${id} was not found`);
     }
+    return found;
   }
 }
 

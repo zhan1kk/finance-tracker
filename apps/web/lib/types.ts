@@ -157,6 +157,8 @@ export type Transaction = {
   excludeFromStats: boolean;
   parentTransactionId: string | null;
   reimbursements: Omit<Transaction, 'subcategory' | 'reimbursements'>[];
+  /** The reminder read from this transaction's description, if any. */
+  reminder?: { id: string; label: string; kind: string; done: boolean } | null;
   /** Present on create responses: non-blocking "unusual amount" warning. */
   outlier?: { direction: 'high' | 'low'; medianCents: number } | null;
   /** Present on create responses: the (source) account's balance after booking. */

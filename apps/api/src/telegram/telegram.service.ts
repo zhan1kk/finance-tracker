@@ -4,7 +4,7 @@ import { BASE_CURRENCY } from '../fx/fx';
 import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
 import { daysUntil } from '../reminders/ping-schedule';
-import { planSettlement } from '../reminders/settle';
+import { planDeletion, planSettlement } from '../reminders/settle';
 import { TransactionService } from '../transactions/transaction.service';
 import {
   matchSubcategory,
@@ -471,5 +471,50 @@ export class TelegramService {
           }.`;
     }
     return `✅ ${reminder.label} paid. Next due ${when(plan.nextDue)}.`;
+  }
+
+  /** The label a delete confirmation names, or null when it is gone already. */
+  async reminderLabel(
+    chatId: string,
+    reminderId: string,
+  ): Promise<string | null> {
+    const user = await this.prisma.user.findUnique({
+      where: { telegramChatId: chatId },
+      select: { id: true },
+    });
+    if (!user) return null;
+    const reminder = await this.prisma.reminder.findFirst({
+      where: { id: reminderId, userId: user.id, deletedAt: null },
+      select: { label: true },
+    });
+    return reminder?.label ?? null;
+  }
+
+  /**
+   * Deletes a reminder from its nudge — the same deletion as the web app's,
+   * through the same planDeletion. Scoped to the chat's own user.
+   */
+  async deleteReminder(chatId: string, reminderId: string): Promise<string> {
+    const user = await this.prisma.user.findUnique({
+      where: { telegramChatId: chatId },
+    });
+    if (!user) return 'This chat is not linked.';
+
+    const reminder = await this.prisma.reminder.findFirst({
+      where: { id: reminderId, userId: user.id, deletedAt: null },
+      select: { id: true, label: true, sourceTransactionId: true },
+    });
+    if (!reminder) return 'That reminder is gone already.';
+
+    const plan = planDeletion(reminder, new Date());
+    if (plan.kind === 'remove') {
+      await this.prisma.reminder.delete({ where: { id: reminder.id } });
+    } else {
+      await this.prisma.reminder.update({
+        where: { id: reminder.id },
+        data: plan.data,
+      });
+    }
+    return `🗑 Deleted: ${reminder.label}. No more nudges for it.`;
   }
 }

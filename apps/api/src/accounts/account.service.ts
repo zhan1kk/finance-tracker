@@ -159,7 +159,10 @@ export class AccountService {
         // to settling against whichever payment it sees first. Blocked rather
         // than cascaded: unlike a categorization rule, the reminder is still
         // wanted after the account goes, just not scoped this way.
-        this.prisma.reminder.count({ where: { userId, accountId: id } }),
+        // Deleted reminders are invisible and must not block the delete.
+        this.prisma.reminder.count({
+          where: { userId, accountId: id, deletedAt: null },
+        }),
       ]);
     if (recurringCount > 0) {
       throw new ConflictException(

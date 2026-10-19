@@ -105,3 +105,28 @@ export function planSettlement(reminder: SettleInput): Settlement {
 
   return { kind: 'nothing-to-advance' };
 }
+
+/**
+ * What deleting a reminder means, for the same two callers as planSettlement
+ * (the web app's Delete and the Telegram nudge's Delete).
+ *
+ * A reminder read from a transaction is hidden, not removed: scan() treats a
+ * transaction as already read only while some reminder row points at it, so
+ * removing the row let the next scan read the line straight back into the
+ * reminder just deleted. Done is set alongside deletedAt so every query for
+ * open reminders — nudges, /due, reconcile, the scan's dedupe sets — skips it
+ * without having to know deletion exists. One typed in by hand has no source a
+ * scan could re-read, so it is removed outright.
+ */
+export type Deletion =
+  | { kind: 'remove' }
+  | { kind: 'hide'; data: { done: true; deletedAt: Date } };
+
+export function planDeletion(
+  reminder: { sourceTransactionId: string | null },
+  now: Date,
+): Deletion {
+  return reminder.sourceTransactionId === null
+    ? { kind: 'remove' }
+    : { kind: 'hide', data: { done: true, deletedAt: now } };
+}

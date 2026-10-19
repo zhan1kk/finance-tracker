@@ -109,7 +109,11 @@ export class SubcategoryService {
         //
         // Fourth time this pair has come up: accounts got both of these guards
         // before subcategories did, each time.
-        this.prisma.reminder.count({ where: { userId, subcategoryId: id } }),
+        // A deleted reminder is only a marker for scan(), invisible to the user,
+        // so it must not block anything; the FK nulls its link harmlessly.
+        this.prisma.reminder.count({
+          where: { userId, subcategoryId: id, deletedAt: null },
+        }),
       ]);
 
     if (transactionCount > 0) {

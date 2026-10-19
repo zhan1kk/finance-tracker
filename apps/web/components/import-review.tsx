@@ -279,7 +279,7 @@ export function ImportReview({
           onClick={() => {
             if (
               window.confirm(
-                "Undo this import? Its transactions are removed and your balances go back.\n\nRules it learned from your corrections are kept — they are listed above, where each can be forgotten individually, or on the Rules page.",
+                "Undo this import? Its transactions are removed and your balances go back. Open IOU reminders read from them go too.\n\nRules it learned from your corrections are kept — they are listed above, where each can be forgotten individually, or on the Rules page.",
               )
             ) {
               undo.mutate();

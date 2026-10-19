@@ -4195,12 +4195,22 @@ describe('API (e2e)', () => {
       expect(list.body).toHaveLength(1);
     });
 
-    it('rejects mark-paid on a one-off reminder with nothing to advance', async () => {
+    // Paid on a one-off used to be refused with "use Done", and Done is gone:
+    // a one-off is paid like anything else, and kept as the record of it.
+    it('marks a one-off reminder done when it is paid, and keeps it', async () => {
       const created = await addReminder({ label: 'One-off donation' });
-      await request(http)
-        .post(`/reminders/${(created.body as { id: string }).id}/paid`)
+      const id = (created.body as { id: string }).id;
+      const paid = await request(http)
+        .post(`/reminders/${id}/paid`)
         .set('Authorization', `Bearer ${token}`)
-        .expect(400);
+        .expect(201);
+      expect(paid.body).toMatchObject({ id, done: true });
+
+      const list = await request(http)
+        .get('/reminders')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect((list.body as { id: string }[]).map((r) => r.id)).toEqual([id]);
     });
 
     it('rolls a recurring reminder forward one period when marked paid', async () => {
@@ -4315,6 +4325,203 @@ describe('API (e2e)', () => {
       expect(r?.installmentsPaid).toBe(7);
       expect(r?.done).toBe(false);
       expect(r?.dueDate).toContain('2020-03-01');
+    });
+  });
+
+  // Delete replaced Done as the way to get rid of a reminder, which only works
+  // if a deleted one stays deleted — and the reminders read from a transaction
+  // must not outlive it while they still depend on it.
+  describe('deleting reminders', () => {
+    let accountId: string;
+    let returnsId: string;
+
+    beforeEach(async () => {
+      accountId = (await createAccount(100_000)).id;
+      returnsId = (await createSubcategory('Returns', 'Expenses')).id;
+    });
+
+    /** Matched by the deterministic refund pass, so no model is involved. */
+    const REFUND_PENDING = 'Zalando return - refund pending';
+
+    const expense = async (description: string) => {
+      const res = await request(http)
+        .post('/transactions')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'EXPENSE',
+          date: '2026-10-01',
+          amount: 4_999,
+          accountId,
+          subcategoryId: returnsId,
+          description,
+        })
+        .expect(201);
+      return (res.body as { id: string }).id;
+    };
+
+    /** Runs a scan the way the page does: start the job, then poll it. */
+    const scan = async () => {
+      const started = await request(http)
+        .post('/reminders/scan')
+        .set('Authorization', `Bearer ${token}`)
+        .send({})
+        .expect(201);
+      const { jobId } = started.body as { jobId: string };
+      for (let i = 0; i < 300; i++) {
+        const job = await request(http)
+          .get(`/jobs/${jobId}`)
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200);
+        const j = job.body as { status: string; error?: string };
+        if (j.status === 'done') return;
+        if (j.status === 'error') throw new Error(`scan failed: ${j.error}`);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      throw new Error('scan did not finish');
+    };
+
+    const reminders = async () => {
+      const res = await request(http)
+        .get('/reminders')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      return res.body as { id: string; kind: string; done: boolean }[];
+    };
+
+    const deleteReminder = (id: string) =>
+      request(http)
+        .delete(`/reminders/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+    // A scan reads each transaction into at most one reminder, and knew a
+    // transaction was taken only because a reminder pointed at it. Deleting
+    // the reminder freed the line, and the next scan read it straight back.
+    it('stays deleted when its transaction is scanned again', async () => {
+      await expense(REFUND_PENDING);
+      await scan();
+      const [found] = await reminders();
+      expect(found).toMatchObject({ kind: 'ask', done: false });
+
+      await deleteReminder(found.id);
+      expect(await reminders()).toEqual([]);
+
+      await scan();
+      expect(await reminders()).toEqual([]);
+    });
+
+    it('does not keep blocking its category once deleted', async () => {
+      // An installment line, so the reminder carries the category.
+      const line = await expense('Klarna TV 2/6');
+      await scan();
+      const [plan] = await reminders();
+      expect(plan).toMatchObject({ kind: 'payment' });
+      await deleteReminder(plan.id);
+
+      await request(http)
+        .delete(`/transactions/${line}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      // Hidden, but still pointing at the category — it must not be what
+      // stands in the way.
+      await request(http)
+        .delete(`/subcategories/${returnsId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+    });
+
+    it('goes with the expense it was read from, while still open', async () => {
+      const id = await expense(REFUND_PENDING);
+      await scan();
+      expect(await reminders()).toHaveLength(1);
+
+      await request(http)
+        .delete(`/transactions/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(await reminders()).toEqual([]);
+    });
+
+    it('goes with it in a bulk delete too', async () => {
+      const id = await expense(REFUND_PENDING);
+      await scan();
+      expect(await reminders()).toHaveLength(1);
+
+      await request(http)
+        .post('/transactions/bulk-delete')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ ids: [id] })
+        .expect(201);
+      expect(await reminders()).toEqual([]);
+    });
+
+    // The case that made duplicates: undo, re-import and re-scan read the
+    // same line into a second copy beside the first, stranded one.
+    it('goes with an undone import, so a re-import cannot duplicate it', async () => {
+      const csv = [
+        'Date,Amount,Description',
+        `2026-10-01,-49.99,${REFUND_PENDING}`,
+      ].join('\n');
+      const importOnce = async () => {
+        const staged = await importAndWait(token, {
+          accountId,
+          filename: 'oct.csv',
+          csv,
+          mapping: {
+            dateColumn: 'Date',
+            amountColumn: 'Amount',
+            descriptionColumn: 'Description',
+            dateFormat: 'ISO',
+            decimalSeparator: '.',
+            negativeIsExpense: true,
+            hasHeader: true,
+          },
+        });
+        const batch = staged.body as { id: string; rows: { id: string }[] };
+        await request(http)
+          .patch(`/imports/${batch.id}/rows/${batch.rows[0].id}`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({ subcategoryId: returnsId })
+          .expect(200);
+        await request(http)
+          .post(`/imports/${batch.id}/commit`)
+          .set('Authorization', `Bearer ${token}`)
+          .expect(201);
+        return batch.id;
+      };
+
+      const first = await importOnce();
+      await scan();
+      expect(await reminders()).toHaveLength(1);
+
+      await request(http)
+        .post(`/imports/${first}/undo`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      expect(await reminders()).toEqual([]);
+
+      await importOnce();
+      await scan();
+      expect(await reminders()).toHaveLength(1);
+    });
+
+    // Settled reminders are the record of what was paid back; they stay even
+    // when the transaction they were read from goes.
+    it('keeps a settled one when its transaction is deleted', async () => {
+      const id = await expense(REFUND_PENDING);
+      await scan();
+      const [found] = await reminders();
+      await request(http)
+        .patch(`/reminders/${found.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ done: true })
+        .expect(200);
+
+      await request(http)
+        .delete(`/transactions/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect((await reminders()).map((r) => r.id)).toEqual([found.id]);
     });
   });
 

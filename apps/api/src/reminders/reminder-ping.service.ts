@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma.service';
-import { TelegramBotService } from '../telegram/telegram-bot.service';
+import {
+  nudgeButtons,
+  TelegramBotService,
+} from '../telegram/telegram-bot.service';
 import { daysUntil, shouldPing } from './ping-schedule';
 
 /** "1234" + EUR → "12.34 EUR". Plain on purpose: Telegram is not a spreadsheet. */
@@ -94,7 +97,7 @@ export class ReminderPingService {
         const delivered = await this.bot.sendMessage(
           user.telegramChatId as string,
           text,
-          [{ label: '✓ Paid', data: `rdone:${r.id}` }],
+          nudgeButtons(r.id),
         );
         // A failed send is left unpinged so tomorrow's run tries it again.
         if (delivered) pinged.push(r.id);

@@ -1,4 +1,4 @@
-import { planSettlement } from './settle';
+import { planDeletion, planSettlement } from './settle';
 
 const iso = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
 
@@ -160,5 +160,24 @@ describe('planSettlement', () => {
         installmentsPaid: null,
       }).kind,
     ).toBe('nothing-to-advance');
+  });
+});
+
+describe('planDeletion', () => {
+  const now = new Date('2026-10-19T12:00:00Z');
+
+  // Removing the row would free the transaction for the next scan, which
+  // read it straight back into the reminder just deleted.
+  it('hides a reminder read from a transaction, and marks it done', () => {
+    expect(planDeletion({ sourceTransactionId: 't1' }, now)).toEqual({
+      kind: 'hide',
+      data: { done: true, deletedAt: now },
+    });
+  });
+
+  it('removes one typed in by hand, which no scan can re-read', () => {
+    expect(planDeletion({ sourceTransactionId: null }, now)).toEqual({
+      kind: 'remove',
+    });
   });
 });
