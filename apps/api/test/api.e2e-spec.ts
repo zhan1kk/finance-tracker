@@ -3910,21 +3910,40 @@ describe('API (e2e)', () => {
       expect(await netWorth()).toBe(before - 20_000);
     });
 
-    // The rule computeSpent implements — an account already in the display
-    // currency contributes its own amount, only the rest converts — also lives
-    // in transaction-stats and reports. Nothing held the three together, and
-    // they have disagreed before: the budget card once read $223.06 for the
-    // month the spending card called $215.82.
-    it('agrees with the spending stats about the same month', async () => {
-      const foreign = (
+    // The budget card and the spending card used to round at different
+    // points: the dashboard per converted row, the budget once over their sum.
+    // With two or more rows in another currency they disagreed by a cent about
+    // the same month. Only a reporting currency other than EUR exercises this —
+    // at EUR both just add up amountBase — which is why the test this replaces
+    // agreed with itself whatever the code did.
+    it('agrees with the spending stats about a month reported in another currency', async () => {
+      const tenge = (
         await createAccount(0, token, { currency: 'KZT', name: 'Tenge' })
       ).id;
+      // A rate with a fraction, so rounding per row and rounding once differ.
+      await request(http)
+        .post('/fx/rates')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ currency: 'KZT', date: today, rate: 540.37 })
+        .expect(201);
+      await request(http)
+        .patch('/auth/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ baseCurrency: 'KZT' })
+        .expect(200);
 
+      // Two euro rows of 10 cents: 5,403.7 tiyn each, converted.
       await createTxn({
         type: 'EXPENSE',
-        amount: 4_000,
+        amount: 10,
         subcategoryId: groceriesId,
       });
+      await createTxn({
+        type: 'EXPENSE',
+        amount: 10,
+        subcategoryId: groceriesId,
+      });
+      // And one already in tenge, which counts as it stands.
       await request(http)
         .post('/transactions')
         .set('Authorization', `Bearer ${token}`)
@@ -3932,12 +3951,14 @@ describe('API (e2e)', () => {
           type: 'EXPENSE',
           date: today,
           amount: 500_000,
-          accountId: foreign,
+          accountId: tenge,
           subcategoryId: groceriesId,
         })
         .expect(201);
-
-      await createBudget({ subcategoryId: groceriesId, monthlyLimit: 100_000 });
+      const budget = await createBudget({
+        subcategoryId: groceriesId,
+        monthlyLimit: 100_000,
+      });
 
       const [budgets, stats] = await Promise.all([
         listBudgets(),
@@ -3946,18 +3967,20 @@ describe('API (e2e)', () => {
           .set('Authorization', `Bearer ${token}`)
           .expect(200),
       ]);
-      const mine = budgets.find((b) => b.subcategory?.id === groceriesId);
-      const category = (
-        stats.body as {
-          byCategory: { subcategoryId: string; amount: number }[];
-        }
-      ).byCategory.find((c) => c.subcategoryId === groceriesId);
-
-      expect(mine).toBeDefined();
-      expect(category).toBeDefined();
-      // Both are the same spending, summed the same way, so they agree to
-      // the cent — whatever the rate happens to be.
-      expect(mine?.spentCents).toBe(category?.amount);
+      const body = stats.body as {
+        currency: string;
+        rate: number;
+        byCategory: { subcategoryId: string; amount: number }[];
+      };
+      expect(body).toMatchObject({ currency: 'KZT', rate: 540.37 });
+      const category = body.byCategory.find(
+        (c) => c.subcategoryId === groceriesId,
+      );
+      // Per row, 5,404 twice; the tenge row as it stands.
+      expect(category?.amount).toBe(2 * 5_404 + 500_000);
+      expect(budgets.find((b) => b.id === budget.id)?.spentCents).toBe(
+        category?.amount,
+      );
     });
 
     it('reports net worth over time', async () => {

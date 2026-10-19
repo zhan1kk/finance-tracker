@@ -8,6 +8,7 @@ import { type Budget, Prisma } from '@prisma/client';
 import { periodBounds, periodLabel } from '../common/period';
 import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
+import { displayAmountSql } from '../transactions/display-amount';
 import type { CreateBudgetDTO } from './dtos/create-budget.dto';
 import type { UpdateBudgetDTO } from './dtos/update-budget.dto';
 
@@ -305,6 +306,11 @@ export class BudgetService {
   /**
    * Spending in the budget's scope for the month, net of reimbursements linked
    * to those expenses (same definition as the dashboard's category spending).
+   *
+   * One query, with the dashboard's own per-row conversion (displayAmountSql):
+   * this used to sum the converted part first and round once, so with two or
+   * more rows in another currency the budget card and the spending card could
+   * disagree by a cent about the same month.
    */
   private async computeSpent(
     userId: string,
@@ -313,109 +319,51 @@ export class BudgetService {
     end: Date,
     display: { currency: string; rate: number },
   ): Promise<number> {
-    const date = { gte: start, lt: end };
-    const owner = { account: { userId } };
-
+    const amount = displayAmountSql(display);
     // A budget always has exactly one scope set (enforced on create).
-    const category = budget.category ?? undefined;
-    const expenseScope: Prisma.TransactionWhereInput = budget.subcategoryId
-      ? { subcategoryId: budget.subcategoryId }
-      : { subcategory: { is: { category } } };
-    // A payback only nets when its parent actually counts as spending — an
-    // internal parent is excluded, so its reimbursement must be too (else it
-    // would show as a phantom credit against the budget).
+    const inScope = (row: Prisma.Sql) =>
+      budget.subcategoryId
+        ? Prisma.sql`${row}."subcategoryId" = ${budget.subcategoryId}`
+        : Prisma.sql`EXISTS (
+            SELECT 1 FROM "Subcategory" s
+            WHERE s."id" = ${row}."subcategoryId"
+              AND s."category"::text = ${budget.category}
+          )`;
+
+    // Internal moves are excluded — a transfer through a budgeted category is
+    // not spending against it. A payback only nets when its parent actually
+    // counts as spending: an internal parent is excluded, so its reimbursement
+    // must be too (else it would show as a phantom credit against the budget).
     // The parent's date also decides the period: a payback belongs to the month
     // of the expense it cancels, otherwise that month stays overstated and a
     // later month picks up a credit for spending it never had.
-    const reimbScope: Prisma.TransactionWhereInput = budget.subcategoryId
-      ? {
-          parentTransaction: {
-            is: {
-              subcategoryId: budget.subcategoryId,
-              excludeFromStats: false,
-              date,
-            },
-          },
-        }
-      : {
-          parentTransaction: {
-            is: {
-              subcategory: { is: { category } },
-              excludeFromStats: false,
-              date,
-            },
-          },
-        };
-
-    // Budgets are set in the base currency, so spending is summed in base too.
-    // Internal moves are excluded — a transfer through a budgeted category is
-    // not spending against it.
-    const [expense, reimbursed] = await Promise.all([
-      this.prisma.transaction.aggregate({
-        _sum: { amountBase: true },
-        where: {
-          ...owner,
-          type: 'EXPENSE',
-          excludeFromStats: false,
-          date,
-          ...expenseScope,
-        },
-      }),
-      this.prisma.transaction.aggregate({
-        _sum: { amountBase: true },
-        where: {
-          ...owner,
-          type: 'INCOME',
-          excludeFromStats: false,
-          parentTransactionId: { not: null },
-          // No date filter here on purpose: the period is applied to the parent
-          // expense inside reimbScope, so a payback that arrives in a later
-          // month still nets against the month it belongs to.
-          ...reimbScope,
-        },
-      }),
-    ]);
-
-    const inBase =
-      (expense._sum.amountBase ?? 0) - (reimbursed._sum.amountBase ?? 0);
-    if (display.rate === 1) return inBase;
-
-    // Same rule the dashboard aggregates use: an account already in the display
-    // currency contributes its own amount, and only the rest is converted.
-    // Converting the whole base-currency sum instead made the budget card and
-    // the spending card disagree about the same month — $223.06 against
-    // $215.82 — which is the kind of difference nobody can explain away.
-    const native = { account: { is: { currency: display.currency } } };
-    const [nativeExpense, nativeReimbursed] = await Promise.all([
-      this.prisma.transaction.aggregate({
-        _sum: { amountBase: true, amount: true },
-        where: {
-          ...owner,
-          ...native,
-          type: 'EXPENSE',
-          excludeFromStats: false,
-          date,
-          ...expenseScope,
-        },
-      }),
-      this.prisma.transaction.aggregate({
-        _sum: { amountBase: true, amount: true },
-        where: {
-          ...owner,
-          ...native,
-          type: 'INCOME',
-          excludeFromStats: false,
-          parentTransactionId: { not: null },
-          ...reimbScope,
-        },
-      }),
-    ]);
-    const nativeBase =
-      (nativeExpense._sum.amountBase ?? 0) -
-      (nativeReimbursed._sum.amountBase ?? 0);
-    const nativeOwn =
-      (nativeExpense._sum.amount ?? 0) - (nativeReimbursed._sum.amount ?? 0);
-    return Math.round((inBase - nativeBase) * display.rate) + nativeOwn;
+    const [row] = await this.prisma.$queryRaw<{ spent: number }[]>`
+      SELECT (
+        COALESCE((
+          SELECT SUM(${amount})
+          FROM "Transaction" t
+          JOIN "Account" a ON a."id" = t."accountId"
+          WHERE a."userId" = ${userId}
+            AND t."type" = 'EXPENSE'
+            AND t."excludeFromStats" = false
+            AND t."date" >= ${start} AND t."date" < ${end}
+            AND ${inScope(Prisma.sql`t`)}
+        ), 0)
+        - COALESCE((
+          SELECT SUM(${amount})
+          FROM "Transaction" t
+          JOIN "Account" a ON a."id" = t."accountId"
+          JOIN "Transaction" p ON p."id" = t."parentTransactionId"
+          WHERE a."userId" = ${userId}
+            AND t."type" = 'INCOME'
+            AND t."excludeFromStats" = false
+            AND p."excludeFromStats" = false
+            AND p."date" >= ${start} AND p."date" < ${end}
+            AND ${inScope(Prisma.sql`p`)}
+        ), 0)
+      )::int AS spent
+    `;
+    return row?.spent ?? 0;
   }
 
   private async assertOwn(

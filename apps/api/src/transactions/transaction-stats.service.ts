@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { periodLabelShiftMonths, periodOffsetDays } from '../common/period';
 import { FxService } from '../fx/fx.service';
 import { PrismaService } from '../prisma.service';
+import { displayAmountSql } from './display-amount';
 import type {
   CategoryStat,
   DailyStat,
@@ -36,18 +37,7 @@ export class TransactionStatsService {
       select: { baseCurrency: true },
     });
     const display = await this.fx.displayRate(userId, baseCurrency);
-    // A row whose account is already in the display currency is used as it
-    // stands. Converting it to EUR at its own date and back at today's rate
-    // moves a number that never needed to change: someone whose accounts are
-    // all in dollars, reporting in dollars, would watch their own spending
-    // drift by whatever the euro did in between. Everything else converts at
-    // the one rate, which is what a mixed-currency total has to do anyway.
-    const amount =
-      display.rate === 1
-        ? Prisma.sql`t."amountBase"`
-        : Prisma.sql`(CASE WHEN a."currency" = ${display.currency}
-            THEN t."amount"
-            ELSE ROUND(t."amountBase" * ${display.rate}) END)`;
+    const amount = displayAmountSql(display);
     // Which row's date decides the period. Usually the row being summed (t),
     // but a reimbursement is credited against its parent expense, so it counts
     // in the parent's period (p) — in the monthly totals and the categories
