@@ -592,17 +592,22 @@ export class ImportService {
       ).map((r) => [r.id, r.pattern]),
     );
     // A merchant corrected to two different categories inside one batch cannot
-    // teach a single rule; the upsert would just let the last row win.
+    // teach a single rule; the upsert would just let the last row win. Keyed by
+    // the direction a learned rule would match, not by merchant alone: an
+    // Amazon charge corrected to Shopping and an Amazon refund corrected to
+    // Refunds are two rules that never meet, so both are learned. A transfer
+    // rule matches either direction, so it is filed under both.
     const correctedTargets = new Map<string, Set<string>>();
     for (const r of batch.rows) {
       if (!r.corrected) continue;
-      const key = r.normalizedDescription;
       const target =
         r.counterAccountId ??
         r.subcategoryId ??
         (r.excludeFromStats ? '~' : '');
-      if (!correctedTargets.has(key)) correctedTargets.set(key, new Set());
-      correctedTargets.get(key)?.add(target);
+      for (const key of ruleKeys(r)) {
+        if (!correctedTargets.has(key)) correctedTargets.set(key, new Set());
+        correctedTargets.get(key)?.add(target);
+      }
     }
     const committable = batch.rows.filter(
       (r) =>
@@ -714,8 +719,9 @@ export class ImportService {
           // Second: the same merchant corrected to different categories inside
           // this batch. Nothing here can say which one is the rule, and the
           // upsert would silently keep whichever row came last.
-          const conflicting =
-            (correctedTargets.get(row.normalizedDescription)?.size ?? 0) > 1;
+          const conflicting = ruleKeys(row).some(
+            (key) => (correctedTargets.get(key)?.size ?? 0) > 1,
+          );
 
           if (row.corrected && !overrulesSameRule && !conflicting) {
             const target = row.counterAccountId
@@ -1698,4 +1704,20 @@ function directionOn(
 ): TransactionType {
   if (txn.type !== 'TRANSFER') return txn.type;
   return txn.accountId === accountId ? 'EXPENSE' : 'INCOME';
+}
+
+/**
+ * The rows a rule learned from this correction would match, as
+ * "merchant|direction" keys: its own direction for a category rule, both for a
+ * transfer rule (see `RulesService.match`).
+ */
+function ruleKeys(row: {
+  normalizedDescription: string;
+  type: TransactionType;
+  counterAccountId: string | null;
+}): string[] {
+  const directions: TransactionType[] = row.counterAccountId
+    ? ['EXPENSE', 'INCOME']
+    : [row.type];
+  return directions.map((d) => `${row.normalizedDescription}|${d}`);
 }

@@ -2045,10 +2045,16 @@ describe('API (e2e)', () => {
       status: string;
       source: string;
       description: string;
+      amount: number;
       subcategory: { name: string } | null;
       excludeFromStats: boolean;
     };
-    type Batch = { id: string; status: string; rows: Row[] };
+    type Batch = {
+      id: string;
+      status: string;
+      categorizeError: string | null;
+      rows: Row[];
+    };
 
     beforeEach(async () => {
       accountId = (await createAccount(500_000)).id;
@@ -2250,6 +2256,93 @@ describe('API (e2e)', () => {
       expect(
         (rules.body as { pattern: string }[]).filter(
           (r) => r.pattern === 'ikea',
+        ),
+      ).toHaveLength(0);
+    });
+
+    // Rules are per merchant and direction, so a charge and a refund from one
+    // shop are two rules that never meet. Keying the conflict on the merchant
+    // alone cancelled both, and neither was ever learned.
+    it("learns both rules when a merchant's charge and refund are corrected differently", async () => {
+      const health = await subId('Health');
+      const freelance = await subId('Freelance');
+      const batch = await doImport(
+        [
+          'Date,Amount,Description',
+          '2026-07-04,-42.00,AMAZON MKTPLACE',
+          '2026-07-09,12.50,AMAZON MKTPLACE',
+        ].join('\n'),
+      );
+      const charge = batch.rows.find((r) => r.amount === 4200);
+      const refund = batch.rows.find((r) => r.amount === 1250);
+      await request(http)
+        .patch(`/imports/${batch.id}/rows/${charge?.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId: health })
+        .expect(200);
+      await request(http)
+        .patch(`/imports/${batch.id}/rows/${refund?.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId: freelance })
+        .expect(200);
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      const rules = await request(http)
+        .get('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const learned = (
+        rules.body as {
+          pattern: string;
+          type: string;
+          subcategory: { name: string } | null;
+        }[]
+      )
+        .filter((r) => r.pattern === 'amazon mktplace')
+        .map((r) => `${r.type}:${r.subcategory?.name}`)
+        .sort();
+      expect(learned).toEqual(['EXPENSE:Health', 'INCOME:Freelance']);
+    });
+
+    // A transfer rule matches money going either way, so it does meet a
+    // category rule for the same merchant in the other direction.
+    it('learns nothing when a transfer and a category meet across directions', async () => {
+      const freelance = await subId('Freelance');
+      const savings = (await createAccount(0)).id;
+      const batch = await doImport(
+        [
+          'Date,Amount,Description',
+          '2026-07-04,-20.00,PAYPAL EUROPE',
+          '2026-07-09,15.00,PAYPAL EUROPE',
+        ].join('\n'),
+      );
+      const out = batch.rows.find((r) => r.amount === 2000);
+      const back = batch.rows.find((r) => r.amount === 1500);
+      await request(http)
+        .patch(`/imports/${batch.id}/rows/${out?.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ counterAccountId: savings })
+        .expect(200);
+      await request(http)
+        .patch(`/imports/${batch.id}/rows/${back?.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ subcategoryId: freelance })
+        .expect(200);
+      await request(http)
+        .post(`/imports/${batch.id}/commit`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      const rules = await request(http)
+        .get('/rules')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(
+        (rules.body as { pattern: string }[]).filter(
+          (r) => r.pattern === 'paypal europe',
         ),
       ).toHaveLength(0);
     });
