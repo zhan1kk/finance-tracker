@@ -336,6 +336,21 @@ export class TransactionService {
     if (newSubcategory) {
       this.ensureCategoryMatchesType(existing.type, newSubcategory.category);
     }
+    // The rule createTransaction applies, checked against the row as it will
+    // be after this edit. Spending with no category still moves the balance
+    // but sits in no category total and no budget. Two ways in: sending
+    // subcategoryId: null (the optional validator lets null through, and
+    // Prisma writes it), or un-marking an internal row that never had one.
+    const nextSubcategoryId =
+      input.subcategoryId === undefined
+        ? existing.subcategoryId
+        : input.subcategoryId;
+    const nextInternal = input.excludeFromStats ?? existing.excludeFromStats;
+    if (!nextSubcategoryId && !nextInternal) {
+      throw new BadRequestException(
+        'subcategoryId is required for INCOME and EXPENSE transactions, unless they are marked internal',
+      );
+    }
 
     const oldDelta = signedDelta(existing.type, existing.amount);
     const newDelta = signedDelta(
@@ -558,7 +573,7 @@ export class TransactionService {
 
     const txns = await this.prisma.transaction.findMany({
       where: { id: { in: ids }, account: { userId } },
-      select: { id: true, type: true },
+      select: { id: true, type: true, subcategoryId: true },
     });
     if (txns.length !== ids.length) {
       throw new NotFoundException('One or more transactions were not found');
@@ -566,6 +581,17 @@ export class TransactionService {
     if (txns.some((t) => t.type === 'TRANSFER')) {
       throw new BadRequestException(
         'Transfers cannot be categorized or marked internal',
+      );
+    }
+    // Un-marking internal rows with no category in the same call would leave
+    // them counted in spending and in no category (see updateTransaction).
+    if (
+      patch.excludeFromStats === false &&
+      patch.subcategoryId === undefined &&
+      txns.some((t) => t.subcategoryId === null)
+    ) {
+      throw new BadRequestException(
+        'Some of these have no category. Pick one in the same change, or leave them internal',
       );
     }
 

@@ -1,4 +1,10 @@
-import { ArrayMinSize, IsBoolean, IsOptional, IsUUID } from 'class-validator';
+import {
+  ArrayMinSize,
+  IsBoolean,
+  IsOptional,
+  IsUUID,
+  ValidateIf,
+} from 'class-validator';
 
 /** Apply a category and/or the internal flag to many rows at once. */
 export class BulkUpdateTransactionsDTO {
@@ -6,7 +12,9 @@ export class BulkUpdateTransactionsDTO {
   @IsUUID('all', { each: true })
   public readonly ids!: string[];
 
-  @IsOptional()
+  /** Optional, but not nullable: IsOptional would let null through, and there
+   *  is no "clear the category" in bulk. */
+  @ValidateIf((_dto, value) => value !== undefined)
   @IsUUID()
   public readonly subcategoryId?: string;
 

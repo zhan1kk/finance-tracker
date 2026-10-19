@@ -718,6 +718,81 @@ describe('API (e2e)', () => {
       expect(await amounts('')).toEqual([900, 50_000, 2_000]);
     });
 
+    // Spending with no category moves the balance but sits in no category
+    // total and no budget. Creating one is refused; editing into one was not.
+    describe('keeps every income and expense in a category', () => {
+      const patch = (id: string, body: Record<string, unknown>) =>
+        request(http)
+          .patch(`/transactions/${id}`)
+          .set('Authorization', `Bearer ${token}`)
+          .send(body);
+      const categoryOf = async (id: string) => {
+        const res = await request(http)
+          .get('/transactions')
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200);
+        return (
+          res.body as {
+            items: { id: string; subcategoryId: string | null }[];
+          }
+        ).items.find((t) => t.id === id)?.subcategoryId;
+      };
+
+      it('refuses an edit that clears the category', async () => {
+        const { id } = await createTransaction('EXPENSE', expenseId, 1_200);
+        await patch(id, { subcategoryId: null }).expect(400);
+        expect(await categoryOf(id)).toBe(expenseId);
+      });
+
+      it('still clears it on a row marked internal in the same edit', async () => {
+        const { id } = await createTransaction('EXPENSE', expenseId, 1_200);
+        await patch(id, { subcategoryId: null, excludeFromStats: true }).expect(
+          200,
+        );
+        expect(await categoryOf(id)).toBeNull();
+      });
+
+      it('refuses un-marking an internal row that has no category', async () => {
+        const { id } = await createTransaction(
+          'EXPENSE',
+          undefined,
+          1_200,
+          201,
+          {
+            excludeFromStats: true,
+          },
+        );
+        await patch(id, { excludeFromStats: false }).expect(400);
+        await patch(id, {
+          excludeFromStats: false,
+          subcategoryId: expenseId,
+        }).expect(200);
+      });
+
+      it('refuses the same through the bulk edit', async () => {
+        const { id } = await createTransaction(
+          'EXPENSE',
+          undefined,
+          1_200,
+          201,
+          {
+            excludeFromStats: true,
+          },
+        );
+        const bulk = (body: Record<string, unknown>) =>
+          request(http)
+            .patch('/transactions/bulk')
+            .set('Authorization', `Bearer ${token}`)
+            .send({ ids: [id], ...body });
+        await bulk({ excludeFromStats: false }).expect(400);
+        await bulk({ subcategoryId: null }).expect(400);
+        await bulk({
+          excludeFromStats: false,
+          subcategoryId: expenseId,
+        }).expect(200);
+      });
+    });
+
     it('rejects an unknown sort field', async () => {
       await request(http)
         .get('/transactions?sort=description')
