@@ -84,6 +84,71 @@ describe('AnthropicCategorizationProvider', () => {
     ]);
   });
 
+  // The README's privacy promise for this provider: "Sends each row's
+  // description, amount and direction to Anthropic — nothing else."
+  describe('what leaves the server', () => {
+    // A row id is the import's dedupe hash (account, date, amount, merchant);
+    // a subcategory id is a database key. Claude needs neither.
+    const rowHash = 'c0ffee'.repeat(10) + 'beef';
+    const subId = '7d2f0c1e-4b9a-4e3d-9c55-0a1b2c3d4e5f';
+    const sentFor = async (
+      rows: {
+        description: string;
+        amount: number;
+        type: 'INCOME' | 'EXPENSE';
+      }[],
+    ): Promise<string> => {
+      const create = jest.fn().mockResolvedValue({
+        stop_reason: 'tool_use',
+        content: [{ type: 'tool_use', input: { items: [] } }],
+      });
+      await withReply(create).categorize(
+        rows.map((r, i) => ({
+          ...r,
+          rowId: `${rowHash}${i}`,
+          normalizedDescription: r.description.toLowerCase(),
+        })),
+        [{ id: subId, name: 'Groceries', category: 'Expenses' }],
+      );
+      return JSON.stringify(
+        create.mock.calls.map((call) => call[0] as unknown),
+      );
+    };
+
+    it("sends each row's description, amount and direction", async () => {
+      const sent = await sentFor([
+        { description: 'REWE Markt Berlin', amount: 1250, type: 'EXPENSE' },
+        { description: 'ACME Payroll', amount: 250000, type: 'INCOME' },
+      ]);
+      expect(sent).toContain('REWE Markt Berlin');
+      expect(sent).toContain('12.50');
+      expect(sent).toContain('EXPENSE');
+      expect(sent).toContain('ACME Payroll');
+      expect(sent).toContain('2500.00');
+      expect(sent).toContain('INCOME');
+    });
+
+    it('never sends the row ids or the subcategory ids', async () => {
+      const sent = await sentFor([
+        { description: 'REWE', amount: 1250, type: 'EXPENSE' },
+      ]);
+      expect(sent).not.toContain(rowHash);
+      expect(sent).not.toContain(subId);
+    });
+
+    it('sends every row of a large import exactly once', async () => {
+      const rows = Array.from({ length: 95 }, (_, i) => ({
+        description: `merchant-${String(i).padStart(3, '0')}`,
+        amount: 100 + i,
+        type: 'EXPENSE' as const,
+      }));
+      const sent = await sentFor(rows);
+      for (const r of rows) {
+        expect(sent.split(r.description).length - 1).toBe(1);
+      }
+    });
+  });
+
   it('leaves no error on an answer, even an unsure one', async () => {
     const provider = withReply(
       jest.fn().mockResolvedValue({
