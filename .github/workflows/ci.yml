@@ -47,6 +47,14 @@ jobs:
       - name: Validate migrations apply cleanly
         run: pnpm --filter api exec prisma migrate deploy
 
+      # The e2e suite builds its database from schema.prisma, not from the
+      # migrations, so a schema change with no migration passes every test
+      # and then fails in production, where only migrations run. Exits 2
+      # and names the difference when the migrated database and the schema
+      # disagree.
+      - name: Check migrations match the schema
+        run: pnpm --filter api exec prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+
       - name: Lint
         run: pnpm --filter api lint:check
 
