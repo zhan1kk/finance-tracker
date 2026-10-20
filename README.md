@@ -166,9 +166,13 @@ Import a bank/card statement and have transactions categorized automatically.
   stages and categorizes the rows into a review batch. The mapping (which columns
   are date/amount/description, date format, decimal separator) is remembered per
   account, so later imports can omit it.
-- `POST /imports/pdf` — `{ accountId, filename, pdfBase64, categorizer? }`; a local
-  Ollama model reads the statement into rows, which then flow through the same
-  pipeline. Extraction is always local, whichever categorizer is chosen.
+- `POST /imports/pdf` — `{ accountId, filename, pdfBase64, categorizer? }`; a model
+  reads the statement into rows, which then flow through the same pipeline.
+  `PDF_EXTRACTOR` picks the reader, separately from the categorizer: a local
+  Ollama model by default, so nothing leaves the machine, or `anthropic`, which
+  sends the whole statement text to Claude. It is never inferred from an API key
+  being present. A statement that comes back incomplete fails the import, rather
+  than keeping the rows that did arrive.
 - `GET /imports/categorizers` — which providers this server can run, which is the
   default, and which sends data off the machine.
 - `PATCH /imports/:id/rows/:rowId` — correct a row's category (the correction is

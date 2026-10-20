@@ -241,13 +241,17 @@ per import.
 Those accuracy and cost figures are measured on this project against real bank
 statements, not estimates.
 
-> **Read this even if you pick Claude:** importing **PDF** statements always uses
-> the local model, whichever categorizer you choose, because reading a PDF means
-> sending the whole page — balances and account numbers included — and that stays
-> on your machine on purpose. The dashboard's written summary and the
-> "who owes whom" reminder detection are local for the same reason.
+> **Read this even if you pick Claude:** importing **PDF** statements uses the
+> local model by default, whichever categorizer you choose, because reading a PDF
+> means sending the whole page — balances and account numbers included — and that
+> stays on your machine unless you say otherwise. To have Claude read PDFs
+> instead, add `PDF_EXTRACTOR="anthropic"` to `apps/api/.env`: no Ollama needed,
+> but the whole statement text goes to Anthropic. Having an API key set does not
+> turn this on by itself. The dashboard's written summary and the "who owes whom"
+> reminder detection always run locally.
 >
-> **If you skip Ollama, CSV imports work fine but PDF imports will not.**
+> **If you skip Ollama and leave `PDF_EXTRACTOR` unset, CSV imports work fine but
+> PDF imports will not.**
 
 ### Option A — Claude
 
@@ -372,7 +376,8 @@ Then do this much before importing anything:
 ## Step 9 — Import your first statement
 
 1. Export a statement from your bank as **CSV** (most banks have this under
-   Statements or Transactions → Export). PDF also works if you installed Ollama.
+   Statements or Transactions → Export). PDF also works if you installed Ollama,
+   or set `PDF_EXTRACTOR="anthropic"`.
 2. **Imports** → pick the account → choose the file.
 3. If it is a CSV, tell it which columns hold the date, the amount and the
    description. It shows you an example row so you can check. It remembers this
@@ -483,8 +488,9 @@ resident for a couple of minutes afterwards.
 
 ### PDF import fails but CSV works
 
-PDF reading needs Ollama, even if Claude is doing your categorizing. See Option B
-in Step 6.
+PDF reading needs Ollama, even if Claude is doing your categorizing, unless you
+set `PDF_EXTRACTOR="anthropic"`. See Option B in Step 6, and the note just above
+Option A.
 
 ### Local model puts everything in one wrong category
 
@@ -575,15 +581,19 @@ a small VPS and a domain name.
 Worth being precise about, since it is the reason to self-host.
 
 **Stays on your machine, always:** every transaction, balance, account, budget
-and rule — all in the PostgreSQL container on your computer. PDF statement text.
-The dashboard's written summary. Reminder detection. Your login credentials.
+and rule — all in the PostgreSQL container on your computer. The dashboard's
+written summary. Reminder detection. Your login credentials.
 
 **Leaves your machine, only if you choose Claude, and only this:** each row's
 description, amount, and whether it is money in or out. That is the entire
 prompt. Not your balances, not account numbers, not dates, not your email.
 
+**Leaves your machine only if you also set `PDF_EXTRACTOR="anthropic"`:** the
+full text of each PDF statement you import, balances and account numbers
+included. It is off unless you turn it on; an API key alone does not.
+
 **Never leaves, under any setting:** anything at all if you use the local model
-or keywords only.
+or keywords only and leave `PDF_EXTRACTOR` unset.
 
 Descriptions do contain merchant names, and for transfers they contain people's
 names. If that matters to you, use Option B.
