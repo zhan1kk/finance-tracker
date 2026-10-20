@@ -627,6 +627,23 @@ export class ImportService {
 
     await this.prisma.$transaction(
       async (tx) => {
+        // Claimed first, inside the transaction and only from PENDING_REVIEW.
+        // getPendingBatch above runs outside it, so two commits arriving
+        // together (a double click, two tabs) both passed it and both booked
+        // the batch: four at once made 8 transactions out of 2. Postgres makes
+        // the second UPDATE wait for the first one's row lock, then re-check
+        // the status, which no longer matches.
+        const claimed = await tx.importBatch.updateMany({
+          where: { id: batch.id, status: 'PENDING_REVIEW' },
+          data: { status: 'COMMITTED', committedAt: new Date() },
+        });
+        if (claimed.count === 0) {
+          // Lost to another commit, or to a discard that deleted it.
+          throw new ConflictException(
+            'This import is no longer open for review',
+          );
+        }
+
         // Staging marks duplicates against transactions that existed *then*.
         // Rows staged before an earlier batch of the same statement was
         // committed carry no mark (e.g. the same file imported twice while both
@@ -760,10 +777,6 @@ export class ImportService {
             data: { balance: { increment: delta } },
           });
         }
-        await tx.importBatch.update({
-          where: { id: batch.id },
-          data: { status: 'COMMITTED', committedAt: new Date() },
-        });
       },
       { timeout: 30_000 },
     );
@@ -958,41 +971,47 @@ export class ImportService {
       )
       .map((r) => r.ruleId as string);
 
-    await this.prisma.$transaction([
-      this.prisma.importRow.updateMany({
+    await this.prisma.$transaction(async (tx) => {
+      // Claimed first, for the reason commit claims: two undos arriving
+      // together both passed the status check above, and each one credited
+      // the balance back, though the transactions were only deleted once.
+      const claimed = await tx.importBatch.updateMany({
+        where: { id: batchId, status: 'COMMITTED' },
+        data: { status: 'UNDONE', committedAt: null },
+      });
+      if (claimed.count === 0) {
+        throw new ConflictException('This import was already undone');
+      }
+
+      await tx.importRow.updateMany({
         where: { batchId, transactionId: { not: null } },
         data: { status: 'READY', transactionId: null },
-      }),
-      ...[...new Set(undoneRuleIds)].map((id) =>
-        this.prisma.categorizationRule.updateMany({
+      });
+      for (const id of new Set(undoneRuleIds)) {
+        await tx.categorizationRule.updateMany({
           where: { id, userId },
           data: {
             hitCount: {
               decrement: undoneRuleIds.filter((r) => r === id).length,
             },
           },
-        }),
-      ),
+        });
+      }
       // Before the delete below, which nulls the link this matches on.
-      this.prisma.reminder.deleteMany({
+      await tx.reminder.deleteMany({
         where: openIousReadFrom({ id: { in: transactionIds } }),
-      }),
-      this.prisma.transaction.deleteMany({
+      });
+      await tx.transaction.deleteMany({
         where: { id: { in: transactionIds } },
-      }),
-      ...[...deltas.entries()]
-        .filter(([, delta]) => delta !== 0)
-        .map(([accountId, delta]) =>
-          this.prisma.account.update({
-            where: { id: accountId },
-            data: { balance: { increment: delta } },
-          }),
-        ),
-      this.prisma.importBatch.update({
-        where: { id: batchId },
-        data: { status: 'UNDONE', committedAt: null },
-      }),
-    ]);
+      });
+      for (const [accountId, delta] of deltas) {
+        if (delta === 0) continue;
+        await tx.account.update({
+          where: { id: accountId },
+          data: { balance: { increment: delta } },
+        });
+      }
+    });
 
     return this.getBatch(userId, batchId);
   }
@@ -1017,10 +1036,15 @@ export class ImportService {
     if (batch.status !== 'UNDONE') {
       throw new ConflictException('Only an undone batch can be reopened');
     }
-    await this.prisma.importBatch.update({
-      where: { id: batchId },
+    // Conditional, like commit's and undo's claims: the check above is a read
+    // that something else may have acted on since.
+    const reopened = await this.prisma.importBatch.updateMany({
+      where: { id: batchId, status: 'UNDONE' },
       data: { status: 'PENDING_REVIEW' },
     });
+    if (reopened.count === 0) {
+      throw new ConflictException('Only an undone batch can be reopened');
+    }
     return this.getBatch(userId, batchId);
   }
 
@@ -1039,7 +1063,17 @@ export class ImportService {
         'A committed batch cannot be discarded — undo it first',
       );
     }
-    await this.prisma.importBatch.delete({ where: { id: batchId } });
+    // Conditional on the status too. A discard landing while a commit runs
+    // used to delete the batch under it: the transactions stayed booked, with
+    // no batch left to undo them from.
+    const deleted = await this.prisma.importBatch.deleteMany({
+      where: { id: batchId, status: { not: 'COMMITTED' } },
+    });
+    if (deleted.count === 0) {
+      throw new ConflictException(
+        'A committed batch cannot be discarded — undo it first',
+      );
+    }
     return { deleted: true };
   }
 
